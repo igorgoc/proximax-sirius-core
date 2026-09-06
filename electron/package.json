@@ -1,0 +1,69 @@
+{
+  "name": "proximax-sirius-mainnet-peer",
+  "productName": "ProximaX Sirius Mainnet Peer Node",
+  "version": "1.9.7",
+  "description": "Official standalone native peer validator and node manager cockpit for the ProximaX Sirius Mainnet (Apple Silicon ARM64)",
+  "main": "main.cjs",
+  "author": "ProximaX Foundation",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "io.xpxsirius.mainnet.peer",
+    "productName": "ProximaX Sirius Mainnet Peer Node",
+    "copyright": "Copyright © 2026 ProximaX Foundation",
+    "mac": {
+      "category": "public.app-category.finance",
+      "icon": "assets/icon.icns",
+      "target": [
+        "dir",
+        "dmg"
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "icon": "assets/icon.icns",
+      "contents": [
+        {
+          "x": 140,
+          "y": 180
+        },
+        {
+          "x": 400,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 360
+      }
+    },
+    "directories": {
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "../bin",
+        "to": "bin"
+      },
+      {
+        "from": "../backend/sirius-core",
+        "to": "sirius-core"
+      },
+      {
+        "from": "staging/chainconfig",
+        "to": "chainconfig"
+      }
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^31.4.0",
+    "electron-builder": "^24.13.3"
+  }
+}

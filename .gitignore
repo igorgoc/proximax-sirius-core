@@ -1,0 +1,51 @@
+# Blockchain state & logs
+chainconfig/data/
+chainconfig/logs/
+chainconfig/replicator_service_logs/
+
+# Frontend dependencies & build artifacts
+frontend/node_modules/
+backend/dist/
+
+# OS and IDE files
+.DS_Store
+*.log
+.env
+.env.*
+
+# Native macOS build outputs & archives
+dist/
+electron/node_modules/
+electron/dist/
+*.app/
+macos/vm/
+
+# Disaster Recovery Packages & backups
+*.drpkg
+sirius-node-backup-*.json
+chainconfig/resources/harvest-stats.json
+
+# Session tokens & credentials
+chainconfig/resources/.sirius-token
+**/.sirius-token
+
+# TLS Certificates & Private Keys
+chainconfig/certificate/
+*.key.pem
+*.crt.pem
+
+# Local runtime properties containing private keys and machine paths
+chainconfig/resources/config-harvesting.properties
+chainconfig/resources/config-user.properties
+chainconfig/resources/config-storage.properties
+chainconfig/resources/config-manager.properties
+
+# Compiled Go manager binaries & PID
+bin/sirius-core-manager
+bin/sirius-node-manager
+backend/sirius-core
+backend/proximax-sirius-core
+.sirius-core.pid
+native-core/
+
+.aider*
