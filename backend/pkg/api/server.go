@@ -53,6 +53,7 @@ type Server struct {
 	chainMon         *chain.ChainMonitor
 	harvesterTracker *chain.HarvesterTracker
 	updateMgr        *updater.UpdateManager
+	engineUpdater    *updater.EngineUpdater
 	storageMgr       *storage.StorageManager
 	networkMgr       *network.NetworkManager
 	migrator         *migrator.Migrator
@@ -73,6 +74,9 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	go func() {
 		_, _ = um.CheckUpdate()
 	}()
+
+	manifestPath := filepath.Join(filepath.Dir(configMgr.GetResourcesPath()), "engine.compat.json")
+	eu := updater.NewEngineUpdater(supervisor.GetBinPath(), manifestPath, supervisor, nil)
 
 	bootKeyGetter := func() string {
 		if cfg, err := configMgr.LoadNodeConfig(); err == nil {
@@ -97,6 +101,7 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 		chainMon:         chainMon,
 		harvesterTracker: ht,
 		updateMgr:        um,
+		engineUpdater:    eu,
 		storageMgr:       sm,
 		networkMgr:       nm,
 		migrator:         mig,
@@ -149,6 +154,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/maintenance/storage-convert/cancel", s.handleMaintenanceStorageConvertCancel)
 	mux.HandleFunc("/api/maintenance/clean-logs", s.handleMaintenanceCleanLogs)
 	mux.HandleFunc("/api/system/updates/check", s.handleUpdatesCheck)
+	mux.HandleFunc("/api/engine/status", s.handleEngineStatus)
+	mux.HandleFunc("/api/engine/manifest", s.handleEngineManifest)
 	mux.HandleFunc("/api/system/backup/export", s.handleBackupExport)
 	mux.HandleFunc("/api/system/backup/restore", s.handleBackupRestore)
 	mux.HandleFunc("/api/system/settings/export", s.handleBackupExport)
@@ -1053,8 +1060,24 @@ func (s *Server) handleSystemBrowseDirs(w http.ResponseWriter, r *http.Request) 
 
 	// Security filter: Prevent browsing sensitive system directories
 	cleanTarget := filepath.Clean(targetDir)
-	for _, forbidden := range []string{"/etc", "/proc", "/sys", "/dev", "/root", "/var/log", "/private/etc", "/private/var"} {
-		if cleanTarget == forbidden || strings.HasPrefix(cleanTarget, forbidden+"/") {
+	sep := string(filepath.Separator)
+	forbiddenList := []string{
+		"/etc", "/proc", "/sys", "/dev", "/root", "/var/log", "/private/etc", "/private/var",
+	}
+	if runtime.GOOS == "windows" {
+		winDir := os.Getenv("SystemRoot")
+		if winDir == "" {
+			winDir = "C:\\Windows"
+		}
+		forbiddenList = append(forbiddenList,
+			filepath.Join(winDir, "System32", "config"),
+			"C:\\System Volume Information",
+			"C:\\$Recycle.Bin",
+		)
+	}
+	for _, forbidden := range forbiddenList {
+		fClean := filepath.Clean(forbidden)
+		if cleanTarget == fClean || strings.HasPrefix(cleanTarget, fClean+sep) {
 			targetDir, _ = os.Getwd()
 			break
 		}
@@ -1261,13 +1284,9 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 			err = e
 		}
 	case "windows":
-		var psScript string
-		if mode == "file" {
-			psScript = fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Title = "%s"; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }`, prompt)
-		} else {
-			psScript = fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = "%s"; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }`, prompt)
-		}
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+		// Security: 100% static script block with prompt & mode passed strictly as isolated argv arguments
+		const staticPsScript = `& { param($dlgTitle, $dlgMode) Add-Type -AssemblyName System.Windows.Forms; if ($dlgMode -eq 'file') { $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Title = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName } } else { $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath } } } $args[0] $args[1]`
+		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", staticPsScript, prompt, mode)
 		out, e := cmd.Output()
 		if e == nil {
 			selectedPath = strings.TrimSpace(string(out))
@@ -1276,7 +1295,7 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 		}
 	case "linux":
 		if _, e := exec.LookPath("zenity"); e == nil {
-			args := []string{"--file-selection", fmt.Sprintf("--title=%s", prompt)}
+			args := []string{"--file-selection", "--title", prompt}
 			if mode != "file" {
 				args = append(args, "--directory")
 			}
@@ -1290,7 +1309,7 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 			if mode == "file" {
 				flag = "--getopenfilename"
 			}
-			cmd := exec.Command("kdialog", flag, fmt.Sprintf("--title=%s", prompt))
+			cmd := exec.Command("kdialog", flag, "--title", prompt)
 			out, e := cmd.Output()
 			if e == nil {
 				selectedPath = strings.TrimSpace(string(out))
@@ -1301,8 +1320,8 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 	if selectedPath != "" {
 		// Clean trailing slash if present (except root '/')
 		cleanPath := selectedPath
-		if len(cleanPath) > 1 {
-			cleanPath = strings.TrimRight(cleanPath, "/")
+		if len(cleanPath) > 1 && !strings.HasSuffix(cleanPath, `:\`) {
+			cleanPath = strings.TrimRight(cleanPath, "/\\")
 		}
 		jsonResponse(w, map[string]interface{}{
 			"success": true,
@@ -1364,6 +1383,19 @@ func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"message": "Official node update process started in background.",
 	})
+}
+
+func (s *Server) handleEngineStatus(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.engineUpdater.GetStatus())
+}
+
+func (s *Server) handleEngineManifest(w http.ResponseWriter, r *http.Request) {
+	manifest, err := s.engineUpdater.LoadManifest()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, manifest)
 }
 
 func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {

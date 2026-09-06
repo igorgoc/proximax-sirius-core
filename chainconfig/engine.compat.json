@@ -1,0 +1,7 @@
+{
+  "engineRepository": "proximax-storage/cpp-xpx-chain",
+  "engineMinCompatible": "v1.9.0",
+  "engineMaxCompatible": "v1.9.99",
+  "recommendedVersion": "v1.9.7",
+  "releasePublicKeyHex": "538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
+}

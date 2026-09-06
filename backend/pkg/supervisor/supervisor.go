@@ -227,12 +227,41 @@ func NewProcessSupervisor(chainConfigPath string) *ProcessSupervisor {
 	return dc
 }
 
-func (dc *ProcessSupervisor) locateBinaries() (siriusBin string, recoveryBin string, err error) {
-	siriusBin = filepath.Join(dc.binPath, "sirius.bc")
-	recoveryBin = filepath.Join(dc.binPath, "catapult.recovery")
+func (dc *ProcessSupervisor) GetBinPath() string {
+	return dc.binPath
+}
 
-	if _, e := os.Stat(siriusBin); e != nil {
-		return "", "", fmt.Errorf("sirius.bc binary not found at: %s", siriusBin)
+func (dc *ProcessSupervisor) IsRunning() bool {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+	return dc.isRunning
+}
+
+func (dc *ProcessSupervisor) locateBinaries() (siriusBin string, recoveryBin string, err error) {
+	siriusNames := []string{"sirius.bc"}
+	recoveryNames := []string{"catapult.recovery"}
+	if runtime.GOOS == "windows" {
+		siriusNames = []string{"sirius.exe", "sirius.bc.exe", "sirius.bc"}
+		recoveryNames = []string{"catapult.recovery.exe", "catapult.recovery"}
+	}
+
+	for _, name := range siriusNames {
+		candidate := filepath.Join(dc.binPath, name)
+		if _, e := os.Stat(candidate); e == nil {
+			siriusBin = candidate
+			break
+		}
+	}
+	if siriusBin == "" {
+		return "", "", fmt.Errorf("sirius binary not found in: %s", dc.binPath)
+	}
+
+	for _, name := range recoveryNames {
+		candidate := filepath.Join(dc.binPath, name)
+		if _, e := os.Stat(candidate); e == nil {
+			recoveryBin = candidate
+			break
+		}
 	}
 	return siriusBin, recoveryBin, nil
 }
@@ -607,8 +636,12 @@ func (dc *ProcessSupervisor) StopNode() error {
 		return nil
 	}
 
-	dc.broadcastLog("[Supervisor] Stopping Sirius Core process gracefully (SIGINT)...")
-	_ = dc.cmd.Process.Signal(syscall.SIGINT)
+	dc.broadcastLog("[Supervisor] Stopping Sirius Core process gracefully...")
+	if runtime.GOOS == "windows" {
+		_ = dc.cmd.Process.Signal(os.Interrupt)
+	} else {
+		_ = dc.cmd.Process.Signal(syscall.SIGINT)
+	}
 
 	done := make(chan error, 1)
 	go func() {

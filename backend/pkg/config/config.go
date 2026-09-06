@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -716,5 +718,22 @@ func atomicWriteFile(filePath string, data []byte, perm os.FileMode) error {
 		_ = d.Close()
 	}
 
+	_ = EnforceSecurePermissions(filePath, perm)
+
 	return nil
+}
+
+// EnforceSecurePermissions applies POSIX 0600 on macOS/Linux and strips inherited permissions on Windows NTFS
+func EnforceSecurePermissions(filePath string, perm os.FileMode) error {
+	if runtime.GOOS == "windows" {
+		// On Windows, os.Chmod only toggles readonly attribute. To achieve confidentiality equivalent to 0600,
+		// remove inheritance and grant (R,W) exclusively to the current user via icacls.
+		user := os.Getenv("USERNAME")
+		if user != "" {
+			cmd := exec.Command("icacls", filePath, "/inheritance:r", "/grant:r", fmt.Sprintf("%s:(R,W)", user))
+			_ = cmd.Run()
+		}
+		return nil
+	}
+	return os.Chmod(filePath, perm)
 }
