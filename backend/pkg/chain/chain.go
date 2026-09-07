@@ -1,7 +1,9 @@
 package chain
 
 import (
+	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -304,8 +306,31 @@ type accountFetchResult struct {
 	MosaicsFound    bool
 }
 
+// NormalizeAccountIdentifier strips hyphens and converts 50-hex addresses to 40-character Base32.
+func NormalizeAccountIdentifier(identifier string) string {
+	clean := strings.TrimSpace(identifier)
+	clean = strings.ReplaceAll(clean, "-", "")
+	// If 50-char hex address, convert to 40-char unhyphenated Base32
+	if len(clean) == 50 {
+		if raw, err := hex.DecodeString(clean); err == nil && len(raw) == 25 {
+			return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
+		}
+	}
+	return clean
+}
+
+func resolveApiNode(apiNode string) string {
+	clean := strings.TrimSpace(apiNode)
+	if clean == "" || strings.Contains(clean, "explorer.xpxsirius.io") {
+		return PublicMainnetNodes[0]
+	}
+	return strings.TrimRight(clean, "/")
+}
+
 func (cm *ChainMonitor) fetchAccountData(identifier, apiNode string) (*accountFetchResult, error) {
-	url := fmt.Sprintf("%s/account/%s", apiNode, strings.TrimSpace(identifier))
+	apiNode = resolveApiNode(apiNode)
+	cleanId := NormalizeAccountIdentifier(identifier)
+	url := fmt.Sprintf("%s/account/%s", apiNode, cleanId)
 	resp, err := cm.httpClient.Get(url)
 	if err != nil {
 		return nil, err
@@ -371,12 +396,10 @@ func (cm *ChainMonitor) fetchAccountData(identifier, apiNode string) (*accountFe
 
 // CheckHarvesterStatus queries explorer / public REST API to detect harvesting state & eligibility
 func (cm *ChainMonitor) CheckHarvesterStatus(identifier, apiNode string) (*HarvesterStatus, error) {
-	if apiNode == "" {
-		apiNode = PublicMainnetNodes[0]
-	}
-	apiNode = strings.TrimRight(apiNode, "/")
+	apiNode = resolveApiNode(apiNode)
+	cleanId := NormalizeAccountIdentifier(identifier)
 
-	cacheKey := fmt.Sprintf("%s|%s", strings.TrimSpace(identifier), apiNode)
+	cacheKey := fmt.Sprintf("%s|%s", cleanId, apiNode)
 	cm.cacheMu.RLock()
 	if entry, found := cm.harvesterCache[cacheKey]; found {
 		if time.Since(entry.timestamp) < 20*time.Second {
@@ -386,7 +409,7 @@ func (cm *ChainMonitor) CheckHarvesterStatus(identifier, apiNode string) (*Harve
 	}
 	cm.cacheMu.RUnlock()
 
-	primary, err := cm.fetchAccountData(identifier, apiNode)
+	primary, err := cm.fetchAccountData(cleanId, apiNode)
 	if err != nil {
 		return &HarvesterStatus{
 			IsLinked:    false,
@@ -451,7 +474,7 @@ func (cm *ChainMonitor) CheckHarvesterStatus(identifier, apiNode string) (*Harve
 
 	// Query /account/{harvesterKey}/harvesting for POS+ Committee registration
 	if harvesterKey != "" {
-		hUrl := fmt.Sprintf("%s/account/%s/harvesting", apiNode, harvesterKey)
+		hUrl := fmt.Sprintf("%s/account/%s/harvesting", apiNode, NormalizeAccountIdentifier(harvesterKey))
 		hResp, hErr := cm.httpClient.Get(hUrl)
 		if hErr == nil && hResp.StatusCode == http.StatusOK {
 			var hList []struct {
