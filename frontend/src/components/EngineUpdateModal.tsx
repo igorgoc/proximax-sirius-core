@@ -111,7 +111,10 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
   const getStepStatus = (stepIndex: number) => {
     // Step 0: Verification, Step 1: Swap, Step 2: Healthcheck
     if (isCompleted) return 'completed';
-    if (isRolledBack && stepIndex === 2) return 'failed';
+    if (isRolledBack) {
+      if (stepIndex <= 1) return 'completed';
+      if (stepIndex === 2) return 'failed';
+    }
     if (isFailed && stepIndex === 0) return 'failed';
 
     if (state === 'verifying') {
@@ -296,7 +299,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                   <div className="mt-0.5">
                     {getStepStatus(2) === 'active' && <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />}
                     {getStepStatus(2) === 'completed' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-                    {getStepStatus(2) === 'failed' && <RotateCcw className="w-4 h-4 text-amber-400" />}
+                    {getStepStatus(2) === 'failed' && <AlertTriangle className="w-4 h-4 text-amber-400" />}
                     {getStepStatus(2) === 'pending' && <div className="w-4 h-4 rounded-full border border-zinc-600" />}
                   </div>
                   <div className="flex-1">
