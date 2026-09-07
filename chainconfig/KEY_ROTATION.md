@@ -49,7 +49,7 @@ Generate `NEW_PRIVATE_KEY_HEX` and `NEW_PUBLIC_KEY_HEX` as shown in Section 2.
 Update [`chainconfig/engine.compat.json`](engine.compat.json):
 ```json
 {
-  "engineRepository": "proximax-storage/cpp-xpx-chain",
+  "engineRepository": "igorgoc/cpp-xpx-chain",
   "engineMinCompatible": "v1.9.0",
   "engineMaxCompatible": "v1.9.99",
   "recommendedVersion": "v1.9.8",

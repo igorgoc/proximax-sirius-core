@@ -98,7 +98,7 @@ func setupTestEnvironment(t *testing.T) (string, string, ed25519.PublicKey, ed25
 	}
 
 	manifest := CompatibilityManifest{
-		EngineRepository:    "proximax-storage/cpp-xpx-chain",
+		EngineRepository:    "igorgoc/cpp-xpx-chain",
 		EngineMinCompatible: "v1.9.0",
 		EngineMaxCompatible: "v1.9.99",
 		RecommendedVersion:  "v1.9.8",

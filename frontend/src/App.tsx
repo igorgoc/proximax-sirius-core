@@ -65,7 +65,7 @@ export function App() {
         targetVersion: 'v1.9.8',
         hasUpdate: true,
         releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
-        releaseUrl: 'https://github.com/proximax-storage/cpp-xpx-chain/releases/tag/v1.9.8',
+        releaseUrl: 'https://github.com/igorgoc/cpp-xpx-chain/releases/tag/v1.9.8',
         isApplying: false,
         state: 'idle',
         rollbackOccurred: false,

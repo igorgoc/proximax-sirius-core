@@ -1,5 +1,5 @@
 {
-  "engineRepository": "proximax-storage/cpp-xpx-chain",
+  "engineRepository": "igorgoc/cpp-xpx-chain",
   "engineMinCompatible": "v1.9.0",
   "engineMaxCompatible": "v1.9.99",
   "recommendedVersion": "v1.9.7",
