@@ -73,4 +73,15 @@ func TestSignReleaseLifecycle(t *testing.T) {
 	if ed25519.Verify(pubKeyBytes, checksumsData, badSigData) {
 		t.Fatal("Adversarial test failed: tampered signature was accepted!")
 	}
+
+	// 7. Verify resolution from JSON manifest format
+	compatFile := filepath.Join(tempDir, "engine.compat.json")
+	_ = os.WriteFile(compatFile, []byte(`{"releasePublicKeyHex":"`+pubHex+`"}`), 0644)
+	resolvedPubKey, err := resolvePublicKey(compatFile)
+	if err != nil {
+		t.Fatalf("resolvePublicKey from JSON failed: %v", err)
+	}
+	if hex.EncodeToString(resolvedPubKey) != pubHex {
+		t.Fatalf("Mismatch in resolved pubkey from JSON: got %s, want %s", hex.EncodeToString(resolvedPubKey), pubHex)
+	}
 }

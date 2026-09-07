@@ -151,13 +151,25 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
 
-          # Cryptographically sign SHA256SUMS if release key secret is set
-          if [ -n "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" ]; then
-            echo "-> Signing SHA256SUMS with Ed25519 release key..."
-            ../sign-release sign -key "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" -dir .
-          else
-            echo "ℹ Notice: ENGINE_RELEASE_PRIVATE_KEY secret not configured. Generating SHA256SUMS only."
+          # Enforce Fail-Closed Security Invariant:
+          # Refuse to publish unsigned release if ENGINE_RELEASE_PRIVATE_KEY is missing.
+          if [ -z "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" ]; then
+            echo "::error::CRITICAL SECURITY FAILURE: ENGINE_RELEASE_PRIVATE_KEY secret is not configured in repository secrets!"
+            echo "All release artifacts MUST be cryptographically signed with the official Ed25519 release key."
+            echo "Refusing to publish unsigned release (Fail-Closed)."
+            exit 1
           fi
+
+          echo "-> Cryptographically signing release artifacts with Ed25519 release key..."
+          ../sign-release sign -key "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" -dir .
+
+          # Verify signature immediately against the repository's public key in engine.compat.json
+          echo "-> Verifying generated signature against engine.compat.json..."
+          ../sign-release verify \
+            -pubkey ../chainconfig/engine.compat.json \
+            -checksums SHA256SUMS \
+            -sig SHA256SUMS.sig \
+            -dir .
 
       - name: Determine Release Tag
         id: tag

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -272,6 +273,14 @@ func resolvePublicKey(input string) (ed25519.PublicKey, error) {
 	str := strings.TrimSpace(input)
 	if data, err := os.ReadFile(str); err == nil {
 		str = strings.TrimSpace(string(data))
+		if strings.HasPrefix(str, "{") {
+			var m struct {
+				ReleasePublicKeyHex string `json:"releasePublicKeyHex"`
+			}
+			if jErr := json.Unmarshal([]byte(str), &m); jErr == nil && m.ReleasePublicKeyHex != "" {
+				str = strings.TrimSpace(m.ReleasePublicKeyHex)
+			}
+		}
 	}
 
 	bytes, err := hex.DecodeString(str)
