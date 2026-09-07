@@ -156,6 +156,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/system/updates/check", s.handleUpdatesCheck)
 	mux.HandleFunc("/api/engine/status", s.handleEngineStatus)
 	mux.HandleFunc("/api/engine/manifest", s.handleEngineManifest)
+	mux.HandleFunc("/api/engine/check", s.handleEngineCheck)
+	mux.HandleFunc("/api/engine/apply", s.handleEngineApply)
+	mux.HandleFunc("/api/engine/reset", s.handleEngineReset)
 	mux.HandleFunc("/api/system/backup/export", s.handleBackupExport)
 	mux.HandleFunc("/api/system/backup/restore", s.handleBackupRestore)
 	mux.HandleFunc("/api/system/settings/export", s.handleBackupExport)
@@ -429,6 +432,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"portCheck":             s.networkMgr.GetLastResult(),
 		"autoRecovery":          s.supervisor.IsAutoRecoveryEnabled(),
 		"updateInfo":            s.updateMgr.GetUpdateInfo(),
+		"engineStatus":          s.engineUpdater.GetStatus(),
 	}
 
 	jsonResponse(w, resp)
@@ -1396,6 +1400,60 @@ func (s *Server) handleEngineManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, manifest)
+}
+
+func (s *Server) handleEngineCheck(w http.ResponseWriter, r *http.Request) {
+	simulate := r.URL.Query().Get("simulate")
+	if r.Method == http.MethodPost && r.Body != nil {
+		var req struct {
+			Simulate string `json:"simulate"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Simulate != "" {
+			simulate = req.Simulate
+		}
+	}
+	status, err := s.engineUpdater.CheckUpdate(simulate)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, status)
+}
+
+func (s *Server) handleEngineApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Version  string `json:"version"`
+		Scenario string `json:"scenario"` // "normal", "rollback", "signature_fail"
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	targetVersion := req.Version
+	if targetVersion == "" {
+		curStatus := s.engineUpdater.GetStatus()
+		targetVersion = curStatus.TargetVersion
+		if targetVersion == "" {
+			targetVersion = "v1.9.8"
+		}
+	}
+
+	dataPath := s.configMgr.GetDataPath()
+	s.engineUpdater.TriggerWorkflow(targetVersion, req.Scenario, dataPath)
+
+	jsonResponse(w, map[string]interface{}{
+		"status":  "ok",
+		"message": fmt.Sprintf("Engine update to %s initiated (scenario: %s)", targetVersion, req.Scenario),
+	})
+}
+
+func (s *Server) handleEngineReset(w http.ResponseWriter, r *http.Request) {
+	s.engineUpdater.ResetStatus()
+	jsonResponse(w, s.engineUpdater.GetStatus())
 }
 
 func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {

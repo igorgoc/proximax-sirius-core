@@ -12,7 +12,9 @@ import { MaintenanceTab } from './components/MaintenanceTab';
 import { SetupWizard } from './components/SetupWizard';
 import { AboutModal } from './components/AboutModal';
 import { QuitConfirmModal } from './components/QuitConfirmModal';
-import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats } from './types';
+import { EngineUpdateBanner } from './components/EngineUpdateBanner';
+import { EngineUpdateModal } from './components/EngineUpdateModal';
+import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats, EngineUpdateStatus } from './types';
 
 export function App() {
   const [activeTab, setActiveTab] = useState(() => {
@@ -55,7 +57,58 @@ export function App() {
 
   // Periodic status poll
   const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [engineStatus, setEngineStatus] = useState<EngineUpdateStatus | null>(() => {
+    const testView = new URLSearchParams(window.location.search).get('test_view');
+    if (testView === 'banner' || testView === 'modal') {
+      return {
+        currentVersion: 'v1.9.7',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
+        releaseUrl: 'https://github.com/proximax-storage/cpp-xpx-chain/releases/tag/v1.9.8',
+        isApplying: false,
+        state: 'idle',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'progress') {
+      return {
+        currentVersion: 'v1.9.7',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
+        isApplying: true,
+        state: 'swapping',
+        message: 'Stopping engine gracefully, creating sirius.bc.bak backup, and performing atomic binary swap...',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'rollback') {
+      return {
+        currentVersion: 'v1.9.7',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
+        isApplying: false,
+        state: 'rolled_back',
+        rollbackOccurred: true,
+        message: 'Post-update healthcheck failed: process crashed on boot (SIGSEGV). Automated rollback restored previous binary (v1.9.7) and restarted the node cleanly.',
+      };
+    }
+    return null;
+  });
+  const [engineModalOpen, setEngineModalOpen] = useState(() => {
+    const testView = new URLSearchParams(window.location.search).get('test_view');
+    return testView === 'modal' || testView === 'progress' || testView === 'rollback';
+  });
   const [autoRecovery, setAutoRecovery] = useState(true);
+
+  // Global event listener to open engine update modal from anywhere
+  useEffect(() => {
+    const handler = () => setEngineModalOpen(true);
+    window.addEventListener('open-engine-updater', handler);
+    return () => window.removeEventListener('open-engine-updater', handler);
+  }, []);
 
   const fetchStatus = async () => {
     try {
@@ -68,6 +121,13 @@ export function App() {
         if (data.storageStatus) setStorageStatus(data.storageStatus);
         if (data.portCheck) setPortCheck(data.portCheck);
         if (data.updateInfo) setUpdateInfo(data.updateInfo);
+        if (data.engineStatus) {
+          setEngineStatus(prev => {
+            const testView = new URLSearchParams(window.location.search).get('test_view');
+            if (testView) return prev;
+            return data.engineStatus;
+          });
+        }
         if (typeof data.autoRecovery === 'boolean') setAutoRecovery(data.autoRecovery);
 
         setConfig((prev) => {
@@ -261,6 +321,12 @@ export function App() {
         loading={loading}
       />
 
+      {/* Sirius Engine Update Available Banner */}
+      <EngineUpdateBanner
+        engineStatus={engineStatus}
+        onOpenModal={() => setEngineModalOpen(true)}
+      />
+
       {/* Tabs navigation */}
       <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
 
@@ -359,6 +425,14 @@ export function App() {
         onClose={handleCancelQuit}
         onStopEverything={handleStopEverything}
         onKeepBackground={handleKeepBackground}
+      />
+
+      {/* Sirius Engine Update Modal */}
+      <EngineUpdateModal
+        isOpen={engineModalOpen}
+        onClose={() => setEngineModalOpen(false)}
+        engineStatus={engineStatus}
+        onRefreshStatus={fetchStatus}
       />
     </div>
   );

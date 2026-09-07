@@ -64,13 +64,24 @@ func NewChainMonitor() *ChainMonitor {
 // GetNetworkHeight queries reliable public nodes for current mainnet height and takes the highest
 func (cm *ChainMonitor) GetNetworkHeight() (int64, error) {
 	cm.cacheMu.RLock()
-	if cm.cachedNetHeight > 0 && time.Since(cm.netHeightTime) < 20*time.Second {
-		h := cm.cachedNetHeight
-		cm.cacheMu.RUnlock()
-		return h, nil
-	}
+	h := cm.cachedNetHeight
+	isFresh := h > 0 && time.Since(cm.netHeightTime) < 30*time.Second
 	cm.cacheMu.RUnlock()
 
+	if isFresh {
+		return h, nil
+	}
+
+	if h > 0 {
+		// Non-blocking refresh in background
+		go cm.pollNetworkHeight()
+		return h, nil
+	}
+
+	return cm.pollNetworkHeight()
+}
+
+func (cm *ChainMonitor) pollNetworkHeight() (int64, error) {
 	var maxHeight int64
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -130,7 +141,12 @@ func (cm *ChainMonitor) GetLocalHeight(dataPath string) (int64, error) {
 }
 
 func (cm *ChainMonitor) queryHeightFromUrl(url string) (int64, error) {
-	resp, err := cm.httpClient.Get(fmt.Sprintf("%s/chain/height", strings.TrimRight(url, "/")))
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/chain/height", strings.TrimRight(url, "/")), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := cm.httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}

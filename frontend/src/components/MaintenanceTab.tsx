@@ -17,6 +17,7 @@ import {
   Archive,
   Layers,
   Zap,
+  ArrowUpCircle,
 } from 'lucide-react';
 import { SnapshotStatus, DataBackupStatus, StorageConvertStatus, UpdateInfo } from '../types';
 import { DirectoryDropdown } from './DirectoryDropdown';
@@ -534,6 +535,13 @@ export const MaintenanceTab: React.FC = () => {
             >
               <RefreshCw className={`w-3 h-3 ${checkingUpdate ? 'animate-spin' : ''}`} />
               <span>{checkingUpdate ? 'Checking...' : 'Check GitHub'}</span>
+            </button>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-engine-updater'))}
+              className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-xs font-semibold border border-indigo-500/40 transition-all flex items-center space-x-1"
+            >
+              <ArrowUpCircle className="w-3 h-3" />
+              <span>Engine Binary</span>
             </button>
             <button
               onClick={handleApplyUpdate}

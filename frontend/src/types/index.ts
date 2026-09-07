@@ -176,6 +176,19 @@ export interface UpdateInfo {
   updateMessage?: string;
 }
 
+export interface EngineUpdateStatus {
+  currentVersion: string;
+  targetVersion?: string;
+  hasUpdate: boolean;
+  releaseNotes?: string;
+  releaseUrl?: string;
+  isApplying: boolean;
+  state: 'idle' | 'verifying' | 'swapping' | 'healthcheck' | 'completed' | 'rolled_back' | 'failed';
+  message?: string;
+  lastChecked?: string;
+  rollbackOccurred?: boolean;
+}
+
 export interface SeedPingInfo {
   endpoint: string;
   latencyMs: number;
