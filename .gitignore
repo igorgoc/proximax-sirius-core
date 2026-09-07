@@ -43,6 +43,8 @@ chainconfig/resources/config-manager.properties
 # Compiled Go manager binaries & PID
 bin/sirius-core-manager
 bin/sirius-node-manager
+bin/sign-release
+bin/sign-release.exe
 backend/sirius-core
 backend/proximax-sirius-core
 .sirius-core.pid

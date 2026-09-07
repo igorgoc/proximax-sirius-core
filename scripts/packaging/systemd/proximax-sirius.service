@@ -1,0 +1,42 @@
+[Unit]
+Description=ProximaX Sirius Mainnet Peer Node & Manager
+Documentation=https://github.com/igorgoc/proximax-sirius-core
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sirius
+Group=sirius
+WorkingDirectory=/opt/proximax-sirius-core
+
+# Environment and Dynamic Library Linker Path
+Environment="LD_LIBRARY_PATH=/opt/proximax-sirius-core/bin"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Service Execution
+ExecStart=/opt/proximax-sirius-core/sirius-core
+ExecStop=/bin/kill -SIGINT $MAINPID
+TimeoutStopSec=30s
+
+# Process Supervision & Auto-Recovery
+Restart=on-failure
+RestartSec=5s
+
+# Resource Limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security Hardening
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=proximax-sirius
+
+[Install]
+WantedBy=multi-user.target

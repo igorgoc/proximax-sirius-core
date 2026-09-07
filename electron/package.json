@@ -7,7 +7,9 @@
   "author": "ProximaX Foundation",
   "scripts": {
     "start": "electron .",
-    "build:mac": "electron-builder --mac"
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:win": "electron-builder --win"
   },
   "build": {
     "appId": "io.xpxsirius.mainnet.peer",
@@ -22,6 +24,25 @@
       ],
       "hardenedRuntime": false,
       "gatekeeperAssess": false
+    },
+    "linux": {
+      "category": "Network",
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
     },
     "dmg": {
       "title": "${productName} ${version}",

@@ -1,0 +1,182 @@
+name: Cross-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.9.7)'
+        required: true
+        default: 'v1.9.7'
+
+permissions:
+  contents: write
+
+jobs:
+  build-frontend:
+    name: Build Frontend UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build React UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/dist/
+          retention-days: 1
+
+  package-posix:
+    name: Package (${{ matrix.platform.name }})
+    needs: build-frontend
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-amd64
+            os: ubuntu-latest
+            goarch: amd64
+            script: ./scripts/packaging/package-linux.sh amd64
+            dist_path: dist/linux-amd64/*
+          - name: macos-arm64
+            os: macos-latest
+            goarch: arm64
+            script: ./scripts/packaging/package-macos.sh
+            dist_path: dist/macos-arm64/*
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/dist/
+
+      - name: Run Package Script
+        run: ${{ matrix.platform.script }}
+
+      - name: Upload Platform Package Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform.name }}
+          path: ${{ matrix.platform.dist_path }}
+          retention-days: 1
+
+  package-windows:
+    name: Package (windows-amd64)
+    needs: build-frontend
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/dist/
+
+      - name: Run Windows Packaging Script
+        shell: pwsh
+        run: .\scripts\packaging\package-windows.ps1
+
+      - name: Upload Windows Package Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          path: dist/windows-amd64/*
+          retention-days: 1
+
+  publish-release:
+    name: Compute Hashes, Sign & Publish Release
+    needs: [package-posix, package-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Build sign-release Utility
+        working-directory: backend
+        run: go build -ldflags="-s -w" -o ../sign-release ./cmd/sign-release
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Compute Checksums & Sign Release
+        run: |
+          cd release-assets
+          ls -la
+
+          # Generate standard SHA256SUMS for all package archives
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+          # Cryptographically sign SHA256SUMS if release key secret is set
+          if [ -n "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" ]; then
+            echo "-> Signing SHA256SUMS with Ed25519 release key..."
+            ../sign-release sign -key "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" -dir .
+          else
+            echo "ℹ Notice: ENGINE_RELEASE_PRIVATE_KEY secret not configured. Generating SHA256SUMS only."
+          fi
+
+      - name: Determine Release Tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "val=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "val=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.val }}
+          name: "ProximaX Sirius Core Native ${{ steps.tag.outputs.val }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
