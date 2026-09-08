@@ -109,6 +109,52 @@ export interface DataBackupStatus {
   errorMessage?: string;
 }
 
+export type SnapshotOpStage =
+  | 'idle'
+  | 'fetching_manifest'
+  | 'verifying_signature'
+  | 'downloading'
+  | 'verifying_checksum'
+  | 'extracting'
+  | 'archiving'
+  | 'completed'
+  | 'error'
+  | 'cancelled';
+
+export interface SnapshotManifest {
+  version: string;
+  chainHeight: number;
+  network: string;
+  archiveName: string;
+  downloadUrl: string;
+  sha256: string;
+  format: string;
+  uncompressedGb?: number;
+  compressedBytes?: number;
+  createdAt: string;
+}
+
+export interface SnapshotProgress {
+  percentage: number;
+  processedBytes: number;
+  totalBytes: number;
+  speedMbs: number;
+  etaSeconds: number;
+  currentItem?: string;
+}
+
+export interface SnapshotManagerStatus {
+  stage: SnapshotOpStage;
+  operation?: string;
+  message: string;
+  progress: SnapshotProgress;
+  manifest?: SnapshotManifest;
+  targetFile?: string;
+  errorMessage?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 export interface StorageConvertStatus {
   status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   processedDirs: number;

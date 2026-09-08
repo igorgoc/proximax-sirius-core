@@ -28,6 +28,7 @@ import (
 	"proximax-sirius-core/pkg/supervisor"
 	"proximax-sirius-core/pkg/migrator"
 	"proximax-sirius-core/pkg/network"
+	"proximax-sirius-core/pkg/snapshot"
 	"proximax-sirius-core/pkg/storage"
 	"proximax-sirius-core/pkg/updater"
 )
@@ -57,6 +58,7 @@ type Server struct {
 	storageMgr       *storage.StorageManager
 	networkMgr       *network.NetworkManager
 	migrator         *migrator.Migrator
+	snapshotMgr      *snapshot.SnapshotManager
 	staticFS         fs.FS
 	apiToken         string
 	wsMutex          sync.Mutex
@@ -89,6 +91,14 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	nm := network.NewNetworkManager()
 	mig := migrator.New()
 
+	releasePubKey := "538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
+	if eu != nil {
+		if m, err := eu.LoadManifest(); err == nil && m.ReleasePublicKeyHex != "" {
+			releasePubKey = m.ReleasePublicKeyHex
+		}
+	}
+	snapMgr := snapshot.NewSnapshotManager(supervisor, releasePubKey, nil)
+
 	// Start self-healing process watchdog
 	supervisor.StartWatchdog(configMgr.GetDataPath)
 
@@ -105,6 +115,7 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 		storageMgr:       sm,
 		networkMgr:       nm,
 		migrator:         mig,
+		snapshotMgr:      snapMgr,
 		staticFS:         staticFS,
 		apiToken:         apiToken,
 	}
@@ -150,9 +161,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/maintenance/data-backup/status", s.handleMaintenanceDataBackupStatus)
 	mux.HandleFunc("/api/maintenance/data-backup/cancel", s.handleMaintenanceDataBackupCancel)
 	mux.HandleFunc("/api/maintenance/storage-convert", s.handleMaintenanceStorageConvert)
-	mux.HandleFunc("/api/maintenance/storage-convert/status", s.handleMaintenanceStorageConvertStatus)
-	mux.HandleFunc("/api/maintenance/storage-convert/cancel", s.handleMaintenanceStorageConvertCancel)
 	mux.HandleFunc("/api/maintenance/clean-logs", s.handleMaintenanceCleanLogs)
+	mux.HandleFunc("/api/snapshot/status", s.handleSnapshotStatus)
+	mux.HandleFunc("/api/snapshot/cancel", s.handleSnapshotCancel)
+	mux.HandleFunc("/api/snapshot/create", s.handleSnapshotCreate)
+	mux.HandleFunc("/api/snapshot/restore/local", s.handleSnapshotRestoreLocal)
+	mux.HandleFunc("/api/snapshot/restore/remote", s.handleSnapshotRestoreRemote)
+	mux.HandleFunc("/api/snapshot/mock/", s.handleSnapshotMock)
 	mux.HandleFunc("/api/system/updates/check", s.handleUpdatesCheck)
 	mux.HandleFunc("/api/engine/status", s.handleEngineStatus)
 	mux.HandleFunc("/api/engine/manifest", s.handleEngineManifest)

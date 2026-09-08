@@ -23,6 +23,7 @@ import {
 import { NodeConfig, HarvestStats, HarvesterStatus, NodeMetrics } from '../types';
 import { formatXPXInMillions, formatSiriusAddress } from '../utils/format';
 import { DirectoryDropdown } from './DirectoryDropdown';
+import { SnapshotSubTab } from './SnapshotSubTab';
 
 interface ConfigTabProps {
   config: NodeConfig | null;
@@ -32,7 +33,12 @@ interface ConfigTabProps {
 }
 
 export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metrics, onRefreshConfig }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'keys' | 'raw'>('general');
+  const [activeSubTab, setActiveSubTab] = useState<'general' | 'keys' | 'snapshots' | 'raw'>(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#snapshots') {
+      return 'snapshots';
+    }
+    return 'general';
+  });
   const [showAdvancedPorts, setShowAdvancedPorts] = useState(false);
   const [showBootKey, setShowBootKey] = useState(false);
   const [showHarvestKey, setShowHarvestKey] = useState(false);
@@ -380,6 +386,14 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
               }`}
             >
               Validator Keys
+            </button>
+            <button
+              onClick={() => setActiveSubTab('snapshots')}
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                activeSubTab === 'snapshots' ? 'bg-[#262B34] text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Snapshots
             </button>
             <button
               onClick={() => setActiveSubTab('raw')}
@@ -802,8 +816,17 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
         </section>
       )}
 
-      {/* 7. Bottom Action Bar (Permanently accessible on General, Keys, Ports) */}
-      {activeSubTab !== 'raw' && (
+      {/* 6. Snapshots Management Sub-Tab */}
+      {activeSubTab === 'snapshots' && (
+        <SnapshotSubTab
+          currentDataPath={formData.dataPath || config?.dataPath || './chainconfig/data'}
+          blockHeight={metrics?.blockHeight}
+          onRefreshConfig={onRefreshConfig}
+        />
+      )}
+
+      {/* 7. Bottom Action Bar (Permanently accessible on General and Keys) */}
+      {(activeSubTab === 'general' || activeSubTab === 'keys') && (
         <section className="bg-[#181B20] border border-[#262B34] shadow-md rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             {isDirty ? (

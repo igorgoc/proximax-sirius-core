@@ -22,6 +22,7 @@ export function App() {
     if (param) return param;
     const hash = window.location.hash.replace('#', '');
     if (hash === 'storage' || hash.startsWith('storage-')) return 'validator';
+    if (hash === 'snapshots') return 'config';
     if (hash) return hash;
     return 'overview';
   });
