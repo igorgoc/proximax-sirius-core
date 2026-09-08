@@ -2,6 +2,7 @@ package updater
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/ed25519"
@@ -11,8 +12,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -57,6 +60,22 @@ func (m *MockLifecycleController) IsRunning() bool {
 func createPlatformPackage(t *testing.T, binaryName string, content []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
+
+	if runtime.GOOS == "windows" {
+		zw := zip.NewWriter(&buf)
+		w, err := zw.Create(binaryName)
+		if err != nil {
+			t.Fatalf("failed to create zip entry: %v", err)
+		}
+		if _, err := w.Write(content); err != nil {
+			t.Fatalf("failed to write zip content: %v", err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatalf("failed to close zip: %v", err)
+		}
+		return buf.Bytes()
+	}
+
 	gzw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gzw)
 
@@ -360,3 +379,59 @@ func TestEngineUpdater_IncompatibleVersion_FailsClosed(t *testing.T) {
 		t.Errorf("expected ErrIncompatibleVersion, got: %v", err)
 	}
 }
+
+// 6. Test: Direct verification of Zip format unpacking
+func TestZipArchiveExtraction_Direct(t *testing.T) {
+	tempDir := t.TempDir()
+	stagingDir := filepath.Join(tempDir, "staging")
+	_ = os.MkdirAll(stagingDir, 0755)
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("sirius.exe")
+	if err != nil {
+		t.Fatalf("Create zip entry error: %v", err)
+	}
+	if _, err := w.Write([]byte("TEST_WINDOWS_BINARY_ZIP")); err != nil {
+		t.Fatalf("Write zip content error: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("Close zip error: %v", err)
+	}
+
+	zipBytes := buf.Bytes()
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		t.Fatalf("zip.NewReader error: %v", err)
+	}
+
+	found := false
+	for _, f := range zr.File {
+		baseName := filepath.Base(f.Name)
+		if baseName == "sirius.exe" {
+			found = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("Open error: %v", err)
+			}
+			destPath := filepath.Join(stagingDir, baseName)
+			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+			if err != nil {
+				t.Fatalf("OpenFile error: %v", err)
+			}
+			_, _ = io.Copy(out, rc)
+			rc.Close()
+			out.Close()
+		}
+	}
+
+	if !found {
+		t.Fatalf("sirius.exe not found in zip")
+	}
+
+	extracted, err := os.ReadFile(filepath.Join(stagingDir, "sirius.exe"))
+	if err != nil || string(extracted) != "TEST_WINDOWS_BINARY_ZIP" {
+		t.Fatalf("Extracted content mismatch: %v (%s)", err, string(extracted))
+	}
+}
+

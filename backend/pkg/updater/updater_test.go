@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -44,7 +45,7 @@ func TestValidationLogic(t *testing.T) {
 		t.Fatalf("Expected 64-char hex SHA256, got: %s", shaHex)
 	}
 
-	// 5. File permissions test (0600)
+	// 5. File permissions test (0600 on POSIX; Windows NTFS handles ACLs differently)
 	tmpDir := t.TempDir()
 	targetPath := filepath.Join(tmpDir, "test.properties")
 	if err := os.WriteFile(targetPath, validProps, 0600); err != nil {
@@ -54,7 +55,7 @@ func TestValidationLogic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to stat file: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("Expected 0600 permissions, got: %v", info.Mode().Perm())
 	}
 }
