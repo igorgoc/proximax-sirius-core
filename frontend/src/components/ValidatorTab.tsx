@@ -70,7 +70,12 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
 
   const isRunning = metrics?.status === 'running';
   const isAutoHarvesting = config?.isAutoHarvesting ?? false;
-  const hasHarvestKey = Boolean(config?.harvestKey && config.harvestKey !== '');
+  const hasHarvestKey = Boolean(
+    config?.hasHarvestKey ||
+    (config?.harvestKey && config.harvestKey !== '') ||
+    (config?.harvestPublicKey && config.harvestPublicKey !== '') ||
+    (config?.harvestAddress && config.harvestAddress !== '')
+  );
 
   // Truncate long strings
   const truncate = (str?: string, front = 8, back = 8) => {
@@ -145,8 +150,8 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
         />
       ) : (
         <>
-          {/* 1. Missing Key State Banner */}
-      {!hasHarvestKey && (
+          {/* 1. Missing Key State Banner (only shown after config loads if key is truly missing) */}
+      {config !== null && !loading && !hasHarvestKey && (
         <div className="bg-[#181B20] border border-amber-900/40 rounded-lg p-5 flex items-center justify-between">
           <div className="flex items-center space-x-3.5">
             <AlertCircle className="w-5 h-5 text-amber-400" />
@@ -310,14 +315,6 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                 {harvestStats?.lastHarvestedHeight ? `#${formatNumber(harvestStats.lastHarvestedHeight)}` : '—'}
               </span>
             </div>
-            {harvestStats?.lastHarvestedTime && (
-              <div className="flex justify-between py-1 border-b border-[#262B34]">
-                <span className="text-slate-400">Last Harvested Time</span>
-                <span className="font-mono text-slate-200">
-                  {formatToLocalTime(harvestStats.lastHarvestedTime)}
-                </span>
-              </div>
-            )}
           </div>
         </section>
 

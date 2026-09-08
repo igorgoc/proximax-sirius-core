@@ -297,9 +297,6 @@ export const BlocksValidatedModal: React.FC<BlocksValidatedModalProps> = ({
                         <span>#{latestBlock.height.toLocaleString()}</span>
                         <ExternalLink className="w-3 h-3 text-slate-500" />
                       </a>
-                      <span className="text-xs font-medium text-emerald-400">
-                        (+{latestBlock.feeXPX.toFixed(4)} XPX)
-                      </span>
                     </div>
                     <span className="text-[11px] text-slate-400 block">
                       {formatRelativeTime(latestBlock.timestamp)} • {formatToLocalTime(latestBlock.timestamp, false)}
@@ -330,9 +327,6 @@ export const BlocksValidatedModal: React.FC<BlocksValidatedModalProps> = ({
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Last 10 Blocks Harvested
                 </h4>
-                <span className="text-[10px] bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded border border-slate-700/50">
-                  Showing {Math.min(filteredBlocks.length, 10)} of {validatedBlocks.length}
-                </span>
               </div>
 
               {validatedBlocks.length > 0 && (

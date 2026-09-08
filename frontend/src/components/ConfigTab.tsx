@@ -20,17 +20,18 @@ import {
   X,
   Loader2
 } from 'lucide-react';
-import { NodeConfig, HarvestStats, HarvesterStatus } from '../types';
+import { NodeConfig, HarvestStats, HarvesterStatus, NodeMetrics } from '../types';
 import { formatXPXInMillions, formatSiriusAddress } from '../utils/format';
 import { DirectoryDropdown } from './DirectoryDropdown';
 
 interface ConfigTabProps {
   config: NodeConfig | null;
   harvestStats?: HarvestStats | null;
+  metrics?: NodeMetrics | null;
   onRefreshConfig: () => void;
 }
 
-export const ConfigTab: React.FC<ConfigTabProps> = ({ config, onRefreshConfig }) => {
+export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metrics, onRefreshConfig }) => {
   const [activeSubTab, setActiveSubTab] = useState<'general' | 'keys' | 'raw'>('general');
   const [showAdvancedPorts, setShowAdvancedPorts] = useState(false);
   const [showBootKey, setShowBootKey] = useState(false);
@@ -441,11 +442,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, onRefreshConfig })
               <div className="bg-[#0F1115] border border-[#262B34] rounded p-3 text-xs text-slate-400 space-y-1">
                 <div className="flex justify-between">
                   <span>Active Architecture:</span>
-                  <span className="font-mono text-slate-200">Bitcoin-Style Chunked Binary (65,536 blocks/chunk)</span>
+                  <span className="font-mono text-slate-200">Chunked binary</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Total Inodes Used:</span>
-                  <span className="font-mono text-emerald-400 font-semibold">212 Chunk Folders (vs 27.6M legacy files)</span>
+                  <span className="font-mono text-emerald-400 font-semibold">
+                    {metrics?.blockHeight ? Math.ceil(metrics.blockHeight / 65536) : (harvestStats?.lastHarvestedHeight ? Math.ceil(harvestStats.lastHarvestedHeight / 65536) : 212)} folders, {(metrics?.blockHeight ? Math.ceil(metrics.blockHeight / 65536) : (harvestStats?.lastHarvestedHeight ? Math.ceil(harvestStats.lastHarvestedHeight / 65536) : 212)) * 4} files
+                  </span>
                 </div>
               </div>
             </div>

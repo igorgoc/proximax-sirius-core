@@ -36,7 +36,13 @@ export function App() {
   }, [activeTab]);
   const [darkMode, setDarkMode] = useState(true);
   const [metrics, setMetrics] = useState<NodeMetrics | null>(null);
-  const [config, setConfig] = useState<NodeConfig | null>(null);
+  const [config, setConfig] = useState<NodeConfig | null>(() => {
+    try {
+      const cached = localStorage.getItem('sirius_node_config');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return null;
+  });
   const [harvestStats, setHarvestStats] = useState<HarvestStats | null>(null);
   const [networkValidatorStats, setNetworkValidatorStats] = useState<NetworkValidatorStats | null>(null);
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
@@ -132,6 +138,9 @@ export function App() {
 
         setConfig((prev) => {
           if (!prev || JSON.stringify(prev) !== JSON.stringify(data.config)) {
+            if (data.config) {
+              try { localStorage.setItem('sirius_node_config', JSON.stringify(data.config)); } catch {}
+            }
             return data.config || null;
           }
           return prev;
@@ -380,7 +389,7 @@ export function App() {
         )}
 
         {activeTab === 'config' && (
-          <ConfigTab config={config} harvestStats={harvestStats} onRefreshConfig={fetchStatus} />
+          <ConfigTab config={config} harvestStats={harvestStats} metrics={metrics} onRefreshConfig={fetchStatus} />
         )}
 
         {activeTab === 'storage' && (
