@@ -293,13 +293,25 @@ func (sm *StorageManager) CleanSandboxes() (int64, error) {
 // CheckOnChainAccount queries the Sirius REST public API to verify replicator balance and registration
 func (sm *StorageManager) CheckOnChainAccount(pubKey string) ReplicatorAccountInfo {
 	sm.mu.RLock()
-	if sm.cachedAccount.PublicKey == pubKey && time.Since(sm.lastAccountScan) < 30*time.Second {
-		acc := sm.cachedAccount
-		sm.mu.RUnlock()
-		return acc
-	}
+	hasCached := sm.cachedAccount.PublicKey == pubKey && !sm.lastAccountScan.IsZero()
+	isFresh := hasCached && time.Since(sm.lastAccountScan) < 30*time.Second
+	cached := sm.cachedAccount
 	sm.mu.RUnlock()
 
+	if isFresh {
+		return cached
+	}
+
+	if hasCached {
+		// Asynchronous refresh in background
+		go sm.fetchOnChainAccount(pubKey)
+		return cached
+	}
+
+	return sm.fetchOnChainAccount(pubKey)
+}
+
+func (sm *StorageManager) fetchOnChainAccount(pubKey string) ReplicatorAccountInfo {
 	res := ReplicatorAccountInfo{
 		PublicKey: pubKey,
 	}
@@ -308,74 +320,92 @@ func (sm *StorageManager) CheckOnChainAccount(pubKey string) ReplicatorAccountIn
 		return res
 	}
 
-	for _, apiNode := range crypto.DefaultApiNodes {
-		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(apiNode, "/"), pubKey)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			cancel()
-			continue
-		}
-
-		resp, err := sm.httpClient.Do(req)
-		if err != nil {
-			cancel()
-			continue
-		}
-
-		if resp.StatusCode == http.StatusOK {
-			var accData struct {
-				Account struct {
-					Address string `json:"address"`
-					Mosaics []struct {
-						Id     [2]uint64 `json:"id"`
-						Amount [2]uint64 `json:"amount"`
-					} `json:"mosaics"`
-				} `json:"account"`
-			}
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			cancel()
-
-			if err := json.Unmarshal(body, &accData); err == nil {
-				res.Address = accData.Account.Address
-				res.IsRegistered = true
-				res.AccountType = "Mainnet Account"
-
-				// Separate XPX, SO (Storage Units), and SI (Streaming Units) mosaics
-				for _, m := range accData.Account.Mosaics {
-					raw := uint64(m.Amount[0]) | (uint64(m.Amount[1]) << 32)
-					if m.Id[0] == 2679028825 && m.Id[1] == 1076571991 {
-						// XPX Mosaic (divisibility 6)
-						res.BalanceXPX = float64(raw) / 1000000.0
-					} else if m.Id[0] == 1023420778 && m.Id[1] == 1123098103 {
-						// SO Mosaic (Storage Units in MB)
-						res.BalanceSO = float64(raw)
-					} else if m.Id[0] == 2957921797 && m.Id[1] == 2117282881 {
-						// SI Mosaic (Streaming Units in MB)
-						res.BalanceSI = float64(raw)
-					} else {
-						// Generic fallback if not matched
-						if res.BalanceXPX == 0 {
-							res.BalanceXPX = float64(raw) / 1000000.0
-						}
-					}
-				}
-				sm.mu.Lock()
-				sm.cachedAccount = res
-				sm.lastAccountScan = time.Now()
-				sm.mu.Unlock()
-				return res
-			}
-		} else {
-			resp.Body.Close()
-			cancel()
-		}
+	// Address derivation fallback directly from public key
+	if addr, err := sdk.NewAddressFromPublicKey(pubKey, sdk.Public); err == nil {
+		res.Address = addr.Address
 	}
 
-	// Address derivation fallback if account is not yet on-chain
-	if kp, err := crypto.KeyPairFromPrivateKey(pubKey); err == nil {
-		res.Address = kp.Address
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	type accResult struct {
+		info ReplicatorAccountInfo
+		ok   bool
+	}
+
+	resultCh := make(chan accResult, len(crypto.DefaultApiNodes))
+
+	for _, apiNode := range crypto.DefaultApiNodes {
+		go func(nodeUrl string) {
+			url := fmt.Sprintf("%s/account/%s", strings.TrimRight(nodeUrl, "/"), pubKey)
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+			if err != nil {
+				resultCh <- accResult{ok: false}
+				return
+			}
+
+			resp, err := sm.httpClient.Do(req)
+			if err != nil {
+				resultCh <- accResult{ok: false}
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				var accData struct {
+					Account struct {
+						Address string `json:"address"`
+						Mosaics []struct {
+							Id     [2]uint64 `json:"id"`
+							Amount [2]uint64 `json:"amount"`
+						} `json:"mosaics"`
+					} `json:"account"`
+				}
+				body, _ := io.ReadAll(resp.Body)
+				if err := json.Unmarshal(body, &accData); err == nil {
+					found := ReplicatorAccountInfo{
+						PublicKey:    pubKey,
+						Address:      accData.Account.Address,
+						IsRegistered: true,
+						AccountType:  "Mainnet Account",
+					}
+					for _, m := range accData.Account.Mosaics {
+						raw := uint64(m.Amount[0]) | (uint64(m.Amount[1]) << 32)
+						if m.Id[0] == 2679028825 && m.Id[1] == 1076571991 {
+							found.BalanceXPX = float64(raw) / 1000000.0
+						} else if m.Id[0] == 1023420778 && m.Id[1] == 1123098103 {
+							found.BalanceSO = float64(raw)
+						} else if m.Id[0] == 2957921797 && m.Id[1] == 2117282881 {
+							found.BalanceSI = float64(raw)
+						} else if found.BalanceXPX == 0 {
+							found.BalanceXPX = float64(raw) / 1000000.0
+						}
+					}
+					resultCh <- accResult{info: found, ok: true}
+					return
+				}
+			}
+			resultCh <- accResult{ok: false}
+		}(apiNode)
+	}
+
+	// Wait for first successful response or all to finish/timeout
+	received := 0
+	for received < len(crypto.DefaultApiNodes) {
+		select {
+		case r := <-resultCh:
+			received++
+			if r.ok {
+				cancel()
+				sm.mu.Lock()
+				sm.cachedAccount = r.info
+				sm.lastAccountScan = time.Now()
+				sm.mu.Unlock()
+				return r.info
+			}
+		case <-ctx.Done():
+			received = len(crypto.DefaultApiNodes)
+		}
 	}
 
 	sm.mu.Lock()

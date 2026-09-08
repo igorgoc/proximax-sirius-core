@@ -58,32 +58,18 @@ func GenerateKeyPair() (*KeyPairInfo, error) {
 	}, nil
 }
 
-// KeyPairFromPrivateKey derives public key and address from an existing 64-char private key
+// KeyPairFromPrivateKey derives public key and address from an existing 64-char private key instantly using local cryptography
 func KeyPairFromPrivateKey(privKeyHex string) (*KeyPairInfo, error) {
 	if len(privKeyHex) != 64 {
 		return nil, errors.New("private key must be 64 hexadecimal characters")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	config, err := sdk.NewConfig(ctx, []string{DefaultApiNodes[0]})
-	if err != nil {
-		addr, _ := sdk.NewAddressFromPublicKey(privKeyHex, sdk.Public)
-		return &KeyPairInfo{
-			PrivateKey: privKeyHex,
-			PublicKey:  "",
-			Address:    addr.Address,
-		}, nil
-	}
-
-	client := sdk.NewClient(nil, config)
-	account, err := client.NewAccountFromPrivateKey(privKeyHex)
+	account, err := sdk.NewAccountFromPrivateKey(privKeyHex, sdk.Public, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
-	pubHex := hex.EncodeToString(account.KeyPair.PublicKey.Raw)
+	pubHex := strings.ToUpper(hex.EncodeToString(account.KeyPair.PublicKey.Raw))
 	return &KeyPairInfo{
 		PrivateKey: privKeyHex,
 		PublicKey:  pubHex,
