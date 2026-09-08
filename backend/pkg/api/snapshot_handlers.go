@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/tar"
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -158,25 +159,44 @@ func initMockSnapshot() {
 	mockPubKey = pub
 	mockPrivKey = priv
 
-	// Build mock .tar.zst archive
-	var buf strings.Builder
+	// Build mock .tar.zst archive with multi-megabyte chain files
+	var buf bytes.Buffer
 	hasher := sha256.New()
 	mw := io.MultiWriter(&buf, hasher)
 	zw, _ := zstd.NewWriter(mw)
 	tw := tar.NewWriter(zw)
 
-	content := []byte("ROCKSDB_CHUNKED_MOCK_RESTORED_CHAIN_DATA")
-	hdr := &tar.Header{
-		Name: "index.dat",
-		Mode: 0644,
-		Size: int64(len(content)),
+	addMockFile := func(name string, size int, seed byte) {
+		hdr := &tar.Header{
+			Name: name,
+			Mode: 0644,
+			Size: int64(size),
+		}
+		_ = tw.WriteHeader(hdr)
+		chunk := make([]byte, 8192)
+		written := 0
+		for written < size {
+			toWrite := len(chunk)
+			if size-written < toWrite {
+				toWrite = size - written
+			}
+			_, _ = rand.Read(chunk[:toWrite])
+			_, _ = tw.Write(chunk[:toWrite])
+			written += toWrite
+		}
 	}
-	_ = tw.WriteHeader(hdr)
-	_, _ = tw.Write(content)
+
+	// Add ~5MB of mock Sirius chain state files (RocksDB tables & index data)
+	addMockFile("00000/00001.sst", 1500*1024, 0x11)
+	addMockFile("00000/00002.sst", 1500*1024, 0x22)
+	addMockFile("00000/hashes.dat", 1000*1024, 0x33)
+	addMockFile("index.dat", 500*1024, 0x44)
+	addMockFile("commit_step.dat", 16*1024, 0x55)
+
 	_ = tw.Close()
 	_ = zw.Close()
 
-	mockArchiveBytes = []byte(buf.String())
+	mockArchiveBytes = buf.Bytes()
 	mockSha256 = hex.EncodeToString(hasher.Sum(nil))
 }
 
@@ -208,7 +228,7 @@ func (s *Server) handleSnapshotMock(w http.ResponseWriter, r *http.Request) {
 			DownloadUrl:     fmt.Sprintf("%s://%s/api/snapshot/mock/%s", scheme, host, mockArchiveName),
 			Sha256:          mockSha256,
 			Format:          "tar.zst",
-			UncompressedGB:  0.1,
+			UncompressedGB:  0.005,
 			CompressedBytes: int64(len(mockArchiveBytes)),
 			CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 		}
@@ -234,7 +254,20 @@ func (s *Server) handleSnapshotMock(w http.ResponseWriter, r *http.Request) {
 	case mockArchiveName:
 		w.Header().Set("Content-Type", "application/zstd")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(mockArchiveBytes)))
-		_, _ = w.Write(mockArchiveBytes)
+
+		flusher, canFlush := w.(http.Flusher)
+		chunkSize := 64 * 1024 // 64 KB chunks
+		for i := 0; i < len(mockArchiveBytes); i += chunkSize {
+			end := i + chunkSize
+			if end > len(mockArchiveBytes) {
+				end = len(mockArchiveBytes)
+			}
+			_, _ = w.Write(mockArchiveBytes[i:end])
+			if canFlush {
+				flusher.Flush()
+			}
+			time.Sleep(70 * time.Millisecond) // Throttles stream to simulate realistic network throughput (~4.5s)
+		}
 
 	default:
 		http.NotFound(w, r)

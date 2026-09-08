@@ -66,7 +66,7 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath,
     };
 
     fetchStatus();
-    timer = setInterval(fetchStatus, 1000);
+    timer = setInterval(fetchStatus, 250);
     return () => clearInterval(timer);
   }, []);
 

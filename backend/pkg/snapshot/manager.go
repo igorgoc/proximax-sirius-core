@@ -291,6 +291,10 @@ func (sm *SnapshotManager) CreateLocalSnapshot(srcDataPath, targetDestPath, form
 		sm.mu.Lock()
 		sm.status.Stage = StageCompleted
 		sm.status.Progress.Percentage = 100
+		if totalUncompressedBytes > 0 {
+			sm.status.Progress.ProcessedBytes = totalUncompressedBytes
+		}
+		sm.status.Progress.ETASeconds = 0
 		sm.status.Manifest = manifest
 		sm.status.Message = fmt.Sprintf("Snapshot created successfully (%s, SHA-256: %s...)", formatBytes(compressedInfo.Size()), sha256Hex[:12])
 		sm.status.CompletedAt = time.Now()
@@ -373,6 +377,10 @@ func (sm *SnapshotManager) RestoreLocalSnapshot(archivePath, targetDataPath stri
 		sm.mu.Lock()
 		sm.status.Stage = StageCompleted
 		sm.status.Progress.Percentage = 100
+		if sm.status.Progress.TotalBytes > 0 {
+			sm.status.Progress.ProcessedBytes = sm.status.Progress.TotalBytes
+		}
+		sm.status.Progress.ETASeconds = 0
 		sm.status.Message = fmt.Sprintf("Snapshot %s restored successfully into %s", filepath.Base(cleanArchive), targetDir)
 		sm.status.CompletedAt = time.Now()
 		sm.mu.Unlock()
@@ -540,6 +548,11 @@ func (sm *SnapshotManager) RestoreRemoteSnapshot(manifestUrl, releasePubKeyHex, 
 		}
 
 		// 8. Verify final SHA-256 hash computed over entire download stream
+		sm.mu.Lock()
+		sm.status.Stage = StageVerifyingChecksum
+		sm.status.Message = "Verifying cryptographic SHA-256 integrity..."
+		sm.mu.Unlock()
+
 		calculatedSha := hex.EncodeToString(hasher.Sum(nil))
 		if !strings.EqualFold(calculatedSha, manifest.Sha256) {
 			sm.setError(fmt.Sprintf("%v: calculated %s, expected %s", ErrChecksumMismatch, calculatedSha, manifest.Sha256))
@@ -551,6 +564,10 @@ func (sm *SnapshotManager) RestoreRemoteSnapshot(manifestUrl, releasePubKeyHex, 
 		sm.mu.Lock()
 		sm.status.Stage = StageCompleted
 		sm.status.Progress.Percentage = 100
+		if sm.status.Progress.TotalBytes > 0 {
+			sm.status.Progress.ProcessedBytes = sm.status.Progress.TotalBytes
+		}
+		sm.status.Progress.ETASeconds = 0
 		sm.status.Message = fmt.Sprintf("Verified snapshot restored successfully at block height %d", manifest.ChainHeight)
 		sm.status.CompletedAt = time.Now()
 		sm.mu.Unlock()
@@ -561,8 +578,37 @@ func (sm *SnapshotManager) RestoreRemoteSnapshot(manifestUrl, releasePubKeyHex, 
 	return nil
 }
 
+type progressReader struct {
+	r          io.Reader
+	totalBytes int64
+	processed  int64
+	startTime  time.Time
+	lastUpdate time.Time
+	onProgress func(processed, total int64, startTime time.Time)
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.r.Read(p)
+	if n > 0 {
+		pr.processed += int64(n)
+		if time.Since(pr.lastUpdate) >= 50*time.Millisecond {
+			pr.lastUpdate = time.Now()
+			pr.onProgress(pr.processed, pr.totalBytes, pr.startTime)
+		}
+	}
+	return n, err
+}
+
 func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.Reader, totalBytes int64, archiveName, targetDir string) error {
 	lowerName := strings.ToLower(archiveName)
+
+	pReader := &progressReader{
+		r:          reader,
+		totalBytes: totalBytes,
+		startTime:  time.Now(),
+		lastUpdate: time.Now(),
+		onProgress: sm.updateProgress,
+	}
 
 	if strings.HasSuffix(lowerName, ".tar.xz") || strings.HasSuffix(lowerName, ".xz") {
 		// Use system tar command for direct streaming .tar.xz extraction (tar -xJf -)
@@ -576,10 +622,6 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 		}
 
 		buf := make([]byte, 512*1024)
-		var processed int64
-		startTime := time.Now()
-		lastUpdate := time.Now()
-
 		for {
 			select {
 			case <-ctx.Done():
@@ -589,16 +631,10 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 			default:
 			}
 
-			n, rErr := reader.Read(buf)
+			n, rErr := pReader.Read(buf)
 			if n > 0 {
 				if _, wErr := stdinPipe.Write(buf[:n]); wErr != nil {
 					return wErr
-				}
-				processed += int64(n)
-
-				if time.Since(lastUpdate) >= 500*time.Millisecond {
-					lastUpdate = time.Now()
-					sm.updateProgress(processed, totalBytes, startTime)
 				}
 			}
 			if rErr != nil {
@@ -610,7 +646,11 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 		}
 
 		_ = stdinPipe.Close()
-		return tarCmd.Wait()
+		if err := tarCmd.Wait(); err != nil {
+			return err
+		}
+		sm.updateProgress(totalBytes, totalBytes, pReader.startTime)
+		return nil
 	}
 
 	// For .tar.zst, .tar.gz, .tar
@@ -618,21 +658,21 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 	var closeComp func() error
 
 	if strings.HasSuffix(lowerName, ".tar.zst") || strings.HasSuffix(lowerName, ".zst") {
-		zstdReader, err := zstd.NewReader(reader)
+		zstdReader, err := zstd.NewReader(pReader)
 		if err != nil {
 			return fmt.Errorf("zstd decoder error: %w", err)
 		}
 		compReader = zstdReader
 		closeComp = func() error { zstdReader.Close(); return nil }
 	} else if strings.HasSuffix(lowerName, ".tar.gz") || strings.HasSuffix(lowerName, ".tgz") {
-		gzReader, err := gzip.NewReader(reader)
+		gzReader, err := gzip.NewReader(pReader)
 		if err != nil {
 			return fmt.Errorf("gzip decoder error: %w", err)
 		}
 		compReader = gzReader
 		closeComp = gzReader.Close
 	} else {
-		compReader = reader
+		compReader = pReader
 	}
 
 	if closeComp != nil {
@@ -640,9 +680,6 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 	}
 
 	tarReader := tar.NewReader(compReader)
-	startTime := time.Now()
-	lastUpdate := time.Now()
-	var processedBytes int64
 
 	for {
 		select {
@@ -679,32 +716,33 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 			if err != nil {
 				return err
 			}
-			n, err := io.Copy(outFile, tarReader)
+			_, err = io.Copy(outFile, tarReader)
 			outFile.Close()
 			if err != nil {
 				return err
 			}
-			processedBytes += n
-
-			if time.Since(lastUpdate) >= 500*time.Millisecond {
-				lastUpdate = time.Now()
-				sm.updateProgress(processedBytes, totalBytes, startTime)
-			}
 		}
 	}
 
+	sm.updateProgress(totalBytes, totalBytes, pReader.startTime)
 	return nil
 }
 
 func (sm *SnapshotManager) updateProgress(current, total int64, startTime time.Time) {
 	elapsed := time.Since(startTime).Seconds()
+	if elapsed <= 0 {
+		elapsed = 0.001
+	}
 	speed := float64(current) / (1024 * 1024 * elapsed)
 	var percentage float64
 	var eta int64
 	if total > 0 {
 		percentage = (float64(current) / float64(total)) * 100
+		if percentage > 100.0 {
+			percentage = 100.0
+		}
 		rem := total - current
-		if speed > 0 {
+		if speed > 0 && rem > 0 {
 			eta = int64(float64(rem) / (speed * 1024 * 1024))
 		}
 	}
@@ -714,7 +752,11 @@ func (sm *SnapshotManager) updateProgress(current, total int64, startTime time.T
 	sm.status.Progress.Percentage = percentage
 	sm.status.Progress.SpeedMBs = speed
 	sm.status.Progress.ETASeconds = eta
-	sm.status.Message = fmt.Sprintf("Processing: %.1f%% (%s) at %.1f MB/s", percentage, formatBytes(current), speed)
+	if current >= total && total > 0 {
+		sm.status.Message = fmt.Sprintf("Extracted 100%% (%s) at %.1f MB/s", formatBytes(total), speed)
+	} else {
+		sm.status.Message = fmt.Sprintf("Processing: %.1f%% (%s / %s) at %.1f MB/s", percentage, formatBytes(current), formatBytes(total), speed)
+	}
 	sm.mu.Unlock()
 }
 

@@ -297,6 +297,12 @@ func TestPart2_RemoteSnapshotStreamingMockServer(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	// Verify final progress state
+	stFinal := mgr.GetStatus()
+	if stFinal.Progress.ProcessedBytes != stFinal.Progress.TotalBytes || stFinal.Progress.TotalBytes == 0 {
+		t.Fatalf("Expected completed Progress.ProcessedBytes (%d) == Progress.TotalBytes (%d) > 0", stFinal.Progress.ProcessedBytes, stFinal.Progress.TotalBytes)
+	}
+
 	// Verify restored file
 	restoredIndex, err := os.ReadFile(filepath.Join(restoreTargetDir, "index.dat"))
 	if err != nil || string(restoredIndex) != "STREAMED_REMOTE_BLOCK_DATA_ROCKSDB" {
@@ -357,3 +363,140 @@ func TestPart2_RemoteSnapshotStreamingMockServer(t *testing.T) {
 	}
 	_ = archiveBuf
 }
+
+// 4. Verification Test: Multi-MB Progress Counter Increments in Real-Time
+func TestPart2_ProgressCounterIncrementation(t *testing.T) {
+	tempDir := t.TempDir()
+	restoreTargetDir := filepath.Join(tempDir, "multi_mb_restored")
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate test keys: %v", err)
+	}
+	pubHex := hex.EncodeToString(pub)
+
+	// Create 2 MB payload to observe real-time progression
+	archivePath := filepath.Join(tempDir, "multi-mb-snapshot.tar.zst")
+	outFile, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("Failed to create archive file: %v", err)
+	}
+	hasher := sha256.New()
+	multiWriter := io.MultiWriter(outFile, hasher)
+
+	zw, _ := zstd.NewWriter(multiWriter)
+	tw := tar.NewWriter(zw)
+
+	dataChunk := make([]byte, 512*1024)
+	_, _ = rand.Read(dataChunk)
+
+	// Write 4 files of 512KB each = 2MB uncompressed
+	for fIdx := 0; fIdx < 4; fIdx++ {
+		hdr := &tar.Header{
+			Name: fmt.Sprintf("chunk_%02d.dat", fIdx),
+			Mode: 0644,
+			Size: int64(len(dataChunk)),
+		}
+		_ = tw.WriteHeader(hdr)
+		_, _ = tw.Write(dataChunk)
+	}
+	_ = tw.Close()
+	_ = zw.Close()
+	_ = outFile.Close()
+
+	archiveBytes, _ := os.ReadFile(archivePath)
+	archiveSha256 := hex.EncodeToString(hasher.Sum(nil))
+	archiveName := "multi-mb-snapshot.tar.zst"
+	checksumsText := fmt.Sprintf("%s  %s\n", archiveSha256, archiveName)
+	sigBytes := ed25519.Sign(priv, []byte(checksumsText))
+
+	// Mock server that streams chunks with a small sleep to simulate wire transfer
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/manifest.json":
+			manifest := SnapshotManifest{
+				Version:         "1.0",
+				ChainHeight:     13885400,
+				Network:         "mainnet",
+				ArchiveName:     archiveName,
+				DownloadUrl:     server.URL + "/storage/" + archiveName,
+				Sha256:          archiveSha256,
+				Format:          "tar.zst",
+				UncompressedGB:  0.002,
+				CompressedBytes: int64(len(archiveBytes)),
+				CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+			}
+			_ = json.NewEncoder(w).Encode(manifest)
+		case "/SHA256SUMS":
+			_, _ = w.Write([]byte(checksumsText))
+		case "/SHA256SUMS.sig":
+			_, _ = w.Write(sigBytes)
+		case "/storage/" + archiveName:
+			w.Header().Set("Content-Type", "application/zstd")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(archiveBytes)))
+			flusher, canFlush := w.(http.Flusher)
+			chunkSize := 32 * 1024
+			for i := 0; i < len(archiveBytes); i += chunkSize {
+				end := i + chunkSize
+				if end > len(archiveBytes) {
+					end = len(archiveBytes)
+				}
+				_, _ = w.Write(archiveBytes[i:end])
+				if canFlush {
+					flusher.Flush()
+				}
+				time.Sleep(15 * time.Millisecond) // Throttled transfer
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctrl := &mockLifecycleController{isRunning: true}
+	mgr := NewSnapshotManager(ctrl, pubHex, nil)
+
+	err = mgr.RestoreRemoteSnapshot(server.URL+"/manifest.json", pubHex, restoreTargetDir)
+	if err != nil {
+		t.Fatalf("RestoreRemoteSnapshot failed: %v", err)
+	}
+
+	var observedBytes []int64
+	deadline := time.Now().Add(10 * time.Second)
+
+	for {
+		st := mgr.GetStatus()
+		if st.Progress.ProcessedBytes > 0 {
+			if len(observedBytes) == 0 || observedBytes[len(observedBytes)-1] != st.Progress.ProcessedBytes {
+				observedBytes = append(observedBytes, st.Progress.ProcessedBytes)
+			}
+		}
+
+		if st.Stage == StageCompleted {
+			break
+		}
+		if st.Stage == StageError {
+			t.Fatalf("Operation failed with: %s", st.ErrorMessage)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Timed out waiting for completion")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Check observations
+	t.Logf("Observed incremental byte counter points (%d samples): %v", len(observedBytes), observedBytes)
+	if len(observedBytes) < 3 {
+		t.Fatalf("Expected to observe at least 3 distinct progress steps during transfer, but observed %d: %v", len(observedBytes), observedBytes)
+	}
+
+	finalStatus := mgr.GetStatus()
+	if finalStatus.Progress.ProcessedBytes != finalStatus.Progress.TotalBytes {
+		t.Fatalf("Final ProcessedBytes (%d) does not match TotalBytes (%d)", finalStatus.Progress.ProcessedBytes, finalStatus.Progress.TotalBytes)
+	}
+	if finalStatus.Progress.Percentage != 100.0 {
+		t.Fatalf("Final Percentage (%f) is not 100.0", finalStatus.Progress.Percentage)
+	}
+}
+

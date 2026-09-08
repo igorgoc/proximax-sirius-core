@@ -32,8 +32,8 @@ export const SnapshotModal: React.FC<SnapshotModalProps> = ({ status, onCancel, 
     ? [
         { key: 'fetching_manifest', label: '1. Manifest', icon: DownloadCloud },
         { key: 'verifying_signature', label: '2. Ed25519 Sig', icon: Lock },
-        { key: 'downloading', label: '3. Stream & SHA-256', icon: Hash },
-        { key: 'extracting', label: '4. Extracting', icon: Archive },
+        { key: 'downloading', label: '3. Stream & Extract', icon: DownloadCloud },
+        { key: 'verifying_checksum', label: '4. SHA-256 Check', icon: Hash },
         { key: 'completed', label: '5. Ready', icon: CheckCircle2 },
       ]
     : [
@@ -50,7 +50,7 @@ export const SnapshotModal: React.FC<SnapshotModalProps> = ({ status, onCancel, 
     if (stepKey === stage) return 'active';
 
     if (isRemote) {
-      const order = ['fetching_manifest', 'verifying_signature', 'downloading', 'extracting', 'completed'];
+      const order = ['fetching_manifest', 'verifying_signature', 'downloading', 'verifying_checksum', 'completed'];
       const currentIndex = order.indexOf(stage);
       const stepIndex = order.indexOf(stepKey);
       if (currentIndex > stepIndex) return 'completed';
