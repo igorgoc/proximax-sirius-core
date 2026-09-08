@@ -591,7 +591,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.r.Read(p)
 	if n > 0 {
 		pr.processed += int64(n)
-		if time.Since(pr.lastUpdate) >= 50*time.Millisecond {
+		if time.Since(pr.lastUpdate) >= 100*time.Millisecond {
 			pr.lastUpdate = time.Now()
 			pr.onProgress(pr.processed, pr.totalBytes, pr.startTime)
 		}
