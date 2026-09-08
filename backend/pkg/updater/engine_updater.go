@@ -73,6 +73,12 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 			log.Printf("[EngineUpdater] %s: %s", action, details)
 		}
 	}
+	currentVer := CurrentVersion
+	if verBytes, err := os.ReadFile(filepath.Join(binDir, "version.txt")); err == nil {
+		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
+			currentVer = trimmed
+		}
+	}
 	return &EngineUpdater{
 		binDir:       binDir,
 		manifestPath: manifestPath,
@@ -82,7 +88,7 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 			Timeout: 30 * time.Second,
 		},
 		status: EngineUpdateStatus{
-			CurrentVersion: CurrentVersion,
+			CurrentVersion: currentVer,
 			State:          "idle",
 		},
 	}
@@ -246,21 +252,18 @@ func (u *EngineUpdater) ApplyUpdate(
 		return err
 	}
 
-	// 4. Download and stream into temporary staging file while computing SHA-256
-	targetBinPath := filepath.Join(u.binDir, binaryName)
-	tmpFile, err := os.CreateTemp(u.binDir, fmt.Sprintf(".tmp-sirius-update-*"))
+	// 4. Download and stream into temporary staging directory while computing SHA-256
+	stagingDir, err := os.MkdirTemp(u.binDir, ".tmp-staging-*")
 	if err != nil {
-		u.recordFailure("Failed to create temporary staging file", err)
+		u.recordFailure("Failed to create temporary staging directory", err)
 		return err
 	}
-	tmpPath := tmpFile.Name()
 	defer func() {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath) // cleaned up if not renamed
+		_ = os.RemoveAll(stagingDir)
 	}()
 
 	hasher := sha256.New()
-	multiWriter := io.MultiWriter(tmpFile, hasher)
+	found := false
 
 	// Stream unpack: support both direct binary or archive extraction
 	if strings.HasSuffix(assetName, ".tar.gz") {
@@ -271,7 +274,6 @@ func (u *EngineUpdater) ApplyUpdate(
 		}
 		defer gzr.Close()
 		tr := tar.NewReader(gzr)
-		found := false
 		for {
 			hdr, err := tr.Next()
 			if err == io.EOF {
@@ -281,13 +283,29 @@ func (u *EngineUpdater) ApplyUpdate(
 				u.recordFailure("Tar read error", err)
 				return err
 			}
-			if filepath.Base(hdr.Name) == binaryName {
-				if _, err := io.Copy(tmpFile, tr); err != nil {
-					u.recordFailure("Failed writing unpacked binary", err)
+			baseName := filepath.Base(hdr.Name)
+			if baseName == "" || baseName == "." || baseName == "/" {
+				continue
+			}
+			destPath := filepath.Join(stagingDir, baseName)
+			if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeRegA || hdr.Typeflag == 0 {
+				outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+				if err != nil {
+					u.recordFailure("Failed creating staged file", err)
 					return err
 				}
-				found = true
-				break
+				if _, err := io.Copy(outFile, tr); err != nil {
+					_ = outFile.Close()
+					u.recordFailure("Failed writing unpacked file", err)
+					return err
+				}
+				_ = outFile.Close()
+				if baseName == binaryName {
+					found = true
+				}
+			} else if hdr.Typeflag == tar.TypeSymlink {
+				_ = os.Remove(destPath)
+				_ = os.Symlink(hdr.Linkname, destPath)
 			}
 		}
 		// Drain remaining archive to complete hash calculation
@@ -310,22 +328,32 @@ func (u *EngineUpdater) ApplyUpdate(
 			u.recordFailure("Invalid zip format", err)
 			return err
 		}
-		found := false
 		for _, f := range zr.File {
-			if filepath.Base(f.Name) == binaryName {
-				rc, err := f.Open()
-				if err != nil {
-					u.recordFailure("Failed opening file in zip", err)
-					return err
-				}
-				_, err = io.Copy(tmpFile, rc)
+			baseName := filepath.Base(f.Name)
+			if baseName == "" || baseName == "." || f.FileInfo().IsDir() {
+				continue
+			}
+			rc, err := f.Open()
+			if err != nil {
+				u.recordFailure("Failed opening file in zip", err)
+				return err
+			}
+			destPath := filepath.Join(stagingDir, baseName)
+			outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+			if err != nil {
 				rc.Close()
-				if err != nil {
-					u.recordFailure("Failed writing unzipped binary", err)
-					return err
-				}
+				u.recordFailure("Failed creating staged file", err)
+				return err
+			}
+			_, err = io.Copy(outFile, rc)
+			rc.Close()
+			outFile.Close()
+			if err != nil {
+				u.recordFailure("Failed writing unzipped file", err)
+				return err
+			}
+			if baseName == binaryName {
 				found = true
-				break
 			}
 		}
 		if !found {
@@ -335,10 +363,20 @@ func (u *EngineUpdater) ApplyUpdate(
 		}
 	} else {
 		// Direct binary
+		destPath := filepath.Join(stagingDir, binaryName)
+		outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if err != nil {
+			u.recordFailure("Failed creating staged binary file", err)
+			return err
+		}
+		multiWriter := io.MultiWriter(outFile, hasher)
 		if _, err := io.Copy(multiWriter, assetReader); err != nil {
+			outFile.Close()
 			u.recordFailure("Failed streaming binary bytes", err)
 			return err
 		}
+		outFile.Close()
+		found = true
 	}
 
 	actualHash := hex.EncodeToString(hasher.Sum(nil))
@@ -348,14 +386,6 @@ func (u *EngineUpdater) ApplyUpdate(
 		return err
 	}
 	u.auditLogger("CHECKSUM_VERIFIED", fmt.Sprintf("SHA-256 hash match: %s", actualHash))
-
-	// Commit temporary staging file
-	_ = tmpFile.Chmod(0755)
-	if err := tmpFile.Sync(); err != nil {
-		u.recordFailure("Failed to sync temporary binary", err)
-		return err
-	}
-	_ = tmpFile.Close()
 
 	// 5. Gracefully stop node before swapping binaries
 	u.mu.Lock()
@@ -368,27 +398,41 @@ func (u *EngineUpdater) ApplyUpdate(
 		time.Sleep(1 * time.Second)
 	}
 
-	// 6. Create atomic backup of existing binary
-	bakPath := targetBinPath + ".bak"
-	if _, err := os.Stat(targetBinPath); err == nil {
-		_ = os.Remove(bakPath)
-		if err := os.Rename(targetBinPath, bakPath); err != nil {
-			u.recordFailure("Failed creating backup of active binary", err)
-			return err
-		}
-	}
-
-	// Atomic rename of new verified binary
-	if err := os.Rename(tmpPath, targetBinPath); err != nil {
-		// Roll back immediately if swap fails
-		if _, statErr := os.Stat(bakPath); statErr == nil {
-			_ = os.Rename(bakPath, targetBinPath)
-		}
-		u.recordFailure("Failed to atomically rename new binary", err)
+	// 6. Create atomic backups of existing files and swap
+	stagedEntries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		u.recordFailure("Failed reading staged directory", err)
 		return err
 	}
-	_ = os.Chmod(targetBinPath, 0755)
-	u.auditLogger("SWAP_COMPLETE", fmt.Sprintf("Swapped %s to version %s", binaryName, version))
+
+	var backedUpFiles []string
+	for _, entry := range stagedEntries {
+		name := entry.Name()
+		targetPath := filepath.Join(u.binDir, name)
+		bakPath := targetPath + ".bak"
+		if _, err := os.Lstat(targetPath); err == nil {
+			_ = os.Remove(bakPath)
+			if err := os.Rename(targetPath, bakPath); err != nil {
+				// Rollback already swapped files
+				for _, b := range backedUpFiles {
+					_ = os.Rename(filepath.Join(u.binDir, b+".bak"), filepath.Join(u.binDir, b))
+				}
+				u.recordFailure("Failed creating backup of active file", err)
+				return err
+			}
+			backedUpFiles = append(backedUpFiles, name)
+		}
+		if err := os.Rename(filepath.Join(stagingDir, name), targetPath); err != nil {
+			// Rollback
+			for _, b := range backedUpFiles {
+				_ = os.Rename(filepath.Join(u.binDir, b+".bak"), filepath.Join(u.binDir, b))
+			}
+			u.recordFailure("Failed to atomically install new file", err)
+			return err
+		}
+		_ = os.Chmod(targetPath, 0755)
+	}
+	u.auditLogger("SWAP_COMPLETE", fmt.Sprintf("Swapped %s and runtime components to version %s", binaryName, version))
 
 	// 7. Post-update startup and healthcheck probe
 	u.mu.Lock()
@@ -424,11 +468,13 @@ func (u *EngineUpdater) ApplyUpdate(
 		if u.controller != nil {
 			_ = u.controller.StopNode()
 		}
-		// Restore previous binary
-		if _, statErr := os.Stat(bakPath); statErr == nil {
-			_ = os.Remove(targetBinPath)
-			_ = os.Rename(bakPath, targetBinPath)
-			_ = os.Chmod(targetBinPath, 0755)
+		// Restore previous files
+		for _, name := range backedUpFiles {
+			targetPath := filepath.Join(u.binDir, name)
+			bakPath := targetPath + ".bak"
+			_ = os.Remove(targetPath)
+			_ = os.Rename(bakPath, targetPath)
+			_ = os.Chmod(targetPath, 0755)
 		}
 		// Restart with restored binary
 		if u.controller != nil {
@@ -437,8 +483,11 @@ func (u *EngineUpdater) ApplyUpdate(
 		return fmt.Errorf("%w: %v", ErrHealthcheckFailed, startupErr)
 	}
 
-	// Healthcheck passed: clean up .bak file
-	_ = os.Remove(bakPath)
+	// Healthcheck passed: clean up .bak files and record version
+	for _, name := range backedUpFiles {
+		_ = os.Remove(filepath.Join(u.binDir, name+".bak"))
+	}
+	_ = os.WriteFile(filepath.Join(u.binDir, "version.txt"), []byte(version+"\n"), 0644)
 
 	u.mu.Lock()
 	u.status.CurrentVersion = version
@@ -463,8 +512,14 @@ func (u *EngineUpdater) recordFailure(action string, err error) {
 func (u *EngineUpdater) ResetStatus() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	currentVer := CurrentVersion
+	if verBytes, err := os.ReadFile(filepath.Join(u.binDir, "version.txt")); err == nil {
+		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
+			currentVer = trimmed
+		}
+	}
 	u.status = EngineUpdateStatus{
-		CurrentVersion:   CurrentVersion,
+		CurrentVersion:   currentVer,
 		State:            "idle",
 		HasUpdate:        false,
 		IsApplying:       false,
@@ -522,6 +577,9 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 			cleanCurrent := strings.TrimPrefix(u.status.CurrentVersion, "release-")
 
 			isNewer := compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) > 0
+			if !isNewer && cleanTag != cleanCurrent && (strings.Contains(cleanCurrent, "local") || (compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) == 0 && cleanTag != cleanCurrent)) {
+				isNewer = true
+			}
 			isCompat := IsVersionCompatible(cleanTag, manifest.EngineMinCompatible, manifest.EngineMaxCompatible)
 
 			if isNewer && isCompat {
@@ -536,6 +594,150 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 	}
 
 	return &u.status, nil
+}
+
+// DownloadAndApplyUpdate downloads the real release assets from GitHub and executes ApplyUpdate
+func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) error {
+	manifest, err := u.LoadManifest()
+	if err != nil {
+		u.recordFailure("Failed to load compatibility manifest", err)
+		return err
+	}
+
+	repo := manifest.EngineRepository
+	if repo == "" {
+		repo = GitHubRepo
+	}
+
+	u.mu.Lock()
+	if u.status.IsApplying {
+		u.mu.Unlock()
+		return fmt.Errorf("update is already in progress")
+	}
+	u.status.IsApplying = true
+	u.status.State = "verifying"
+	u.status.TargetVersion = targetVersion
+	u.status.RollbackOccurred = false
+	u.status.Message = fmt.Sprintf("Fetching release %s metadata from GitHub...", targetVersion)
+	u.mu.Unlock()
+
+	defer func() {
+		u.mu.Lock()
+		u.status.IsApplying = false
+		u.mu.Unlock()
+	}()
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, targetVersion)
+	if targetVersion == "" || targetVersion == "latest" {
+		url = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		u.recordFailure("Failed to construct request", err)
+		return err
+	}
+	req.Header.Set("User-Agent", "ProximaX-Sirius-Engine-Updater")
+
+	resp, err := u.client.Do(req)
+	if err != nil {
+		u.recordFailure("Failed querying GitHub release", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		u.recordFailure("Failed fetching release info", err)
+		return err
+	}
+
+	var releaseInfo struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadUrl string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&releaseInfo); err != nil {
+		u.recordFailure("Failed decoding release json", err)
+		return err
+	}
+
+	assetName, _ := PlatformAssetDescriptor()
+	var assetUrl, checksumsUrl, sigUrl string
+	for _, a := range releaseInfo.Assets {
+		if a.Name == assetName {
+			assetUrl = a.BrowserDownloadUrl
+		} else if a.Name == "SHA256SUMS.txt" {
+			checksumsUrl = a.BrowserDownloadUrl
+		} else if a.Name == "SHA256SUMS.txt.sig" {
+			sigUrl = a.BrowserDownloadUrl
+		}
+	}
+
+	if assetUrl == "" || checksumsUrl == "" || sigUrl == "" {
+		err := fmt.Errorf("release %s missing required assets (found asset: %v, sums: %v, sig: %v)",
+			releaseInfo.TagName, assetUrl != "", checksumsUrl != "", sigUrl != "")
+		u.recordFailure("Incomplete release assets", err)
+		return err
+	}
+
+	u.mu.Lock()
+	u.status.Message = "Downloading cryptographic release manifest and signature..."
+	u.mu.Unlock()
+
+	// Download checksums
+	cResp, err := u.client.Get(checksumsUrl)
+	if err != nil {
+		u.recordFailure("Failed downloading checksums", err)
+		return err
+	}
+	defer cResp.Body.Close()
+	checksumsData, err := io.ReadAll(cResp.Body)
+	if err != nil {
+		u.recordFailure("Failed reading checksums", err)
+		return err
+	}
+
+	// Download sig
+	sResp, err := u.client.Get(sigUrl)
+	if err != nil {
+		u.recordFailure("Failed downloading signature", err)
+		return err
+	}
+	defer sResp.Body.Close()
+	sigData, err := io.ReadAll(sResp.Body)
+	if err != nil {
+		u.recordFailure("Failed reading signature", err)
+		return err
+	}
+
+	u.mu.Lock()
+	u.status.Message = fmt.Sprintf("Downloading and verifying engine package %s...", assetName)
+	u.mu.Unlock()
+
+	// Download package
+	pkgResp, err := u.client.Get(assetUrl)
+	if err != nil {
+		u.recordFailure("Failed downloading engine package", err)
+		return err
+	}
+	defer pkgResp.Body.Close()
+
+	u.mu.Lock()
+	u.status.IsApplying = false
+	u.mu.Unlock()
+
+	return u.ApplyUpdate(
+		releaseInfo.TagName,
+		pkgResp.Body,
+		checksumsData,
+		sigData,
+		dataPath,
+		nil,
+	)
 }
 
 // TriggerWorkflow initiates an update workflow in the background according to scenario

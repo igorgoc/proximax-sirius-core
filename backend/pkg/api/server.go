@@ -1443,7 +1443,15 @@ func (s *Server) handleEngineApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dataPath := s.configMgr.GetDataPath()
-	s.engineUpdater.TriggerWorkflow(targetVersion, req.Scenario, dataPath)
+	if req.Scenario == "rollback" || req.Scenario == "signature_fail" {
+		s.engineUpdater.TriggerWorkflow(targetVersion, req.Scenario, dataPath)
+	} else {
+		go func() {
+			if err := s.engineUpdater.DownloadAndApplyUpdate(targetVersion, dataPath); err != nil {
+				log.Printf("[EngineUpdater] Update execution failed: %v", err)
+			}
+		}()
+	}
 
 	jsonResponse(w, map[string]interface{}{
 		"status":  "ok",
