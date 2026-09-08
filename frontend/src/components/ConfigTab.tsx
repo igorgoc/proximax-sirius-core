@@ -365,7 +365,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
               <span>Node & Validator Settings</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Manage data storage paths, harvesting credentials, and network communication ports.
+              Manage blockchain data paths, harvesting credentials, and network communication ports.
             </p>
           </div>
 
@@ -377,7 +377,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
                 activeSubTab === 'general' ? 'bg-[#262B34] text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              General & Storage
+              General & Data Path
             </button>
             <button
               onClick={() => setActiveSubTab('keys')}
@@ -430,18 +430,18 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
         </div>
       ) : (
         <>
-          {/* 3. Sub-Tab 1: General & Storage */}
+          {/* 3. Sub-Tab 1: General & Data Path */}
       {activeSubTab === 'general' && (
         <div className="space-y-6">
           <section className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 space-y-4">
             <h3 className="text-xs font-semibold tracking-wider uppercase text-slate-400 flex items-center space-x-2">
               <HardDrive className="w-3.5 h-3.5 text-blue-400" />
-              <span>Blockchain Storage Directory</span>
+              <span>Blockchain Data Directory</span>
             </h3>
 
             <div className="space-y-1.5">
               <DirectoryDropdown
-                label="Data Storage Location"
+                label="Blockchain Data Location"
                 value={formData.dataPath}
                 onChange={(val) => handleFieldChange('dataPath', val)}
                 placeholder="/Volumes/SSD/Sirius_data or ./chainconfig/data"

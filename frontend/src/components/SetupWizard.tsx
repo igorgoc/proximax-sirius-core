@@ -189,7 +189,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       if (verifyRes.ok) {
         const verified: NodeConfig = await verifyRes.json();
         if (payload.dataPath && verified.dataPath && verified.dataPath !== payload.dataPath) {
-          throw new Error(`Storage path verification failed: server stored '${verified.dataPath}', expected '${payload.dataPath}'`);
+          throw new Error(`Blockchain data path verification failed: server stored '${verified.dataPath}', expected '${payload.dataPath}'`);
         }
       }
 
@@ -228,7 +228,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-mono">
-                {step === 1 ? 'Node Identity & Storage Path' : step === 2 ? 'P2P Boot Key Setup' : step === 3 ? 'POS+ Delegated Validating' : 'Summary & Deployment'}
+                {step === 1 ? 'Node Identity & Data Path' : step === 2 ? 'P2P Boot Key Setup' : step === 3 ? 'POS+ Delegated Validating' : 'Summary & Deployment'}
               </p>
             </div>
           </div>
@@ -243,7 +243,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
         {/* Step Progress Dots */}
         <div className="bg-[#0F1115] px-5 py-2 flex items-center justify-between border-b border-[#262B34] text-[11px] font-mono">
-          <span className={step >= 1 ? 'text-blue-400 font-medium' : 'text-slate-500'}>1. Identity &amp; Storage</span>
+          <span className={step >= 1 ? 'text-blue-400 font-medium' : 'text-slate-500'}>1. Identity &amp; Data Path</span>
           <span className="text-slate-600">→</span>
           <span className={step >= 2 ? 'text-blue-400 font-medium' : 'text-slate-500'}>2. Boot Key</span>
           <span className="text-slate-600">→</span>
@@ -254,7 +254,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
         {/* Step Content */}
         <div className="p-6 overflow-y-auto flex-1 text-xs space-y-4 scrollbar-thin">
-          {/* STEP 1: Name, Network Identity & Storage Path */}
+          {/* STEP 1: Name, Network Identity & Data Path */}
           {step === 1 && (
             loadingConfig ? (
               <div className="py-16 flex flex-col items-center justify-center text-center space-y-3">
@@ -625,7 +625,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-[#262B34]">
-                  <span className="text-slate-400">Data Storage Path:</span>
+                  <span className="text-slate-400">Blockchain Data Path:</span>
                   <span className="text-blue-400">{dataPath || './chainconfig/data'}</span>
                 </div>
                 <div className="flex justify-between py-1">
