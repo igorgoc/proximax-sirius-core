@@ -1475,6 +1475,10 @@ func (s *Server) handleEngineApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEngineReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	s.engineUpdater.ResetStatus()
 	jsonResponse(w, s.engineUpdater.GetStatus())
 }

@@ -85,3 +85,44 @@ func TestSignReleaseLifecycle(t *testing.T) {
 		t.Fatalf("Mismatch in resolved pubkey from JSON: got %s, want %s", hex.EncodeToString(resolvedPubKey), pubHex)
 	}
 }
+
+func TestSignReleaseWithKeyEnv(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sirius_sign_env_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey error: %v", err)
+	}
+	privHex := hex.EncodeToString(priv)
+	pubHex := hex.EncodeToString(pub)
+
+	sampleFile := filepath.Join(tempDir, "test-asset.tar.gz")
+	_ = os.WriteFile(sampleFile, []byte("asset-data-content"), 0644)
+
+	// Set environment variable
+	envVarName := "TEST_SIGN_RELEASE_KEY"
+	t.Setenv(envVarName, privHex)
+
+	// Sign using -key-env
+	cmdSign([]string{"-key-env", envVarName, "-dir", tempDir})
+
+	checksumsFile := filepath.Join(tempDir, "SHA256SUMS")
+	sigFile := filepath.Join(tempDir, "SHA256SUMS.sig")
+
+	if _, err := os.Stat(sigFile); os.IsNotExist(err) {
+		t.Fatalf("Expected %s to exist after -key-env signing", sigFile)
+	}
+
+	checksumsData, _ := os.ReadFile(checksumsFile)
+	sigData, _ := os.ReadFile(sigFile)
+	pubKeyBytes, _ := resolvePublicKey(pubHex)
+
+	if !ed25519.Verify(pubKeyBytes, checksumsData, sigData) {
+		t.Fatal("Signature generated with -key-env failed verification")
+	}
+}
+

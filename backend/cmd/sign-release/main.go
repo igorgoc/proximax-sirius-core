@@ -42,8 +42,10 @@ Usage:
   sign-release keygen [-out-dir <dir>]
       Generate a new Ed25519 release signing keypair.
 
+  sign-release sign -key-env <ENV_NAME> -dir <releaseDir> [-out <checksumsFile>]
   sign-release sign -key <privKeyHex|path> -dir <releaseDir> [-out <checksumsFile>]
       Compute SHA256SUMS for all files in releaseDir and generate an Ed25519 signature (.sig).
+      (-key-env is strongly recommended to prevent process table secret exposure)
 
   sign-release verify -pubkey <pubKeyHex|path> -checksums <checksumsFile> -sig <sigFile> [-dir <releaseDir>]
       Verify the cryptographic signature of SHA256SUMS and validate file checksums.`)
@@ -85,18 +87,38 @@ func cmdKeygen(args []string) {
 
 func cmdSign(args []string) {
 	fs := flag.NewFlagSet("sign", flag.ExitOnError)
-	keyArg := fs.String("key", "", "64-byte Ed25519 private key hex string or path to key file")
+	keyArg := fs.String("key", "", "64-byte Ed25519 private key hex string or path to key file (deprecated: use -key-env to avoid process table exposure)")
+	keyEnv := fs.String("key-env", "", "Environment variable name containing Ed25519 private key hex string")
 	releaseDir := fs.String("dir", "", "Directory containing release artifacts to hash and sign")
 	outFile := fs.String("out", "", "Output path for checksums (default: <dir>/SHA256SUMS)")
 	_ = fs.Parse(args)
 
-	if *keyArg == "" || *releaseDir == "" {
-		fmt.Fprintln(os.Stderr, "Error: -key and -dir are required")
+	keyInput := *keyArg
+	if keyInput == "" && *keyEnv != "" {
+		keyInput = os.Getenv(*keyEnv)
+	}
+	if keyInput == "" {
+		// Fallbacks for standard CI environment variables
+		if envVal := os.Getenv("NODE_MANAGER_RELEASE_PRIVATE_KEY"); envVal != "" {
+			keyInput = envVal
+		} else if envVal := os.Getenv("RELEASE_PRIVATE_KEY"); envVal != "" {
+			keyInput = envVal
+		} else if envVal := os.Getenv("ENGINE_RELEASE_PRIVATE_KEY"); envVal != "" {
+			keyInput = envVal
+		}
+	}
+
+	if keyInput == "" || *releaseDir == "" {
+		fmt.Fprintln(os.Stderr, "Error: signing key (via -key-env or -key) and -dir are required")
 		fs.Usage()
 		os.Exit(1)
 	}
 
-	privKeyBytes, err := resolvePrivateKey(*keyArg)
+	if *keyArg != "" {
+		fmt.Fprintln(os.Stderr, "⚠ Security Warning: Passing private keys via the -key command-line argument can expose them in the OS process table (/proc or ps aux). Prefer -key-env.")
+	}
+
+	privKeyBytes, err := resolvePrivateKey(keyInput)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading private key: %v\n", err)
 		os.Exit(1)

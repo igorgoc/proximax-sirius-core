@@ -143,6 +143,8 @@ jobs:
           merge-multiple: true
 
       - name: Compute Checksums & Sign Release
+        env:
+          NODE_MANAGER_RELEASE_PRIVATE_KEY: ${{ secrets.NODE_MANAGER_RELEASE_PRIVATE_KEY }}
         run: |
           cd release-assets
           ls -la
@@ -152,32 +154,36 @@ jobs:
           cat SHA256SUMS
 
           # Enforce Fail-Closed Security Invariant:
-          # Refuse to publish unsigned release if ENGINE_RELEASE_PRIVATE_KEY is missing.
-          if [ -z "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" ]; then
-            echo "::error::CRITICAL SECURITY FAILURE: ENGINE_RELEASE_PRIVATE_KEY secret is not configured in repository secrets!"
-            echo "All release artifacts MUST be cryptographically signed with the official Ed25519 release key."
+          # Refuse to publish unsigned release if NODE_MANAGER_RELEASE_PRIVATE_KEY is missing.
+          if [ -z "$NODE_MANAGER_RELEASE_PRIVATE_KEY" ]; then
+            echo "::error::CRITICAL SECURITY FAILURE: NODE_MANAGER_RELEASE_PRIVATE_KEY secret is not configured in repository secrets!"
+            echo "All release artifacts MUST be cryptographically signed with the official Ed25519 node manager release key."
             echo "Refusing to publish unsigned release (Fail-Closed)."
             exit 1
           fi
 
-          echo "-> Cryptographically signing release artifacts with Ed25519 release key..."
-          ../sign-release sign -key "${{ secrets.ENGINE_RELEASE_PRIVATE_KEY }}" -dir .
+          echo "-> Cryptographically signing release artifacts with Ed25519 node manager release key..."
+          ../sign-release sign -key-env NODE_MANAGER_RELEASE_PRIVATE_KEY -dir .
 
-          # Verify signature immediately against the repository's public key in engine.compat.json
-          echo "-> Verifying generated signature against engine.compat.json..."
+          # Verify signature immediately against the repository's public key in manager.compat.json
+          echo "-> Verifying generated signature against manager.compat.json..."
           ../sign-release verify \
-            -pubkey ../chainconfig/engine.compat.json \
+            -pubkey ../chainconfig/manager.compat.json \
             -checksums SHA256SUMS \
             -sig SHA256SUMS.sig \
             -dir .
 
       - name: Determine Release Tag
         id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "val=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "val=$INPUT_TAG" >> $GITHUB_OUTPUT
           else
-            echo "val=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "val=$REF_NAME" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release

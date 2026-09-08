@@ -53,8 +53,11 @@ New-Item -ItemType Directory -Path $TargetData -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetLogs -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetBin -Force | Out-Null
 
-# Copy engine compatibility manifest
+# Copy engine & manager compatibility manifests
 Copy-Item (Join-Path $RootDir "chainconfig\engine.compat.json") (Join-Path $BuildDir "chainconfig\engine.compat.json")
+if (Test-Path (Join-Path $RootDir "chainconfig\manager.compat.json")) {
+    Copy-Item (Join-Path $RootDir "chainconfig\manager.compat.json") (Join-Path $BuildDir "chainconfig\manager.compat.json")
+}
 
 # Copy resource files strictly without active private keys or sensitive state
 Copy-Item -Recurse (Join-Path $RootDir "chainconfig\resources\*") $TargetResources

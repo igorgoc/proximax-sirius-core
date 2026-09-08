@@ -500,3 +500,134 @@ func TestPart2_ProgressCounterIncrementation(t *testing.T) {
 	}
 }
 
+// 5. Security Test (SEC-02/03): Decompression Bomb Protection
+// Confirms extraction aborts immediately inside the running copy loop
+// and purges all partially extracted and previously written files from disk.
+func TestDecompressionBombProtection_AbortsAndCleansUp(t *testing.T) {
+	tempDir := t.TempDir()
+	targetDir := filepath.Join(tempDir, "bomb_extraction_target")
+	_ = os.MkdirAll(targetDir, 0755)
+
+	archivePath := filepath.Join(tempDir, "oversized-bomb.tar.zst")
+	outFile, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("Failed to create archive file: %v", err)
+	}
+
+	zw, err := zstd.NewWriter(outFile)
+	if err != nil {
+		t.Fatalf("Failed to create zstd writer: %v", err)
+	}
+	tw := tar.NewWriter(zw)
+
+	// File 1: 150 KB
+	file1Data := make([]byte, 150*1024)
+	for i := range file1Data {
+		file1Data[i] = byte('A')
+	}
+	hdr1 := &tar.Header{
+		Name: "block_01.dat",
+		Mode: 0644,
+		Size: int64(len(file1Data)),
+	}
+	if err := tw.WriteHeader(hdr1); err != nil {
+		t.Fatalf("WriteHeader 1 error: %v", err)
+	}
+	if _, err := tw.Write(file1Data); err != nil {
+		t.Fatalf("Write 1 error: %v", err)
+	}
+
+	// File 2: 400 KB (Total payload = 550 KB uncompressed)
+	file2Data := make([]byte, 400*1024)
+	for i := range file2Data {
+		file2Data[i] = byte('B')
+	}
+	hdr2 := &tar.Header{
+		Name: "block_02.dat",
+		Mode: 0644,
+		Size: int64(len(file2Data)),
+	}
+	if err := tw.WriteHeader(hdr2); err != nil {
+		t.Fatalf("WriteHeader 2 error: %v", err)
+	}
+	if _, err := tw.Write(file2Data); err != nil {
+		t.Fatalf("Write 2 error: %v", err)
+	}
+
+	_ = tw.Close()
+	_ = zw.Close()
+	_ = outFile.Close()
+
+	fileInfo, err := os.Stat(archivePath)
+	if err != nil {
+		t.Fatalf("Archive stat error: %v", err)
+	}
+
+	t.Logf("Constructed test archive: compressed size %d bytes, uncompressed size 550 KB", fileInfo.Size())
+
+	// Set safety ceiling to 250 KB (less than the 550 KB uncompressed payload)
+	// File 1 (150 KB) will be written first, but File 2 will trip the running ceiling midway!
+	const safetyCeiling = 250 * 1024
+
+	ctrl := &mockLifecycleController{isRunning: true}
+	mgr := NewSnapshotManager(ctrl, "", nil)
+	mgr.SetMaxDecompressedBytes(safetyCeiling)
+
+	if err := mgr.RestoreLocalSnapshot(archivePath, targetDir); err != nil {
+		t.Fatalf("RestoreLocalSnapshot failed to launch: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	var finalStage OperationStage
+	var errorMessage string
+
+	for {
+		st := mgr.GetStatus()
+		if st.Stage == StageError || st.Stage == StageCompleted {
+			finalStage = st.Stage
+			errorMessage = st.ErrorMessage
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Operation timed out waiting for decompression bomb check")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// 1. Verify that extraction aborted with error
+	if finalStage != StageError {
+		t.Fatalf("Expected StageError, but operation reached stage: %s", finalStage)
+	}
+	t.Logf("Decompression bomb check successfully triggered error: %s", errorMessage)
+
+	if !strings.Contains(errorMessage, "decompression limit exceeded") {
+		t.Fatalf("Expected 'decompression limit exceeded' in error message, got: %s", errorMessage)
+	}
+
+	// 2. Verify that NO orphaned or partial files remain on disk
+	file1Path := filepath.Join(targetDir, "block_01.dat")
+	if _, err := os.Stat(file1Path); !os.IsNotExist(err) {
+		t.Fatalf("Security invariant violated: block_01.dat was NOT cleaned up from disk! (found: %s)", file1Path)
+	}
+
+	file2Path := filepath.Join(targetDir, "block_02.dat")
+	if _, err := os.Stat(file2Path); !os.IsNotExist(err) {
+		t.Fatalf("Security invariant violated: partially written block_02.dat was NOT cleaned up from disk! (found: %s)", file2Path)
+	}
+
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		t.Fatalf("ReadDir error: %v", err)
+	}
+	if len(entries) > 0 {
+		var remaining []string
+		for _, e := range entries {
+			remaining = append(remaining, e.Name())
+		}
+		t.Fatalf("Security invariant violated: orphaned files left in target directory: %v", remaining)
+	}
+
+	t.Logf("✓ Verified: Extraction aborted midway inside copy loop; zero orphaned files left in target directory (%d entries)", len(entries))
+}
+
+

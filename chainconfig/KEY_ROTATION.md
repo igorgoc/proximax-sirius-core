@@ -1,13 +1,21 @@
-# ProximaX Sirius Core Engine — Cryptographic Release Key Management & Rotation Procedure
+# ProximaX Sirius Core — Cryptographic Release Key Management & Rotation Procedure
 
-## 1. Architecture & Threat Model
-The ProximaX Sirius Core node manager features an autonomous engine updater (`cpp-xpx-chain`). To prevent arbitrary remote code execution (RCE) and man-in-the-middle (MITM) package tampering, every released engine binary and platform distribution archive must be cryptographically signed with an Ed25519 release private key.
+## 1. Architecture & Dual-Keypair Threat Model
+To maintain strict separation of concerns and prevent cross-repository credential compromise, the system maintains two completely separate cryptographic keypairs:
 
-- **Private Key (`ENGINE_RELEASE_PRIVATE_KEY`)**: 64-byte Ed25519 signing key. Highly confidential. Stored exclusively in GitHub Actions Encrypted Secrets (`secrets.ENGINE_RELEASE_PRIVATE_KEY`).
-- **Public Key (`releasePublicKeyHex`)**: 32-byte Ed25519 verification key published in [`chainconfig/engine.compat.json`](engine.compat.json). Distributed publicly with each node installation.
-- **Fail-Closed Guarantee**:
-  - The GitHub Actions release workflow refuses to publish any release if `ENGINE_RELEASE_PRIVATE_KEY` is missing or invalid.
-  - The node updater refuses to apply any update if the cryptographic signature fails or the checksum does not match.
+### A. Sirius C++ Engine Keypair (`cpp-xpx-chain`)
+- **Private Key (`ENGINE_RELEASE_PRIVATE_KEY`)**: Stored in GitHub Actions secrets for `igorgoc/cpp-xpx-chain`.
+- **Public Key**: Published in [`chainconfig/engine.compat.json`](engine.compat.json) (`releasePublicKeyHex`).
+- **Function**: Verified by the node manager's autonomous engine updater before replacing native engine binaries (`sirius-core`, `libcatapult.*`).
+
+### B. Sirius Cockpit & Node Manager Keypair (`proximax-sirius-core`)
+- **Private Key (`NODE_MANAGER_RELEASE_PRIVATE_KEY`)**: Stored in GitHub Actions secrets for `igorgoc/proximax-sirius-core`.
+- **Public Key**: Published in [`chainconfig/manager.compat.json`](manager.compat.json) (`releasePublicKeyHex`).
+- **Function**: Used by GitHub Actions to sign cross-platform distributions (Debian `.deb`, Linux tarballs, macOS bundles, Windows packages) and verified during CI release publication.
+
+### Fail-Closed Invariant:
+- The GitHub Actions release workflow refuses to publish any release if `NODE_MANAGER_RELEASE_PRIVATE_KEY` is missing.
+- The node updater refuses to apply any update if the cryptographic signature fails or the checksum does not match.
 
 ---
 
@@ -29,9 +37,10 @@ Output:
 ### Installing into GitHub Secrets:
 1. Navigate to **GitHub Repository** -> **Settings** -> **Secrets and variables** -> **Actions**.
 2. Create/Update Secret:
-   - **Name**: `ENGINE_RELEASE_PRIVATE_KEY`
-   - **Value**: The raw hex string from `release-ed25519.key`.
-3. Wipe the local unencrypted private key file or store it in an encrypted hardware vault (e.g. YubiKey / HSM):
+   - For Node Manager repo (`proximax-sirius-core`): **`NODE_MANAGER_RELEASE_PRIVATE_KEY`**
+   - For Engine repo (`cpp-xpx-chain`): **`ENGINE_RELEASE_PRIVATE_KEY`**
+   - **Value**: The raw 64-byte hex string from `release-ed25519.key`.
+3. Securely wipe the local unencrypted private key file or store it in an encrypted hardware vault (e.g. YubiKey / HSM):
    ```bash
    shred -u ~/.sirius-keys/release-ed25519.key
    ```

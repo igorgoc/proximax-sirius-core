@@ -6,10 +6,12 @@ import (
 )
 
 var (
-	ErrInvalidSignature = errors.New("cryptographic signature verification failed for snapshot manifest")
-	ErrChecksumMismatch = errors.New("sha256 checksum mismatch on downloaded snapshot archive")
-	ErrMissingChecksum  = errors.New("checksums manifest does not contain entry for snapshot archive")
-	ErrSnapshotBusy     = errors.New("another snapshot operation is currently in progress")
+	ErrInvalidSignature     = errors.New("cryptographic signature verification failed for snapshot manifest")
+	ErrChecksumMismatch     = errors.New("sha256 checksum mismatch on downloaded snapshot archive")
+	ErrMissingChecksum      = errors.New("checksums manifest does not contain entry for snapshot archive")
+	ErrSnapshotBusy         = errors.New("another snapshot operation is currently in progress")
+	ErrDecompressionBomb    = errors.New("decompression limit exceeded: archive uncompressed size exceeds maximum safety ceiling")
+	ErrDownloadLimitExceeded = errors.New("download limit exceeded: stream volume exceeds maximum safety ceiling")
 )
 
 // SnapshotManifest defines the portable, backend-agnostic signed snapshot pointer.

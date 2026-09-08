@@ -45,8 +45,9 @@ mkdir -p "$TARGET_OPT/chainconfig/resources"
 mkdir -p "$TARGET_OPT/chainconfig/data/00000"
 mkdir -p "$TARGET_OPT/chainconfig/logs"
 
-# Copy engine compatibility manifest
+# Copy engine & manager compatibility manifests
 cp chainconfig/engine.compat.json "$TARGET_OPT/chainconfig/"
+[ -f "chainconfig/manager.compat.json" ] && cp chainconfig/manager.compat.json "$TARGET_OPT/chainconfig/"
 
 # Copy resources while strictly scrubbing private keys and state
 cp -R chainconfig/resources/* "$TARGET_OPT/chainconfig/resources/"

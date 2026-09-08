@@ -27,14 +27,22 @@ type NodeController interface {
 }
 
 type SnapshotManager struct {
-	mu             sync.RWMutex
-	client         *http.Client
-	controller     NodeController
-	status         SnapshotStatus
-	cancelFunc     context.CancelFunc
-	auditLogger    func(action, details string)
-	defaultPubKey  string
+	mu                   sync.RWMutex
+	client               *http.Client
+	controller           NodeController
+	status               SnapshotStatus
+	cancelFunc           context.CancelFunc
+	auditLogger          func(action, details string)
+	defaultPubKey        string
+	maxDecompressedBytes int64
 }
+
+func (sm *SnapshotManager) SetMaxDecompressedBytes(limit int64) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.maxDecompressedBytes = limit
+}
+
 
 func NewSnapshotManager(controller NodeController, defaultPubKey string, auditLogger func(action, details string)) *SnapshotManager {
 	if auditLogger == nil {
@@ -360,7 +368,14 @@ func (sm *SnapshotManager) RestoreLocalSnapshot(archivePath, targetDataPath stri
 		}
 		defer file.Close()
 
-		if err := sm.extractArchiveStream(ctx, file, fileInfo.Size(), cleanArchive, targetDir); err != nil {
+		sm.mu.RLock()
+		maxDecompressed := sm.maxDecompressedBytes
+		sm.mu.RUnlock()
+		if maxDecompressed <= 0 {
+			maxDecompressed = 100 * 1024 * 1024 * 1024 // 100 GB default safety ceiling for local restore
+		}
+
+		if err := sm.extractArchiveStream(ctx, file, fileInfo.Size(), cleanArchive, targetDir, maxDecompressed); err != nil {
 			if ctx.Err() == context.Canceled {
 				sm.mu.Lock()
 				sm.status.Stage = StageCancelled
@@ -530,12 +545,29 @@ func (sm *SnapshotManager) RestoreRemoteSnapshot(manifestUrl, releasePubKeyHex, 
 		sm.status.Message = fmt.Sprintf("Streaming & extracting %s (%.1f GB uncompressed)...", manifest.ArchiveName, manifest.UncompressedGB)
 		sm.mu.Unlock()
 
-		// 7. Tee download body to hasher for on-the-fly checksum verification
+		// 7. Determine decompression safety ceiling
+		sm.mu.RLock()
+		overrideMax := sm.maxDecompressedBytes
+		sm.mu.RUnlock()
+
+		maxDecompressed := overrideMax
+		if maxDecompressed <= 0 {
+			if manifest.UncompressedGB > 0 {
+				maxDecompressed = int64(manifest.UncompressedGB * 1.5 * 1024 * 1024 * 1024)
+				if maxDecompressed < 500*1024*1024 {
+					maxDecompressed = 500 * 1024 * 1024
+				}
+			} else {
+				maxDecompressed = 50 * 1024 * 1024 * 1024
+			}
+		}
+
+		// Tee download body to hasher for on-the-fly checksum verification
 		hasher := sha256.New()
 		teeReader := io.TeeReader(resp.Body, hasher)
 
-		// Extract directly from stream
-		if err := sm.extractArchiveStream(ctx, teeReader, contentLength, manifest.ArchiveName, targetDir); err != nil {
+		// Extract directly from stream with decompression limit enforcement
+		if err := sm.extractArchiveStream(ctx, teeReader, contentLength, manifest.ArchiveName, targetDir, maxDecompressed); err != nil {
 			if ctx.Err() == context.Canceled {
 				sm.mu.Lock()
 				sm.status.Stage = StageCancelled
@@ -555,6 +587,13 @@ func (sm *SnapshotManager) RestoreRemoteSnapshot(manifestUrl, releasePubKeyHex, 
 
 		calculatedSha := hex.EncodeToString(hasher.Sum(nil))
 		if !strings.EqualFold(calculatedSha, manifest.Sha256) {
+			// Purge extracted corrupted files to leave targetDir clean
+			entries, _ := os.ReadDir(targetDir)
+			for _, e := range entries {
+				if e.Name() != "server.lock" {
+					_ = os.RemoveAll(filepath.Join(targetDir, e.Name()))
+				}
+			}
 			sm.setError(fmt.Sprintf("%v: calculated %s, expected %s", ErrChecksumMismatch, calculatedSha, manifest.Sha256))
 			return
 		}
@@ -599,8 +638,15 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.Reader, totalBytes int64, archiveName, targetDir string) error {
+func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.Reader, totalBytes int64, archiveName, targetDir string, maxDecompressedBytes int64) error {
 	lowerName := strings.ToLower(archiveName)
+
+	var createdPaths []string
+	cleanupCreated := func() {
+		for i := len(createdPaths) - 1; i >= 0; i-- {
+			_ = os.Remove(createdPaths[i])
+		}
+	}
 
 	pReader := &progressReader{
 		r:          reader,
@@ -627,6 +673,7 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 			case <-ctx.Done():
 				_ = stdinPipe.Close()
 				_ = tarCmd.Process.Kill()
+				cleanupCreated()
 				return ctx.Err()
 			default:
 			}
@@ -634,6 +681,9 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 			n, rErr := pReader.Read(buf)
 			if n > 0 {
 				if _, wErr := stdinPipe.Write(buf[:n]); wErr != nil {
+					_ = stdinPipe.Close()
+					_ = tarCmd.Process.Kill()
+					cleanupCreated()
 					return wErr
 				}
 			}
@@ -641,12 +691,16 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 				if rErr == io.EOF {
 					break
 				}
+				_ = stdinPipe.Close()
+				_ = tarCmd.Process.Kill()
+				cleanupCreated()
 				return rErr
 			}
 		}
 
 		_ = stdinPipe.Close()
 		if err := tarCmd.Wait(); err != nil {
+			cleanupCreated()
 			return err
 		}
 		sm.updateProgress(totalBytes, totalBytes, pReader.startTime)
@@ -680,10 +734,12 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 	}
 
 	tarReader := tar.NewReader(compReader)
+	var cumulativeWritten int64
 
 	for {
 		select {
 		case <-ctx.Done():
+			cleanupCreated()
 			return ctx.Err()
 		default:
 		}
@@ -693,6 +749,7 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 			break
 		}
 		if err != nil {
+			cleanupCreated()
 			return err
 		}
 
@@ -705,22 +762,66 @@ func (sm *SnapshotManager) extractArchiveStream(ctx context.Context, reader io.R
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(targetFile, 0755); err != nil {
-				return err
+			if _, statErr := os.Stat(targetFile); os.IsNotExist(statErr) {
+				if err := os.MkdirAll(targetFile, 0755); err != nil {
+					cleanupCreated()
+					return err
+				}
+				createdPaths = append(createdPaths, targetFile)
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
-				return err
+			parentDir := filepath.Dir(targetFile)
+			if _, statErr := os.Stat(parentDir); os.IsNotExist(statErr) {
+				if err := os.MkdirAll(parentDir, 0755); err != nil {
+					cleanupCreated()
+					return err
+				}
+				createdPaths = append(createdPaths, parentDir)
 			}
 			outFile, err := os.OpenFile(targetFile, os.O_CREATE|os.O_RDWR|os.O_TRUNC, header.FileInfo().Mode())
 			if err != nil {
+				cleanupCreated()
 				return err
 			}
-			_, err = io.Copy(outFile, tarReader)
-			outFile.Close()
-			if err != nil {
-				return err
+			createdPaths = append(createdPaths, targetFile)
+
+			buf := make([]byte, 64*1024)
+			for {
+				select {
+				case <-ctx.Done():
+					_ = outFile.Close()
+					cleanupCreated()
+					return ctx.Err()
+				default:
+				}
+
+				nr, rErr := tarReader.Read(buf)
+				if nr > 0 {
+					if maxDecompressedBytes > 0 && (cumulativeWritten+int64(nr)) > maxDecompressedBytes {
+						_ = outFile.Close()
+						cleanupCreated()
+						return fmt.Errorf("%w: cumulative extracted %d bytes exceeds ceiling of %d bytes", ErrDecompressionBomb, cumulativeWritten+int64(nr), maxDecompressedBytes)
+					}
+					nw, wErr := outFile.Write(buf[:nr])
+					if nw > 0 {
+						cumulativeWritten += int64(nw)
+					}
+					if wErr != nil {
+						_ = outFile.Close()
+						cleanupCreated()
+						return wErr
+					}
+				}
+				if rErr != nil {
+					if rErr == io.EOF {
+						break
+					}
+					_ = outFile.Close()
+					cleanupCreated()
+					return rErr
+				}
 			}
+			_ = outFile.Close()
 		}
 	}
 
@@ -776,7 +877,8 @@ func (sm *SnapshotManager) fetchManifest(ctx context.Context, url string) (*Snap
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// Bound manifest JSON read to 5 MB maximum to prevent memory exhaustion
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 	if err != nil {
 		return nil, err
 	}
@@ -810,7 +912,9 @@ func (sm *SnapshotManager) fetchBytes(ctx context.Context, url string) ([]byte, 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+
+	// Bound checksums and signature files to 5 MB maximum to prevent memory exhaustion
+	return io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 }
 
 func (sm *SnapshotManager) setError(msg string) {
