@@ -8,7 +8,8 @@ import {
   Archive, 
   XCircle, 
   Hash, 
-  Lock 
+  Lock,
+  X
 } from 'lucide-react';
 import { SnapshotManagerStatus } from '../types';
 
@@ -115,7 +116,18 @@ export const SnapshotModal: React.FC<SnapshotModalProps> = ({ status, onCancel, 
             }`}>
               {status.stage.toUpperCase()}
             </span>
+            {!isRunning && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-[#262B34] transition-all ml-1"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
+
         </div>
 
         {/* Multi-Step Pipeline Indicator */}

@@ -84,6 +84,18 @@ func (sm *SnapshotManager) Cancel() error {
 	return nil
 }
 
+// Reset resets the manager status back to StageIdle if not currently performing an active operation.
+func (sm *SnapshotManager) Reset() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.status.Stage != StageArchiving && sm.status.Stage != StageDownloading && sm.status.Stage != StageExtracting {
+		sm.status = SnapshotStatus{
+			Stage:   StageIdle,
+			Message: "Ready",
+		}
+	}
+}
+
 // CreateLocalSnapshot creates a compressed archive of srcDataPath into targetDestPath.
 // It computes the SHA-256 incrementally in a single pass and produces an accompanying manifest.json.
 func (sm *SnapshotManager) CreateLocalSnapshot(srcDataPath, targetDestPath, format string, chainHeight int64) (*SnapshotManifest, error) {
@@ -138,6 +150,20 @@ func (sm *SnapshotManager) CreateLocalSnapshot(srcDataPath, targetDestPath, form
 
 	go func() {
 		defer cancel()
+
+		wasRunning := false
+		if sm.controller != nil && sm.controller.IsRunning() {
+			wasRunning = true
+			sm.mu.Lock()
+			sm.status.Message = "Pausing blockchain node to ensure consistent snapshot..."
+			sm.mu.Unlock()
+			_ = sm.controller.StopNode()
+			defer func() {
+				if wasRunning {
+					_ = sm.controller.StartNode(srcDir)
+				}
+			}()
+		}
 
 		var totalUncompressedBytes int64
 		var fileList []string
@@ -231,13 +257,22 @@ func (sm *SnapshotManager) CreateLocalSnapshot(srcDataPath, targetDestPath, form
 				if err != nil {
 					continue
 				}
-				n, err := io.Copy(tarWriter, file)
+				// Use io.LimitReader to protect tarWriter against file size changes while copying
+				n, err := io.Copy(tarWriter, io.LimitReader(file, header.Size))
 				file.Close()
 				if err != nil {
 					sm.setError(fmt.Sprintf("Tar write data error: %v", err))
 					return
 				}
-				writtenRawBytes += n
+				// If file was shorter than header.Size, pad with zeros to ensure tar archive validity
+				if n < header.Size {
+					pad := make([]byte, header.Size-n)
+					if _, err := tarWriter.Write(pad); err != nil {
+						sm.setError(fmt.Sprintf("Tar write pad error: %v", err))
+						return
+					}
+				}
+				writtenRawBytes += header.Size
 			}
 
 			if time.Since(lastUpdate) >= 500*time.Millisecond {

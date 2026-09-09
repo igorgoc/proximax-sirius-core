@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"proximax-sirius-core/pkg/snapshot"
 	"proximax-sirius-core/pkg/updater"
 )
 
@@ -42,3 +43,28 @@ func TestEngineResetMethodEnforcement(t *testing.T) {
 		t.Fatalf("Expected POST /api/engine/reset to return HTTP 200, got: %d", postRec.Code)
 	}
 }
+
+func TestSnapshotResetMethodEnforcement(t *testing.T) {
+	s := &Server{
+		snapshotMgr: snapshot.NewSnapshotManager(nil, "", nil),
+	}
+
+	// 1. GET /api/snapshot/reset MUST return 405 Method Not Allowed
+	getReq := httptest.NewRequest("GET", "/api/snapshot/reset", nil)
+	getRec := httptest.NewRecorder()
+	s.handleSnapshotReset(getRec, getReq)
+
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("Expected GET /api/snapshot/reset to return HTTP 405, got: %d", getRec.Code)
+	}
+
+	// 2. POST /api/snapshot/reset should succeed (200 OK)
+	postReq := httptest.NewRequest("POST", "/api/snapshot/reset", nil)
+	postRec := httptest.NewRecorder()
+	s.handleSnapshotReset(postRec, postReq)
+
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("Expected POST /api/snapshot/reset to return HTTP 200, got: %d", postRec.Code)
+	}
+}
+

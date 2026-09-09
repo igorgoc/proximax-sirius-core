@@ -164,6 +164,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/maintenance/clean-logs", s.handleMaintenanceCleanLogs)
 	mux.HandleFunc("/api/snapshot/status", s.handleSnapshotStatus)
 	mux.HandleFunc("/api/snapshot/cancel", s.handleSnapshotCancel)
+	mux.HandleFunc("/api/snapshot/reset", s.handleSnapshotReset)
 	mux.HandleFunc("/api/snapshot/create", s.handleSnapshotCreate)
 	mux.HandleFunc("/api/snapshot/restore/local", s.handleSnapshotRestoreLocal)
 	mux.HandleFunc("/api/snapshot/restore/remote", s.handleSnapshotRestoreRemote)

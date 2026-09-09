@@ -56,7 +56,16 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath,
         if (res.ok) {
           const data: SnapshotManagerStatus = await res.json();
           setSnapshotStatus(data);
-          if (data && data.stage !== 'idle') {
+          const activeStages = [
+            'archiving',
+            'compressing',
+            'extracting',
+            'downloading',
+            'fetching_manifest',
+            'verifying_signature',
+            'verifying_checksum'
+          ];
+          if (data && activeStages.includes(data.stage)) {
             setShowModal(true);
           }
         }
@@ -69,6 +78,16 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath,
     timer = setInterval(fetchStatus, 250);
     return () => clearInterval(timer);
   }, []);
+
+  const handleCloseModal = async () => {
+    setShowModal(false);
+    try {
+      await fetch('/api/snapshot/reset', { method: 'POST' });
+      setSnapshotStatus((prev) => (prev ? { ...prev, stage: 'idle', message: 'Ready' } : null));
+    } catch (e) {
+      console.error('Failed to reset snapshot status:', e);
+    }
+  };
 
   // Handler: Part 1 Local Create
   const handleCreateSnapshot = async () => {
@@ -421,9 +440,10 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath,
         <SnapshotModal
           status={snapshotStatus}
           onCancel={handleCancel}
-          onClose={() => setShowModal(false)}
+          onClose={handleCloseModal}
         />
       )}
+
 
     </div>
   );

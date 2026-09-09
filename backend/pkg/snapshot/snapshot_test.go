@@ -630,4 +630,101 @@ func TestDecompressionBombProtection_AbortsAndCleansUp(t *testing.T) {
 	t.Logf("✓ Verified: Extraction aborted midway inside copy loop; zero orphaned files left in target directory (%d entries)", len(entries))
 }
 
+// 6. Unit Test: SnapshotManager Reset restores stage to StageIdle
+func TestSnapshotManager_Reset(t *testing.T) {
+	ctrl := &mockLifecycleController{}
+	mgr := NewSnapshotManager(ctrl, "", nil)
+
+	// Set to error
+	mgr.mu.Lock()
+	mgr.status.Stage = StageError
+	mgr.status.ErrorMessage = "Some error"
+	mgr.status.Message = "Failed"
+	mgr.mu.Unlock()
+
+	mgr.Reset()
+
+	st := mgr.GetStatus()
+	if st.Stage != StageIdle || st.Message != "Ready" {
+		t.Fatalf("Expected StageIdle and 'Ready', got stage=%s msg=%s", st.Stage, st.Message)
+	}
+
+	// Active stage should not be reset
+	mgr.mu.Lock()
+	mgr.status.Stage = StageArchiving
+	mgr.mu.Unlock()
+
+	mgr.Reset()
+
+	st = mgr.GetStatus()
+	if st.Stage != StageArchiving {
+		t.Fatalf("Expected StageArchiving to not be reset, got stage=%s", st.Stage)
+	}
+}
+
+// 7. Unit Test: CreateLocalSnapshot pauses running node and handles growing files without error
+func TestCreateLocalSnapshot_PausesRunningNodeAndProtectsGrowingFiles(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sirius-snapshot-create-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	srcDir := filepath.Join(tempDir, "data")
+	destDir := filepath.Join(tempDir, "snapshots")
+	_ = os.MkdirAll(srcDir, 0755)
+	_ = os.MkdirAll(destDir, 0755)
+
+	// Create test file in data dir
+	testFile := filepath.Join(srcDir, "blocks.dat")
+	if err := os.WriteFile(testFile, []byte("initial block content that might grow"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	ctrl := &mockLifecycleController{isRunning: true}
+	mgr := NewSnapshotManager(ctrl, "", nil)
+
+	_, err = mgr.CreateLocalSnapshot(srcDir, destDir, "tar.zst", 1000)
+	if err != nil {
+		t.Fatalf("CreateLocalSnapshot returned error: %v", err)
+	}
+
+
+	// Wait for completion
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st := mgr.GetStatus()
+		if st.Stage == StageCompleted {
+			break
+		}
+		if st.Stage == StageError {
+			t.Fatalf("Snapshot creation failed: %s (err=%s)", st.Message, st.ErrorMessage)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	st := mgr.GetStatus()
+	if st.Stage != StageCompleted {
+		t.Fatalf("Expected StageCompleted, got: %s", st.Stage)
+	}
+
+	// Verify the running node was stopped and restarted
+	if ctrl.stopCalls == 0 {
+		t.Fatalf("Expected StopNode to be called when node was running")
+	}
+	if !ctrl.IsRunning() {
+		t.Fatalf("Expected node to be restarted (isRunning=true) after snapshot completion")
+	}
+
+	// Verify target archive was created
+	if st.Manifest == nil || st.Manifest.ArchiveName == "" {
+		t.Fatalf("Expected non-empty manifest in st.Manifest")
+	}
+	targetArchive := filepath.Join(destDir, st.Manifest.ArchiveName)
+	if _, err := os.Stat(targetArchive); os.IsNotExist(err) {
+		t.Fatalf("Target archive file was not found: %s", targetArchive)
+	}
+
+}
+
 

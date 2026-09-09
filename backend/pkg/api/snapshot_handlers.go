@@ -32,6 +32,16 @@ func (s *Server) handleSnapshotCancel(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "ok", "message": "Snapshot operation cancelled"})
 }
 
+func (s *Server) handleSnapshotReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.snapshotMgr.Reset()
+	jsonResponse(w, map[string]string{"status": "ok", "message": "Snapshot manager reset to idle"})
+}
+
+
 func (s *Server) handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
