@@ -43,6 +43,29 @@ All 5 audit findings have been resolved with regression tests committed on `main
 
 ---
 
+## 3.1 Hard-Won Technical Lessons & Trial History (Do Not Repeat Past Mistakes)
+
+When the Antigravity agent on Ubuntu reads this, keep these strict historical lessons in mind:
+
+1. **Boost Version Regression (100% CPU Spin)**:
+   - **Crucial Rule**: Never upgrade Boost to 1.84+ for `cpp-xpx-chain`.
+   - **Past Trial**: We discovered that Boost 1.84+ has an ASIO event loop behavioral change that causes Catapult's reactor threads to spin at 100% CPU continuously even while idle. Boost **must remain pinned to 1.81.0**.
+2. **Dynamic Plugin Architecture (`RPATH` / `$ORIGIN`)**:
+   - Sirius is not a single monolithic binary; it dynamically loads 15+ plugin libraries (`libcatapult.plugins.*.so`) at startup via `dlopen`.
+   - On Linux bare-metal outside Docker, dynamic loader failures occur if libraries rely on absolute host paths.
+   - **Requirement**: Use `patchelf --set-rpath '$ORIGIN/../lib'` on `sirius.bc` and all dynamic plugin `.so` files so the bundle is completely portable across Ubuntu versions.
+3. **RocksDB Compilation Flag (`USE_RTTI=1`)**:
+   - When building RocksDB for Sirius, RTTI must be enabled (`-DUSE_RTTI=1` or `USE_RTTI=1`), otherwise Catapult's exception and type-casting mechanisms crash when calling RocksDB methods.
+4. **Strict Key Separation**:
+   - Engine release artifacts are signed by `ENGINE_RELEASE_PRIVATE_KEY` and verified by `chainconfig/engine.compat.json`.
+   - Manager release artifacts are signed by `NODE_MANAGER_RELEASE_PRIVATE_KEY` and verified by `chainconfig/manager.compat.json`.
+   - Never mirror or share these keys.
+5. **Streaming Snapshot Protection**:
+   - Snapshot decompression uses direct streaming extraction (`tar -xJf -`) from `http://207.180.195.181/snapshot.tar.xz`.
+   - A cumulative mid-loop byte counter (`cleanupCreated()`) aborts decompression immediately if uncompressed size exceeds limits, avoiding disk-fill denial of service.
+
+---
+
 ## 4. How to Resume Work on the Ubuntu Machine
 
 ### Step 1: Pull or Clone Repositories
