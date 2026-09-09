@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,23 +22,36 @@ import (
 )
 
 type mockLifecycleController struct {
+	mu        sync.Mutex
 	isRunning bool
 	stopCalls int
 }
 
 func (m *mockLifecycleController) StopNode() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.isRunning = false
 	m.stopCalls++
 	return nil
 }
 
 func (m *mockLifecycleController) StartNode(dataPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.isRunning = true
 	return nil
 }
 
 func (m *mockLifecycleController) IsRunning() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.isRunning
+}
+
+func (m *mockLifecycleController) StopCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopCalls
 }
 
 // 1. Unit Test: Ed25519 signature verification & checksum parsing
@@ -709,7 +723,7 @@ func TestCreateLocalSnapshot_PausesRunningNodeAndProtectsGrowingFiles(t *testing
 	}
 
 	// Verify the running node was stopped and restarted
-	if ctrl.stopCalls == 0 {
+	if ctrl.StopCalls() == 0 {
 		t.Fatalf("Expected StopNode to be called when node was running")
 	}
 	if !ctrl.IsRunning() {
