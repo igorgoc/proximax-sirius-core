@@ -54,12 +54,15 @@ func main() {
 	supervisorCtrl := supervisor.NewProcessSupervisor(basePath)
 	chainMon := chain.NewChainMonitor()
 
+	// Ignore SIGHUP so terminal or session closures do not kill the daemon
+	signal.Ignore(syscall.SIGHUP)
+
 	// Graceful shutdown on SIGINT / SIGTERM
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		<-sigChan
-		log.Println("[Sirius Core] Received termination signal. Stopping Sirius node engine...")
+		sig := <-sigChan
+		log.Printf("[Sirius Core] Received termination signal (%v). Stopping Sirius node engine...", sig)
 		_ = supervisorCtrl.StopNode()
 		os.Exit(0)
 	}()

@@ -197,7 +197,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             onClick={onOpenAbout}
             className="hover:text-slate-300 transition-colors"
           >
-            Sirius Core v1.9.7 (Native ARM64)
+            {metrics?.image || 'Sirius Core v1.9.7'}
           </button>
         </div>
 

@@ -34,6 +34,10 @@ interface ConfigTabProps {
 
 export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metrics, onRefreshConfig }) => {
   const [activeSubTab, setActiveSubTab] = useState<'general' | 'keys' | 'snapshots' | 'raw'>(() => {
+    const param = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('subtab') : null;
+    if (param === 'keys' || param === 'snapshots' || param === 'raw' || param === 'general') {
+      return param;
+    }
     if (typeof window !== 'undefined' && window.location.hash === '#snapshots') {
       return 'snapshots';
     }

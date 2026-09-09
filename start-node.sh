@@ -6,7 +6,7 @@ cd "$DIR"
 
 echo "========================================================="
 echo "  ProximaX Sirius Standalone Native Node Launcher"
-echo "  Architecture: Apple Silicon ARM64 (Optimized Async WAL)"
+echo "  Architecture: $(uname -s) $(uname -m) (Standalone Native Engine)"
 echo "========================================================="
 
 # 1. Raise file descriptor limit for RocksDB multi-cache

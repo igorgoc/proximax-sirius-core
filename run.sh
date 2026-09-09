@@ -4,12 +4,22 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
+# Detect Platform Architecture
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
+PLATFORM_DESC="$OS_NAME $ARCH_NAME"
+if [ "$OS_NAME" = "Darwin" ] && [ "$ARCH_NAME" = "arm64" ]; then
+    PLATFORM_DESC="Apple Silicon ARM64"
+elif [ "$OS_NAME" = "Linux" ] && [ "$ARCH_NAME" = "x86_64" ]; then
+    PLATFORM_DESC="Linux x86_64"
+fi
+
 echo "========================================================="
 echo "  ProximaX Sirius Mainnet Peer Node (Standalone Native)"
-echo "  Architecture: Apple Silicon ARM64 (Zero Docker)"
+echo "  Architecture: $PLATFORM_DESC (Zero Docker)"
 echo "========================================================="
 
-# 1. Raise file limits for RocksDB state cache on macOS
+# 1. Raise file limits for RocksDB state cache
 ulimit -n 65536 2>/dev/null || true
 
 # 2. Ensure logs, data, and bin directories exist
@@ -21,7 +31,13 @@ if [ ! -f "$DIR/bin/sirius.bc" ]; then
     exit 1
 fi
 
-# 3. Build Frontend UI and Go backend
+# 3. Toolchain environment setup
+if [ -d "$HOME/node/bin" ]; then
+    export PATH="$HOME/node/bin:$PATH"
+fi
+if [ -d "$HOME/go1.24/bin" ]; then
+    export PATH="$HOME/go1.24/bin:$PATH"
+fi
 if [ -f "$HOME/.nvm/nvm.sh" ]; then
     source "$HOME/.nvm/nvm.sh"
     nvm use 20 2>/dev/null || true

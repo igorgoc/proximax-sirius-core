@@ -28,7 +28,7 @@ import (
 
 const (
 	DefaultContainerName = "sirius-native-peer"
-	DefaultImageName     = "Native Sirius Core v1.9.7 (Apple Silicon ARM64)"
+	DefaultImageName     = "Native Sirius Core v1.9.7"
 	DefaultSnapshotUrl   = "http://207.180.195.181/snapshot.tar.xz"
 
 	Nemesis00001Url = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/00001.dat"
@@ -754,7 +754,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 	status, _ := dc.GetStatus()
 	metrics := &NodeMetrics{
 		Status:       status,
-		Image:        DefaultImageName,
+		Image:        fmt.Sprintf("%s v1.9.7", getPlatformArchLabel()),
 		CpuPercent:   "0.0%",
 		MemoryUsage:  "0 MB",
 		DiskUsage:    "0 B",
@@ -786,7 +786,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 	}
 
 	if status == StatusRunning && runningPid > 0 {
-		metrics.ContainerId = fmt.Sprintf("Native ARM64 (PID: %d)", runningPid)
+		metrics.ContainerId = fmt.Sprintf("%s (PID: %d)", getPlatformArchLabel(), runningPid)
 		if !dc.startTime.IsZero() {
 			uptimeDuration := time.Since(dc.startTime).Round(time.Second)
 			metrics.Uptime = uptimeDuration.String()
@@ -812,7 +812,11 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 		}
 
 		// Fast thread count
-		if thOut, thErr := exec.Command("sh", "-c", fmt.Sprintf("ps -M -p %d 2>/dev/null | tail -n +2 | wc -l", runningPid)).Output(); thErr == nil {
+		if runtime.GOOS == "linux" {
+			if tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", runningPid)); err == nil && len(tasks) > 0 {
+				metrics.ThreadsCount = len(tasks)
+			}
+		} else if thOut, thErr := exec.Command("sh", "-c", fmt.Sprintf("ps -M -p %d 2>/dev/null | tail -n +2 | wc -l", runningPid)).Output(); thErr == nil {
 			if count, err := strconv.Atoi(strings.TrimSpace(string(thOut))); err == nil && count > 0 {
 				metrics.ThreadsCount = count
 			}
@@ -2013,7 +2017,59 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+func getPlatformArchLabel() string {
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			return "Native Apple Silicon ARM64"
+		}
+		return "Native macOS Intel x86_64"
+	case "linux":
+		if runtime.GOARCH == "amd64" {
+			return "Native Linux x86_64"
+		}
+		return fmt.Sprintf("Native Linux %s", runtime.GOARCH)
+	case "windows":
+		return fmt.Sprintf("Native Windows %s", runtime.GOARCH)
+	default:
+		return fmt.Sprintf("Native %s %s", runtime.GOOS, runtime.GOARCH)
+	}
+}
+
 func getSystemNetworkBytes() (int64, int64, error) {
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/net/dev")
+		if err != nil {
+			return 0, 0, err
+		}
+		var totalIn, totalOut int64
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			if lineNum <= 2 {
+				continue
+			}
+			line := strings.TrimSpace(scanner.Text())
+			parts := strings.Split(line, ":")
+			if len(parts) < 2 {
+				continue
+			}
+			iface := strings.TrimSpace(parts[0])
+			if strings.HasPrefix(iface, "lo") {
+				continue
+			}
+			fields := strings.Fields(parts[1])
+			if len(fields) >= 9 {
+				ib, _ := strconv.ParseInt(fields[0], 10, 64)
+				ob, _ := strconv.ParseInt(fields[8], 10, 64)
+				totalIn += ib
+				totalOut += ob
+			}
+		}
+		return totalIn, totalOut, nil
+	}
+
 	out, err := exec.Command("netstat", "-b", "-i", "-n").Output()
 	if err != nil {
 		return 0, 0, err
@@ -2041,3 +2097,4 @@ func getSystemNetworkBytes() (int64, int64, error) {
 	}
 	return totalIn, totalOut, nil
 }
+
