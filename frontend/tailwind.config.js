@@ -41,7 +41,7 @@ export default {
       },
       fontFamily: {
         sans: ['Segoe UI', 'Ubuntu', 'Manrope', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        mono: ['SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Ubuntu Mono', 'Liberation Mono', 'DejaVu Sans Mono', 'Courier New', 'monospace'],
       },
       boxShadow: {
         'sirius-glow': '0 0 20px -5px rgba(68, 255, 241, 0.3)',

@@ -95,8 +95,8 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
       )}
 
       {/* Input & Action Bar */}
-      <div className="flex items-center space-x-1.5">
-        <div className="relative flex-1">
+      <div className="flex items-center space-x-1.5 w-full">
+        <div className="relative flex-1 min-w-0">
           <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
             {isFileMode ? <Archive className="w-3.5 h-3.5 text-emerald-400" /> : <Folder className="w-3.5 h-3.5 text-slate-400" />}
           </div>
@@ -105,7 +105,8 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
-            className="w-full pl-8 pr-3 py-2 bg-[#0F1115] border border-[#262B34] rounded-md focus:outline-hidden focus:border-blue-500 font-mono text-xs text-slate-100 placeholder-slate-500"
+            title={value || placeholder}
+            className="w-full pl-8 pr-2.5 py-1.5 bg-[#0F1115] border border-[#262B34] rounded-md focus:outline-hidden focus:border-blue-500 font-mono text-xs text-slate-100 placeholder-slate-500 truncate"
           />
         </div>
 
@@ -114,7 +115,7 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
           type="button"
           onClick={handleNativeBrowse}
           disabled={browsingNative}
-          className="px-3 py-2 bg-[#0F1115] hover:bg-[#262B34] border border-[#262B34] rounded-md text-xs font-medium text-slate-300 hover:text-white flex items-center space-x-1.5 transition-colors flex-shrink-0 disabled:opacity-60"
+          className="px-2.5 py-1.5 bg-[#0F1115] hover:bg-[#262B34] border border-[#262B34] rounded-md text-xs font-medium text-slate-300 hover:text-white flex items-center space-x-1 transition-colors flex-shrink-0 disabled:opacity-60"
           title={isFileMode ? 'Choose file via system dialog' : 'Choose folder via system dialog'}
         >
           {browsingNative ? (
@@ -124,7 +125,7 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
           ) : (
             <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
           )}
-          <span>{browsingNative ? 'Selecting...' : 'Browse...'}</span>
+          <span>{browsingNative ? 'Selecting...' : 'Browse'}</span>
         </button>
 
         {/* Separate Anchored Quick-Access Presets Menu */}
@@ -133,7 +134,7 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
             <button
               type="button"
               onClick={() => setPresetsOpen(!presetsOpen)}
-              className="px-2.5 py-2 bg-[#0F1115] hover:bg-[#262B34] border border-[#262B34] rounded-md text-xs font-medium text-slate-400 hover:text-white flex items-center space-x-1 transition-colors"
+              className="px-2 py-1.5 bg-[#0F1115] hover:bg-[#262B34] border border-[#262B34] rounded-md text-xs font-medium text-slate-400 hover:text-white flex items-center space-x-1 transition-colors"
               title={isFileMode ? 'Snapshot Presets' : 'Quick Presets'}
             >
               <span>Presets</span>
