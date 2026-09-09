@@ -89,9 +89,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
 
   // Raw config editor state
   const [rawFile, setRawFile] = useState('config-user.properties');
+  const [availableRawFiles, setAvailableRawFiles] = useState<string[]>([
+    'config-user.properties',
+    'config-harvesting.properties',
+    'config-storage.properties',
+    'config-node.properties',
+    'config-network.properties',
+    'config-extensions-server.properties',
+    'config-logging-server.properties',
+  ]);
   const [rawContent, setRawContent] = useState('');
   const [loadingRaw, setLoadingRaw] = useState(false);
   const [savingRaw, setSavingRaw] = useState(false);
+
 
   // Sync external config updates when not dirty, or fetch directly if not provided
   useEffect(() => {
@@ -332,17 +342,17 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
   const handleSaveRaw = async () => {
     setSavingRaw(true);
     try {
-      const res = await fetch('/api/config/raw', {
+      const res = await fetch(`/api/config/raw?file=${encodeURIComponent(rawFile)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file: rawFile, content: rawContent }),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok && (data.status === 'success' || data.success)) {
         setSaveStatus({ type: 'success', message: `Saved ${rawFile} successfully.` });
         onRefreshConfig();
       } else {
-        setSaveStatus({ type: 'error', message: data.message || `Failed to save ${rawFile}.` });
+        setSaveStatus({ type: 'error', message: data.message || data.error || `Failed to save ${rawFile}.` });
       }
     } catch (e: any) {
       setSaveStatus({ type: 'error', message: e.message || 'Error saving raw config.' });
@@ -353,9 +363,29 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
 
   useEffect(() => {
     if (activeSubTab === 'raw') {
+      fetch('/api/config/files')
+        .then((res) => res.json())
+        .then((files: string[]) => {
+          if (Array.isArray(files) && files.length > 0) {
+            const filtered = files.filter(
+              (f) => !f.endsWith('.template') && (f.endsWith('.properties') || f.endsWith('.json'))
+            );
+            if (!filtered.includes('config-storage.properties')) {
+              filtered.push('config-storage.properties');
+            }
+            setAvailableRawFiles(filtered);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [activeSubTab]);
+
+  useEffect(() => {
+    if (activeSubTab === 'raw') {
       fetchRawFile(rawFile);
     }
   }, [activeSubTab, rawFile]);
+
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto px-4 py-6 select-none">
@@ -792,12 +822,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
                 onChange={(e) => setRawFile(e.target.value)}
                 className="bg-[#0F1115] border border-[#262B34] rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"
               >
-                <option value="config-user.properties">config-user.properties</option>
-                <option value="config-harvesting.properties">config-harvesting.properties</option>
-                <option value="config-node.properties">config-node.properties</option>
-                <option value="config-extensions-server.properties">config-extensions-server.properties</option>
-                <option value="config-logging-server.properties">config-logging-server.properties</option>
+                {availableRawFiles.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
               </select>
+
 
               <button
                 onClick={handleSaveRaw}

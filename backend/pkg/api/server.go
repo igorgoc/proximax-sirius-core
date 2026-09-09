@@ -619,12 +619,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfigRaw(w http.ResponseWriter, r *http.Request) {
 	filename := r.URL.Query().Get("file")
-	if filename == "" {
-		jsonError(w, "file query parameter required", http.StatusBadRequest)
-		return
-	}
 
 	if r.Method == "GET" {
+		if filename == "" {
+			jsonError(w, "file query parameter required", http.StatusBadRequest)
+			return
+		}
 		content, err := s.configMgr.GetRawConfigFile(filename)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusNotFound)
@@ -636,10 +636,19 @@ func (s *Server) handleConfigRaw(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		var payload struct {
+			File    string `json:"file"`
 			Content string `json:"content"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			jsonError(w, "Invalid JSON body", http.StatusBadRequest)
+			return
+		}
+
+		if filename == "" {
+			filename = strings.TrimSpace(payload.File)
+		}
+		if filename == "" {
+			jsonError(w, "file parameter required in query or request body", http.StatusBadRequest)
 			return
 		}
 
@@ -654,6 +663,7 @@ func (s *Server) handleConfigRaw(w http.ResponseWriter, r *http.Request) {
 
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
+
 
 func (s *Server) handleConfigFilesList(w http.ResponseWriter, r *http.Request) {
 	files, err := s.configMgr.ListConfigFiles()
