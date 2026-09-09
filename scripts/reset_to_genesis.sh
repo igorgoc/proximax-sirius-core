@@ -2,7 +2,9 @@
 set -e
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-TARGET_DIR="${1:-/Volumes/SSD/Sirius_data}"
+CONFIG_USER="$DIR/chainconfig/resources/config-user.properties"
+CONFIGURED_DATA_DIR=$(grep -E '^[[:space:]]*dataDirectory[[:space:]]*=' "$CONFIG_USER" 2>/dev/null | cut -d'=' -f2- | tr -d ' \r\t' || true)
+TARGET_DIR="${1:-${CONFIGURED_DATA_DIR:-$DIR/chainconfig/data}}"
 
 echo "========================================================="
 echo "  ProximaX Sirius - Reset Node Data to Genesis (Block 1) "
@@ -13,7 +15,8 @@ echo "========================================================="
 pkill -9 -f "sirius.bc" 2>/dev/null || true
 sleep 1
 
-# 2. Re-create target data directory
+# 2. Clear old block data and re-create target data directories
+rm -rf "$TARGET_DIR/00000" "$TARGET_DIR/spool" "$TARGET_DIR/index.dat" "$TARGET_DIR/server.lock"
 mkdir -p "$TARGET_DIR/00000" "$TARGET_DIR/spool"
 
 # 3. Copy authentic genesis files
