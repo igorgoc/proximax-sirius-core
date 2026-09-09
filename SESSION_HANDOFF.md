@@ -86,6 +86,26 @@ When Windows development resumes, the Windows Node Manager will feature a **firs
    - **Explanation**: Plainly explains: *"To achieve high-speed block validation and RocksDB storage without Docker overhead, ProximaX Sirius runs its engine inside Windows Subsystem for Linux (WSL2)."*
    - **One-Click Action**:
      - If missing: A prominent button *"Enable Blockchain Subsystem"* that launches an elevated prompt (`powershell -Command "Start-Process wsl -ArgumentList '--install --no-distribution' -Verb RunAs"`).
-     - Followed by a clean notification: *"Windows requires a restart to finalize this subsystem. Your node manager will detect it automatically upon reboot."*
+     - Writes local state marker `{ "wsl_install_initiated": true }` to `chainconfig/cache.json`.
+     - Followed by a modal dialog: *"Windows requires a restart to finalize this subsystem. When you restart your PC and re-open ProximaX Sirius, setup will resume automatically."*
    - **Manual Mode Toggle**: Direct copyable PowerShell commands for advanced users who prefer configuring WSL manually.
+
+3. **Reboot-Resume Architecture**:
+   - **Dynamic Startup Check**: The Go backend executes the WSL status probe (`wsl.exe --status`) on *every single application startup*, not just on manual button clicks.
+   - **Resume Flow**: If `wsl_install_initiated == true` and `wsl.exe --status` reports WSL2 is active, the app automatically clears the marker, shows *"Blockchain subsystem detected successfully! Finalizing setup..."*, and advances directly to the next stage (distro provisioning or Cockpit launch) without showing the initial "Enable Subsystem" screen again.
+
+4. **Failure & Denial Paths (Explicit Handlers, Never Silent Crashes)**:
+   - **UAC Denial (Exit code 1223 / Access Denied)**:
+     - *UI Message*: *"Administrator permissions were declined. ProximaX Sirius requires permission once to enable the Windows virtualization feature."*
+     - *Action*: Displays a **"Try Again"** button alongside an expandable **"Manual PowerShell Instructions"** panel.
+   - **BIOS/UEFI Hardware Virtualization Disabled (`0x80370102` / `Wsl/Service/CreateVm`)**:
+     - *UI Message*: *"Hardware Virtualization is disabled in your computer's BIOS/UEFI. WSL2 requires CPU virtualization (Intel VT-x or AMD-V) to run."*
+     - *Action*: Shows a dedicated remediation card with a clickable guide link: *"How to enable virtualization in BIOS for your motherboard"* and a **"Re-check Status"** button.
+   - **Network Timeout / Kernel Download Failure**:
+     - *UI Message*: *"Windows failed to download the Linux kernel update automatically."*
+     - *Action*: Provides a direct download button for Microsoft's official offline MSI installer (`wsl_update_x64.msi`).
+   - **Corporate Group Policy / MDM Restriction**:
+     - *UI Message*: *"WSL2 installation is restricted by your system administrator or organization security policy."*
+     - *Action*: Displays IT policy guidelines and diagnostic details.
+
 
