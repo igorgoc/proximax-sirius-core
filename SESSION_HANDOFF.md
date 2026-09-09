@@ -68,3 +68,24 @@ sudo apt install -y build-essential cmake ninja-build libssl-dev \
 ### Step 3: First Action Item on Ubuntu
 Open Antigravity on the Ubuntu machine and prompt:
 > "Resume work from SESSION_HANDOFF.md: Let's build and verify the standalone native Linux engine bundle for cpp-xpx-chain using patchelf and RPATH, then test block sync on this Ubuntu system."
+
+---
+
+## 5. Windows WSL2 Onboarding Architecture Specification
+
+When Windows development resumes, the Windows Node Manager will feature a **first-class onboarding wizard** instead of cryptic runtime errors:
+
+1. **Detection States (`wsl.exe --status` / `wsl.exe -l -v`)**:
+   - `WSL_NOT_INSTALLED`: Neither WSL nor VirtualMachinePlatform enabled.
+   - `WSL_V1_ONLY`: WSL installed but default version is 1 (needs upgrade to v2 for RocksDB performance).
+   - `WSL2_NO_DISTRO`: WSL2 kernel installed, but no Ubuntu/Sirius distribution imported.
+   - `WSL2_READY`: Ready to execute `sirius.bc`.
+
+2. **User Experience Flow (First-Run Modal)**:
+   - **Title**: *"High-Performance Blockchain Subsystem Setup"*
+   - **Explanation**: Plainly explains: *"To achieve high-speed block validation and RocksDB storage without Docker overhead, ProximaX Sirius runs its engine inside Windows Subsystem for Linux (WSL2)."*
+   - **One-Click Action**:
+     - If missing: A prominent button *"Enable Blockchain Subsystem"* that launches an elevated prompt (`powershell -Command "Start-Process wsl -ArgumentList '--install --no-distribution' -Verb RunAs"`).
+     - Followed by a clean notification: *"Windows requires a restart to finalize this subsystem. Your node manager will detect it automatically upon reboot."*
+   - **Manual Mode Toggle**: Direct copyable PowerShell commands for advanced users who prefer configuring WSL manually.
+

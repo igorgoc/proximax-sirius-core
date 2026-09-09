@@ -37,6 +37,7 @@ Built as a lightweight native management engine (Go backend + React/TypeScript f
 
 - **macOS**: Apple Silicon (M1/M2/M3/M4) or Intel (macOS 12.0+)
 - **Linux**: Ubuntu 22.04+ / Debian 12+ (x86_64 or aarch64)
+- **Windows**: Windows 10 (Version 2004 / Build 19041+) or Windows 11 with **WSL2** enabled. *(Note: The Windows Node Manager GUI runs natively on Windows and automatically detects or guides the one-time setup of the high-performance Linux Sirius engine subsystem inside WSL2).*
 - **Node.js**: v20+ with `npm`
 - **Go**: v1.22+
 - **Disk Space**: At least 50 GB free disk space (external high-speed SSD recommended)
