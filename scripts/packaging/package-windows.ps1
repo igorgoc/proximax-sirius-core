@@ -4,12 +4,25 @@
 #>
 
 param(
-    [string]$Version = "1.9.7",
+    [string]$Version = "",
     [string]$Arch = "amd64"
 )
 
 $ErrorActionPreference = "Stop"
-$RootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
+
+if (-not $Version) { $Version = $env:VERSION }
+if (-not $Version) { $Version = $env:GITHUB_REF_NAME }
+if (-not $Version) { $Version = "1.9.8" }
+$Version = $Version -replace '^v', ''
+if (-not ($Version -match '^\d')) {
+    $Version = "1.9.8"
+}
+
+if ($PSScriptRoot) {
+    $RootDir = (Resolve-Path "$PSScriptRoot\..\..").Path
+} else {
+    $RootDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition))
+}
 Set-Location $RootDir
 
 $DistDir = Join-Path $RootDir "dist\windows-$Arch"

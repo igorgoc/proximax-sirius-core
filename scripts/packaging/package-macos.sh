@@ -4,7 +4,11 @@ set -euo pipefail
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$DIR"
 
-VERSION="1.9.7"
+VERSION="${VERSION:-${GITHUB_REF_NAME:-1.9.8}}"
+VERSION="${VERSION#v}"
+if [[ ! "$VERSION" =~ ^[0-9] ]]; then
+    VERSION="1.9.8"
+fi
 ARCH="$(uname -m)"
 if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
 if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
