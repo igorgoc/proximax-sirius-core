@@ -140,6 +140,7 @@ jobs:
       - name: Download all package artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: release-*
           path: release-assets
           merge-multiple: true
 
@@ -151,7 +152,7 @@ jobs:
           ls -la
 
           # Generate standard SHA256SUMS for all package archives
-          sha256sum * > SHA256SUMS
+          find . -maxdepth 1 -type f ! -name "SHA256SUMS*" ! -name "*.sig" -exec sha256sum {} + | sort -k 2 > SHA256SUMS
           cat SHA256SUMS
 
           # Enforce Fail-Closed Security Invariant:
