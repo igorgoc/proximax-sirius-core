@@ -51,7 +51,8 @@ jobs:
       matrix:
         platform:
           - name: linux-amd64
-            os: ubuntu-latest
+            # MUST use ubuntu-22.04 (Jammy, GLIBC 2.35), not ubuntu-latest, for backward and forward binary compatibility
+            os: ubuntu-22.04
             goarch: amd64
             script: ./scripts/packaging/package-linux.sh amd64
             dist_path: dist/linux-amd64/*
@@ -121,7 +122,7 @@ jobs:
   publish-release:
     name: Compute Hashes, Sign & Publish Release
     needs: [package-posix, package-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -4,7 +4,8 @@ set -euo pipefail
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$DIR"
 
-VERSION="1.9.7"
+VERSION="${VERSION:-${GITHUB_REF_NAME:-1.9.7}}"
+VERSION="${VERSION#v}"
 ARCH="${1:-amd64}"
 DIST_DIR="$DIR/dist/linux-${ARCH}"
 BUILD_DIR="$DIR/dist/build-linux-${ARCH}"
@@ -66,8 +67,13 @@ rm -f "$TARGET_OPT/chainconfig/resources/harvest-stats.json"
 [ -f "chainconfig/resources/config-user.properties.template" ] && \
     cp "chainconfig/resources/config-user.properties.template" "$TARGET_OPT/chainconfig/resources/config-user.properties"
 
-# Genesis bootstrap data
-if [ -f "chainconfig/data/00000/00001.dat" ]; then
+# Genesis bootstrap data & seed package
+if [ -d "chainconfig/genesis_seed" ]; then
+    cp -R chainconfig/genesis_seed "$TARGET_OPT/chainconfig/"
+    cp "chainconfig/genesis_seed/00000/00001.dat" "$TARGET_OPT/chainconfig/data/00000/" 2>/dev/null || true
+    cp "chainconfig/genesis_seed/00000/hashes.dat" "$TARGET_OPT/chainconfig/data/00000/" 2>/dev/null || true
+    [ -f "chainconfig/genesis_seed/index.dat" ] && cp "chainconfig/genesis_seed/index.dat" "$TARGET_OPT/chainconfig/data/"
+elif [ -f "chainconfig/data/00000/00001.dat" ]; then
     cp "chainconfig/data/00000/00001.dat" "$TARGET_OPT/chainconfig/data/00000/"
     cp "chainconfig/data/00000/hashes.dat" "$TARGET_OPT/chainconfig/data/00000/"
 fi
@@ -75,6 +81,8 @@ fi
 # Include launcher helper scripts
 cp start-node.sh stop.sh restart.sh "$TARGET_OPT/"
 cp stop.sh "$TARGET_OPT/stop-node.sh"
+[ -f "run.sh" ] && cp run.sh "$TARGET_OPT/"
+[ -f "scripts/reset_to_genesis.sh" ] && cp scripts/reset_to_genesis.sh "$TARGET_OPT/"
 chmod +x "$TARGET_OPT"/*.sh "$TARGET_OPT/sirius-core"
 
 # 4. Create standalone tarball
