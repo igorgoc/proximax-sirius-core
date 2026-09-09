@@ -45,6 +45,10 @@ bin/sirius-core-manager
 bin/sirius-node-manager
 bin/sign-release
 bin/sign-release.exe
+bin/sirius.bc*
+bin/catapult.*
+bin/*.so*
+bin/stream-chunk-restore
 backend/sirius-core
 backend/proximax-sirius-core
 .sirius-core.pid

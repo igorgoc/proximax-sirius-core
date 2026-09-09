@@ -79,6 +79,14 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 
 	manifestPath := filepath.Join(filepath.Dir(configMgr.GetResourcesPath()), "engine.compat.json")
 	eu := updater.NewEngineUpdater(supervisor.GetBinPath(), manifestPath, supervisor, nil)
+	go func() {
+		_, _ = eu.CheckUpdate("")
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			_, _ = eu.CheckUpdate("")
+		}
+	}()
 
 	bootKeyGetter := func() string {
 		if cfg, err := configMgr.LoadNodeConfig(); err == nil {
