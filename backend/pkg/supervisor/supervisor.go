@@ -440,14 +440,15 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 		dc.isRunning = false
 		dc.cmd = nil
 		dc.clearLocks(localDataDir)
-		dc.mu.Unlock()
-
-		if waitErr != nil {
+		userStopped := !dc.userIntendedRunning
+		if waitErr != nil && !userStopped {
 			dc.lastError = fmt.Sprintf("Sirius Core process exited with error: %v", waitErr)
 			dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Sirius Core process exited with error: %v", waitErr))
 		} else {
+			dc.lastError = ""
 			dc.broadcastLog("[Supervisor] Sirius Core process exited cleanly")
 		}
+		dc.mu.Unlock()
 	}()
 
 	return nil
@@ -662,6 +663,7 @@ func (dc *ProcessSupervisor) StopNode() error {
 	defer dc.mu.Unlock()
 
 	dc.userIntendedRunning = false
+	dc.lastError = ""
 	if !dc.isRunning || dc.cmd == nil || dc.cmd.Process == nil {
 		return nil
 	}
@@ -696,6 +698,7 @@ func (dc *ProcessSupervisor) StopNode() error {
 	}
 	dc.isRunning = false
 	dc.cmd = nil
+	dc.lastError = ""
 	return nil
 }
 
@@ -766,6 +769,9 @@ func (dc *ProcessSupervisor) GetStatus() (ContainerStatus, error) {
 			return StatusRunning, nil
 		}
 	}
+	if !dc.userIntendedRunning {
+		return StatusStopped, nil
+	}
 	if dc.lastError != "" {
 		return StatusError, nil
 	}
@@ -788,6 +794,10 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 			engineVer = trimmed
 		}
 	}
+	errMessage := dc.lastError
+	if status == StatusStopped || !dc.userIntendedRunning {
+		errMessage = ""
+	}
 	metrics := &NodeMetrics{
 		Status:       status,
 		Image:        fmt.Sprintf("%s %s", getPlatformArchLabel(), engineVer),
@@ -796,7 +806,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 		DiskUsage:    "0 B",
 		DiskFree:     "0 B",
 		BlockHeight:  dc.GetLatestLogHeight(),
-		ErrorMessage: dc.lastError,
+		ErrorMessage: errMessage,
 	}
 
 	targetDataDir := dataPath

@@ -97,12 +97,16 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     <div className="space-y-6 max-w-5xl mx-auto px-4 py-6 select-none">
       
       {/* 0. Storage Location Unreachable / Startup Error Banner */}
-      {metrics?.errorMessage && (
+      {metrics?.errorMessage && metrics?.status === 'error' && (
         <div className="bg-rose-950/40 border border-rose-800/60 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
           <div className="flex items-center space-x-3.5">
             <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
             <div>
-              <h3 className="text-sm font-semibold text-rose-200">Startup Pre-Flight Check Failed</h3>
+              <h3 className="text-sm font-semibold text-rose-200">
+                {metrics.errorMessage.toLowerCase().includes('pre-flight') || metrics.errorMessage.toLowerCase().includes('preflight')
+                  ? 'Startup Pre-Flight Check Failed'
+                  : 'Node Execution Error'}
+              </h3>
               <p className="text-xs text-rose-300 mt-0.5 font-mono">
                 {metrics.errorMessage}
               </p>
