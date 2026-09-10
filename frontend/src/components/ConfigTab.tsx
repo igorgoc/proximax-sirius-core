@@ -41,8 +41,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
     if (typeof window !== 'undefined' && window.location.hash === '#snapshots') {
       return 'snapshots';
     }
-    return 'general';
   });
+
+  useEffect(() => {
+    const handleHash = () => {
+      const h = window.location.hash.replace('#', '');
+      if (h === 'snapshots' || h === 'keys' || h === 'raw' || h === 'general') {
+        setActiveSubTab(h as any);
+      }
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
+
   const [showAdvancedPorts, setShowAdvancedPorts] = useState(false);
   const [showBootKey, setShowBootKey] = useState(false);
   const [showHarvestKey, setShowHarvestKey] = useState(false);

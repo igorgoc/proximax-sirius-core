@@ -402,7 +402,14 @@ export function App() {
           />
         )}
 
-        {activeTab === 'maintenance' && <MaintenanceTab />}
+        {activeTab === 'maintenance' && (
+          <MaintenanceTab
+            onOpenSettings={(subtab = 'snapshots') => {
+              window.location.hash = `#${subtab}`;
+              setActiveTab('config');
+            }}
+          />
+        )}
 
         {activeTab === 'logs' && <LogsTab />}
       </main>

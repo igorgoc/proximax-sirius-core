@@ -23,6 +23,8 @@ import {
   Sliders,
   Check,
   Activity,
+  Key,
+  RotateCcw,
 } from 'lucide-react';
 import {
   SnapshotStatus,
@@ -34,30 +36,32 @@ import {
 } from '../types';
 import { DirectoryDropdown } from './DirectoryDropdown';
 import { ConfirmDestructiveModal } from './ConfirmDestructiveModal';
-import { loadSnapshotPreferences } from './SnapshotSubTab';
+import { loadSnapshotPreferences, SnapshotPreferences } from './SnapshotSubTab';
 
-export const MaintenanceTab: React.FC = () => {
-  // Saved Preferences from Settings -> Snapshots
-  const [prefs, setPrefs] = useState(() => loadSnapshotPreferences());
+interface MaintenanceTabProps {
+  onOpenSettings?: (subtab?: string) => void;
+}
 
-  useEffect(() => {
-    const handlePrefsUpdated = (e: any) => {
-      if (e.detail) setPrefs(e.detail);
-    };
-    window.addEventListener('sirius-snapshot-prefs-updated', handlePrefsUpdated);
-    return () => window.removeEventListener('sirius-snapshot-prefs-updated', handlePrefsUpdated);
-  }, []);
+export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }) => {
+  // 1. Single Source of Truth: Saved Preferences from Settings -> Snapshots
+  const [prefs, setPrefs] = useState<SnapshotPreferences>(() => loadSnapshotPreferences());
 
-  // Global Node State & Metrics (Status Strip)
-  const [nodeStatus, setNodeStatus] = useState<string>('stopped');
-  const [blockHeight, setBlockHeight] = useState<number>(0);
-  const [networkHeight, setNetworkHeight] = useState<number>(0);
-  const [peersCount, setPeersCount] = useState<number>(0);
-  const [metrics, setMetrics] = useState<NodeMetrics | null>(null);
-  const [autoRecovery, setAutoRecovery] = useState<boolean>(true);
-
-  // Free Disk Space Readout
-  const [diskSpaceData, setDiskSpaceData] = useState<{ free: string; total: string; used: string } | null>(null);
+  // Track session overrides per field (this run only - does NOT write back to Settings)
+  const [isOverridden, setIsOverridden] = useState<{
+    backupSource: boolean;
+    backupTarget: boolean;
+    backupFormat: boolean;
+    remoteSyncUrl: boolean;
+    remoteSyncTarget: boolean;
+    localRestoreTarget: boolean;
+  }>({
+    backupSource: false,
+    backupTarget: false,
+    backupFormat: false,
+    remoteSyncUrl: false,
+    remoteSyncTarget: false,
+    localRestoreTarget: false,
+  });
 
   // Backup Card State
   const [backupSource, setBackupSource] = useState(() => prefs.defaultDataPath);
@@ -72,7 +76,6 @@ export const MaintenanceTab: React.FC = () => {
   // Remote Sync Card State
   const [remoteSyncUrl, setRemoteSyncUrl] = useState(() => prefs.defaultRemoteUrl);
   const [remoteSyncTarget, setRemoteSyncTarget] = useState(() => prefs.defaultDataPath);
-  const [remoteSyncPubKey, setRemoteSyncPubKey] = useState(() => prefs.releasePubKey);
   const [remoteSnapshotStatus, setRemoteSnapshotStatus] = useState<SnapshotStatus | null>(null);
   const [remoteManagerStatus, setRemoteManagerStatus] = useState<SnapshotManagerStatus | null>(null);
   const [startingRemoteSync, setStartingRemoteSync] = useState(false);
@@ -83,6 +86,42 @@ export const MaintenanceTab: React.FC = () => {
   const [localRestoreTarget, setLocalRestoreTarget] = useState(() => prefs.defaultDataPath);
   const [startingLocalRestore, setStartingLocalRestore] = useState(false);
   const [cancellingLocalRestore, setCancellingLocalRestore] = useState(false);
+
+  // Bidirectional listener for Settings updates (Requirement 6)
+  useEffect(() => {
+    const handlePrefsUpdated = (e: any) => {
+      if (!e.detail) return;
+      const newPrefs: SnapshotPreferences = e.detail;
+      setPrefs(newPrefs);
+
+      // Only update fields that the user has NOT manually overridden in this session
+      setIsOverridden((current) => {
+        if (!current.backupSource) setBackupSource(newPrefs.defaultDataPath);
+        if (!current.backupTarget) setBackupTarget(newPrefs.defaultSnapshotFolder);
+        if (!current.backupFormat) {
+          setBackupFormat(newPrefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst');
+        }
+        if (!current.remoteSyncUrl) setRemoteSyncUrl(newPrefs.defaultRemoteUrl);
+        if (!current.remoteSyncTarget) setRemoteSyncTarget(newPrefs.defaultDataPath);
+        if (!current.localRestoreTarget) setLocalRestoreTarget(newPrefs.defaultDataPath);
+        return current;
+      });
+    };
+
+    window.addEventListener('sirius-snapshot-prefs-updated', handlePrefsUpdated);
+    return () => window.removeEventListener('sirius-snapshot-prefs-updated', handlePrefsUpdated);
+  }, []);
+
+  // Global Node State & Metrics (Status Strip)
+  const [nodeStatus, setNodeStatus] = useState<string>('stopped');
+  const [blockHeight, setBlockHeight] = useState<number>(0);
+  const [networkHeight, setNetworkHeight] = useState<number>(0);
+  const [peersCount, setPeersCount] = useState<number>(0);
+  const [metrics, setMetrics] = useState<NodeMetrics | null>(null);
+  const [autoRecovery, setAutoRecovery] = useState<boolean>(true);
+
+  // Free Disk Space Readout
+  const [diskSpaceData, setDiskSpaceData] = useState<{ free: string; total: string; used: string } | null>(null);
 
   // Official Updater State
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -130,6 +169,95 @@ export const MaintenanceTab: React.FC = () => {
     confirmButtonText: '',
     action: async () => {},
   });
+
+  // Navigate to Settings -> Snapshots handler (Requirement 5)
+  const navigateToSettingsSnapshots = () => {
+    if (onOpenSettings) {
+      onOpenSettings('snapshots');
+    } else {
+      window.location.hash = '#snapshots';
+      window.dispatchEvent(new CustomEvent('switch-tab', { detail: { tab: 'config', subtab: 'snapshots' } }));
+    }
+  };
+
+  // Reset individual field to Settings default (Requirement 4)
+  const handleResetField = (field: keyof typeof isOverridden) => {
+    setIsOverridden((prev) => ({ ...prev, [field]: false }));
+    switch (field) {
+      case 'backupSource':
+        setBackupSource(prefs.defaultDataPath);
+        break;
+      case 'backupTarget':
+        setBackupTarget(prefs.defaultSnapshotFolder);
+        break;
+      case 'backupFormat':
+        setBackupFormat(prefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst');
+        break;
+      case 'remoteSyncUrl':
+        setRemoteSyncUrl(prefs.defaultRemoteUrl);
+        break;
+      case 'remoteSyncTarget':
+        setRemoteSyncTarget(prefs.defaultDataPath);
+        break;
+      case 'localRestoreTarget':
+        setLocalRestoreTarget(prefs.defaultDataPath);
+        break;
+    }
+  };
+
+  // Check if a field is currently matching default (Requirement 3)
+  const isFieldDefault = (
+    field: keyof typeof isOverridden,
+    currentVal: string,
+    defaultVal: string
+  ) => {
+    return !isOverridden[field] || currentVal.trim() === defaultVal.trim();
+  };
+
+  // Reusable Field Header with (default) vs custom (this run) indicator & Reset button (Requirements 3 & 4)
+  const renderFieldHeader = (
+    label: string,
+    field: keyof typeof isOverridden,
+    currentVal: string,
+    defaultVal: string
+  ) => {
+    const isDef = isFieldDefault(field, currentVal, defaultVal);
+
+    return (
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center space-x-1.5">
+          <span className="text-[11px] font-semibold text-slate-300">{label}</span>
+          {isDef ? (
+            <span
+              className="px-1.5 py-0.2 rounded text-[10px] font-mono text-zinc-400 bg-zinc-800/80 border border-zinc-700"
+              title="Using default value from Settings → Snapshots"
+            >
+              (default)
+            </span>
+          ) : (
+            <span
+              className="px-1.5 py-0.2 rounded text-[10px] font-mono text-amber-400 bg-amber-950/40 border border-amber-500/40"
+              title="Overridden for this run only (not saved to Settings)"
+            >
+              custom (this run)
+            </span>
+          )}
+        </div>
+
+        {!isDef && (
+          <button
+            type="button"
+            onClick={() => handleResetField(field)}
+            className="text-[10px] font-mono text-zinc-400 hover:text-white flex items-center space-x-1 transition-colors group"
+            title={`Reset to default (${defaultVal})`}
+          >
+            <RotateCcw className="w-2.5 h-2.5 text-zinc-400 group-hover:-rotate-90 transition-transform" />
+            <span>Reset to default</span>
+          </button>
+        )}
+      </div>
+    );
+  };
 
   // Polling Function
   const fetchStatus = useCallback(async () => {
@@ -273,16 +401,16 @@ export const MaintenanceTab: React.FC = () => {
     setStartingRemoteSync(true);
     try {
       const url = remoteSyncUrl.trim();
-      const isManifest = url.endsWith('.json') || Boolean(remoteSyncPubKey.trim());
+      const isManifest = url.endsWith('.json');
 
       let res: Response;
-      if (isManifest && url.endsWith('.json')) {
+      if (isManifest) {
         res = await fetch('/api/snapshot/restore/remote', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             manifestUrl: url,
-            releasePublicKeyHex: remoteSyncPubKey.trim(),
+            releasePublicKeyHex: prefs.releasePubKey.trim(),
             targetDataPath: remoteSyncTarget.trim(),
           }),
         });
@@ -624,7 +752,8 @@ export const MaintenanceTab: React.FC = () => {
       ['fetching_manifest', 'verifying_signature', 'downloading', 'verifying_checksum', 'extracting'].includes(
         remoteManagerStatus.stage
       ));
-  const isLocalRestoreRunning = remoteManagerStatus?.stage === 'extracting' && remoteManagerStatus?.operation === 'restore_local';
+  const isLocalRestoreRunning =
+    remoteManagerStatus?.stage === 'extracting' && remoteManagerStatus?.operation === 'restore_local';
   const isConvertRunning = convertStatus?.status === 'running';
 
   const syncPercent =
@@ -633,6 +762,11 @@ export const MaintenanceTab: React.FC = () => {
 
   // Free disk readout helper
   const availableDiskFree = diskSpaceData?.free || metrics?.diskFree || 'Checking...';
+
+  // Format toggle helper
+  const isFormatDefault =
+    !isOverridden.backupFormat ||
+    backupFormat === (prefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst');
 
   return (
     <div className="space-y-6 animate-in fade-in duration-150 pb-8">
@@ -783,51 +917,119 @@ export const MaintenanceTab: React.FC = () => {
               </p>
 
               {/* Form: Source path, Destination path, Compression format */}
-              <div className="space-y-2 pt-1">
-                <DirectoryDropdown
-                  label="Source Blockchain Directory (data.path)"
-                  value={backupSource}
-                  onChange={setBackupSource}
-                  placeholder="./chainconfig/data"
-                  prompt="Select Source Blockchain Directory"
-                />
-
-                <DirectoryDropdown
-                  label="Destination Folder"
-                  value={backupTarget}
-                  onChange={setBackupTarget}
-                  placeholder="/Volumes/SSD/snapshots"
-                  prompt="Select Backup Save Directory"
-                />
+              <div className="space-y-2.5 pt-1">
+                <div>
+                  {renderFieldHeader(
+                    'Source Blockchain Directory (data.path)',
+                    'backupSource',
+                    backupSource,
+                    prefs.defaultDataPath
+                  )}
+                  <DirectoryDropdown
+                    value={backupSource}
+                    onChange={(val) => {
+                      setIsOverridden((prev) => ({ ...prev, backupSource: true }));
+                      setBackupSource(val);
+                    }}
+                    placeholder="./chainconfig/data"
+                    prompt="Select Source Blockchain Directory"
+                  />
+                </div>
 
                 <div>
-                  <label className="text-[11px] font-medium text-slate-400 block mb-1">
-                    Compression Format
-                  </label>
+                  {renderFieldHeader(
+                    'Destination Folder',
+                    'backupTarget',
+                    backupTarget,
+                    prefs.defaultSnapshotFolder
+                  )}
+                  <DirectoryDropdown
+                    value={backupTarget}
+                    onChange={(val) => {
+                      setIsOverridden((prev) => ({ ...prev, backupTarget: true }));
+                      setBackupTarget(val);
+                    }}
+                    placeholder="/Volumes/SSD/snapshots"
+                    prompt="Select Backup Save Directory"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-[11px] font-semibold text-slate-300">
+                        Compression Format
+                      </span>
+                      {isFormatDefault ? (
+                        <span
+                          className="px-1.5 py-0.2 rounded text-[10px] font-mono text-zinc-400 bg-zinc-800/80 border border-zinc-700"
+                          title="Using default configured in Settings → Snapshots"
+                        >
+                          (default)
+                        </span>
+                      ) : (
+                        <span
+                          className="px-1.5 py-0.2 rounded text-[10px] font-mono text-amber-400 bg-amber-950/40 border border-amber-500/40"
+                          title="Overridden for this run only"
+                        >
+                          custom (this run)
+                        </span>
+                      )}
+                    </div>
+
+                    {!isFormatDefault && (
+                      <button
+                        type="button"
+                        onClick={() => handleResetField('backupFormat')}
+                        className="text-[10px] font-mono text-zinc-400 hover:text-white flex items-center space-x-1 transition-colors group"
+                        title={`Reset to default (.tar.${prefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst'})`}
+                      >
+                        <RotateCcw className="w-2.5 h-2.5 text-zinc-400 group-hover:-rotate-90 transition-transform" />
+                        <span>Reset to default</span>
+                      </button>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setBackupFormat('zst')}
+                      onClick={() => {
+                        setIsOverridden((prev) => ({ ...prev, backupFormat: true }));
+                        setBackupFormat('zst');
+                      }}
                       disabled={isBackupRunning}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all ${
+                      className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-between ${
                         backupFormat === 'zst'
                           ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/50'
                           : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
                       }`}
                     >
-                      .tar.zst (Zstandard)
+                      <span>.tar.zst (Zstandard)</span>
+                      {prefs.defaultCompressionFormat === 'tar.zst' && (
+                        <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-sans">
+                          default
+                        </span>
+                      )}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setBackupFormat('gz')}
+                      onClick={() => {
+                        setIsOverridden((prev) => ({ ...prev, backupFormat: true }));
+                        setBackupFormat('gz');
+                      }}
                       disabled={isBackupRunning}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all ${
+                      className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-between ${
                         backupFormat === 'gz'
                           ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/50'
                           : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
                       }`}
                     >
-                      .tar.gz (Gzip)
+                      <span>.tar.gz (Gzip)</span>
+                      {prefs.defaultCompressionFormat === 'tar.gz' && (
+                        <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-sans">
+                          default
+                        </span>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -927,42 +1129,74 @@ export const MaintenanceTab: React.FC = () => {
                 Direct streaming fast-sync decompression from remote snapshot servers (Cloudflare R2, S3, B2, or HTTP). Direct streaming unpack with zero intermediate disk overhead.
               </p>
 
-              {/* Form: URL, Target path, Optional Ed25519 Pubkey */}
-              <div className="space-y-2 pt-1">
+              {/* Form: URL, Target path, and Read-Only Verification PubKey with link */}
+              <div className="space-y-2.5 pt-1">
                 <div>
-                  <label className="text-[11px] font-medium text-slate-400 block mb-1">
-                    Manifest or Snapshot URL
-                  </label>
+                  {renderFieldHeader(
+                    'Manifest or Snapshot URL',
+                    'remoteSyncUrl',
+                    remoteSyncUrl,
+                    prefs.defaultRemoteUrl
+                  )}
                   <input
                     type="text"
                     value={remoteSyncUrl}
-                    onChange={(e) => setRemoteSyncUrl(e.target.value)}
+                    onChange={(e) => {
+                      setIsOverridden((prev) => ({ ...prev, remoteSyncUrl: true }));
+                      setRemoteSyncUrl(e.target.value);
+                    }}
                     disabled={isRemoteSyncRunning}
                     placeholder="http://207.180.195.181/snapshot.tar.xz"
                     className="w-full px-3 py-1.5 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none transition-all disabled:opacity-50"
                   />
                 </div>
 
-                <DirectoryDropdown
-                  label="Target Data Directory (data.path)"
-                  value={remoteSyncTarget}
-                  onChange={setRemoteSyncTarget}
-                  placeholder="./chainconfig/data"
-                  prompt="Select Target Blockchain Data Directory"
-                />
-
                 <div>
-                  <label className="text-[11px] font-medium text-slate-400 block mb-1">
-                    Release Verification Public Key (Ed25519 - Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={remoteSyncPubKey}
-                    onChange={(e) => setRemoteSyncPubKey(e.target.value)}
-                    disabled={isRemoteSyncRunning}
-                    placeholder="538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
-                    className="w-full px-3 py-1.5 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-[11px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none transition-all disabled:opacity-50"
+                  {renderFieldHeader(
+                    'Target Data Directory (data.path)',
+                    'remoteSyncTarget',
+                    remoteSyncTarget,
+                    prefs.defaultDataPath
+                  )}
+                  <DirectoryDropdown
+                    value={remoteSyncTarget}
+                    onChange={(val) => {
+                      setIsOverridden((prev) => ({ ...prev, remoteSyncTarget: true }));
+                      setRemoteSyncTarget(val);
+                    }}
+                    placeholder="./chainconfig/data"
+                    prompt="Select Target Blockchain Data Directory"
                   />
+                </div>
+
+                {/* Requirement 5: Read-only verification pubkey row with link to Settings */}
+                <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px]">
+                  <div className="flex items-center space-x-2.5 min-w-0">
+                    <div className="w-6 h-6 rounded bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-slate-300 flex-shrink-0">
+                      <Key className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-1.5 text-slate-400 text-[10.5px]">
+                        <span>Release Verification Key (Ed25519)</span>
+                        <span className="px-1.5 py-0.2 rounded text-[9.5px] font-mono text-zinc-400 bg-zinc-800/80 border border-zinc-700">
+                          from Settings
+                        </span>
+                      </div>
+                      <div className="font-mono text-slate-200 truncate max-w-[200px] sm:max-w-[260px] text-xs">
+                        {prefs.releasePubKey
+                          ? `${prefs.releasePubKey.slice(0, 14)}...${prefs.releasePubKey.slice(-14)}`
+                          : 'Not configured'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={navigateToSettingsSnapshots}
+                    className="text-[11px] font-mono text-zinc-400 hover:text-white underline underline-offset-2 flex-shrink-0 ml-2 transition-colors"
+                    title="Open Settings → Snapshots to update verification key"
+                  >
+                    edit in Settings →
+                  </button>
                 </div>
 
                 {/* Target Disk Space Readout */}
@@ -1060,23 +1294,37 @@ export const MaintenanceTab: React.FC = () => {
               </p>
 
               {/* Form: Select Archive File, Target data path */}
-              <div className="space-y-2 pt-1">
-                <DirectoryDropdown
-                  label="Select Local Archive File"
-                  value={localArchivePath}
-                  onChange={setLocalArchivePath}
-                  placeholder="/Volumes/SSD/snapshots/snapshot.tar.zst"
-                  mode="file"
-                  prompt="Select Sirius Snapshot Archive File"
-                />
+              <div className="space-y-2.5 pt-1">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                    Select Local Archive File
+                  </label>
+                  <DirectoryDropdown
+                    value={localArchivePath}
+                    onChange={setLocalArchivePath}
+                    placeholder="/Volumes/SSD/snapshots/snapshot.tar.zst"
+                    mode="file"
+                    prompt="Select Sirius Snapshot Archive File"
+                  />
+                </div>
 
-                <DirectoryDropdown
-                  label="Target Data Directory (data.path)"
-                  value={localRestoreTarget}
-                  onChange={setLocalRestoreTarget}
-                  placeholder="./chainconfig/data"
-                  prompt="Select Target Data Directory"
-                />
+                <div>
+                  {renderFieldHeader(
+                    'Target Data Directory (data.path)',
+                    'localRestoreTarget',
+                    localRestoreTarget,
+                    prefs.defaultDataPath
+                  )}
+                  <DirectoryDropdown
+                    value={localRestoreTarget}
+                    onChange={(val) => {
+                      setIsOverridden((prev) => ({ ...prev, localRestoreTarget: true }));
+                      setLocalRestoreTarget(val);
+                    }}
+                    placeholder="./chainconfig/data"
+                    prompt="Select Target Data Directory"
+                  />
+                </div>
 
                 {/* Target Disk Space Readout */}
                 <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px] font-mono text-slate-400">
