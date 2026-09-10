@@ -1,23 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Archive, 
-  DownloadCloud, 
-  UploadCloud, 
-  ShieldCheck, 
-  AlertTriangle, 
-  RefreshCw, 
-  HardDrive, 
-  CheckCircle2, 
-  Layers, 
-  Lock, 
-  FileText, 
-  Play, 
-  Flame,
-  Check
+import {
+  Save,
+  CheckCircle2,
+  AlertTriangle,
+  RotateCcw,
+  Sliders,
+  Folder,
+  Globe,
+  Key,
+  Archive,
 } from 'lucide-react';
 import { DirectoryDropdown } from './DirectoryDropdown';
-import { SnapshotModal } from './SnapshotModal';
-import { SnapshotManagerStatus } from '../types';
 
 interface SnapshotSubTabProps {
   currentDataPath: string;
@@ -25,426 +18,312 @@ interface SnapshotSubTabProps {
   onRefreshConfig?: () => void;
 }
 
-export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath, blockHeight = 0 }) => {
-  // Part 1: Local Create State
-  const [createSourcePath, setCreateSourcePath] = useState(currentDataPath || './chainconfig/data');
-  const [createTargetPath, setCreateTargetPath] = useState('');
-  const [createFormat, setCreateFormat] = useState<'tar.zst' | 'tar.gz'>('tar.zst');
-  const [creating, setCreating] = useState(false);
+export interface SnapshotPreferences {
+  defaultDataPath: string;
+  defaultSnapshotFolder: string;
+  defaultCompressionFormat: 'tar.zst' | 'tar.gz';
+  defaultRemoteUrl: string;
+  releasePubKey: string;
+}
 
-  // Part 1: Local Restore State
-  const [localArchivePath, setLocalArchivePath] = useState('');
-  const [localRestoreTarget, setLocalRestoreTarget] = useState(currentDataPath || './chainconfig/data');
-  const [restoringLocal, setRestoringLocal] = useState(false);
+const STORAGE_KEY = 'sirius_snapshot_prefs';
 
-  // Part 2: Pluggable Remote Restore State
-  const [manifestUrl, setManifestUrl] = useState('');
-  const [releasePubKey, setReleasePubKey] = useState('538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c');
-  const [remoteRestoreTarget, setRemoteRestoreTarget] = useState(currentDataPath || './chainconfig/data');
-  const [restoringRemote, setRestoringRemote] = useState(false);
+export const DEFAULT_SNAPSHOT_PREFS: SnapshotPreferences = {
+  defaultDataPath: './chainconfig/data',
+  defaultSnapshotFolder: '/Volumes/SSD/snapshots',
+  defaultCompressionFormat: 'tar.zst',
+  defaultRemoteUrl: 'http://207.180.195.181/snapshot.tar.xz',
+  releasePubKey: '538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c',
+};
 
-  // Live Manager Status
-  const [snapshotStatus, setSnapshotStatus] = useState<SnapshotManagerStatus | null>(null);
-  const [showModal, setShowModal] = useState(false);
+export const loadSnapshotPreferences = (fallbackDataPath?: string): SnapshotPreferences => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_SNAPSHOT_PREFS,
+        ...parsed,
+        defaultDataPath: parsed.defaultDataPath || fallbackDataPath || DEFAULT_SNAPSHOT_PREFS.defaultDataPath,
+      };
+    }
+  } catch (e) {
+    console.error('Failed to load snapshot preferences from storage:', e);
+  }
+  return {
+    ...DEFAULT_SNAPSHOT_PREFS,
+    defaultDataPath: fallbackDataPath || DEFAULT_SNAPSHOT_PREFS.defaultDataPath,
+  };
+};
 
-  // Poll live snapshot status
+export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath }) => {
+  const [prefs, setPrefs] = useState<SnapshotPreferences>(() => loadSnapshotPreferences(currentDataPath));
+  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+
   useEffect(() => {
-    let timer: any;
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch('/api/snapshot/status');
-        if (res.ok) {
-          const data: SnapshotManagerStatus = await res.json();
-          setSnapshotStatus(data);
-          const activeStages = [
-            'archiving',
-            'compressing',
-            'extracting',
-            'downloading',
-            'fetching_manifest',
-            'verifying_signature',
-            'verifying_checksum'
-          ];
-          if (data && activeStages.includes(data.stage)) {
-            setShowModal(true);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
+    if (currentDataPath && !isDirty && prefs.defaultDataPath !== currentDataPath) {
+      setPrefs((prev) => ({ ...prev, defaultDataPath: currentDataPath }));
+    }
+  }, [currentDataPath, isDirty, prefs.defaultDataPath]);
 
-    fetchStatus();
-    timer = setInterval(fetchStatus, 250);
-    return () => clearInterval(timer);
-  }, []);
+  const handleUpdate = <K extends keyof SnapshotPreferences>(key: K, value: SnapshotPreferences[K]) => {
+    setPrefs((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+    setSavedSuccess(false);
+  };
 
-  const handleCloseModal = async () => {
-    setShowModal(false);
+  const handleSave = () => {
     try {
-      await fetch('/api/snapshot/reset', { method: 'POST' });
-      setSnapshotStatus((prev) => (prev ? { ...prev, stage: 'idle', message: 'Ready' } : null));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+      window.dispatchEvent(new CustomEvent('sirius-snapshot-prefs-updated', { detail: prefs }));
+      setIsDirty(false);
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
     } catch (e) {
-      console.error('Failed to reset snapshot status:', e);
+      console.error('Failed to save snapshot preferences:', e);
+      alert('Failed to save snapshot preferences to browser storage.');
     }
   };
 
-  // Handler: Part 1 Local Create
-  const handleCreateSnapshot = async () => {
-    if (!createSourcePath) {
-      alert('Source data directory cannot be empty');
-      return;
-    }
-    setCreating(true);
-    try {
-      const res = await fetch('/api/snapshot/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourcePath: createSourcePath.trim(),
-          targetPath: createTargetPath.trim(),
-          format: createFormat,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start snapshot creation');
-      setShowModal(true);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setCreating(false);
+  const handleResetDefaults = () => {
+    if (window.confirm('Reset all snapshot and backup settings to default values?')) {
+      const resetVals = {
+        ...DEFAULT_SNAPSHOT_PREFS,
+        defaultDataPath: currentDataPath || DEFAULT_SNAPSHOT_PREFS.defaultDataPath,
+      };
+      setPrefs(resetVals);
+      setIsDirty(true);
+      setSavedSuccess(false);
     }
   };
 
-  // Handler: Part 1 Local Restore
-  const handleRestoreLocal = async () => {
-    if (!localArchivePath) {
-      alert('Please select a local snapshot archive file (.tar.zst, .tar.gz, .tar.xz)');
-      return;
-    }
-    if (!window.confirm(`Warning: Restoring this snapshot will overwrite blockchain state in:\n${localRestoreTarget}\n\nThe node will be stopped during restoration. Continue?`)) {
-      return;
-    }
-
-    setRestoringLocal(true);
-    try {
-      const res = await fetch('/api/snapshot/restore/local', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          archivePath: localArchivePath.trim(),
-          targetDataPath: localRestoreTarget.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start local snapshot restore');
-      setShowModal(true);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setRestoringLocal(false);
-    }
-  };
-
-  // Handler: Part 2 Pluggable Remote Restore
-  const handleRestoreRemote = async () => {
-    if (!manifestUrl) {
-      alert('Please enter a valid snapshot manifest.json URL');
-      return;
-    }
-    if (!window.confirm(`Restore remote snapshot into:\n${remoteRestoreTarget}\n\nThe manifest signature will be verified before streaming. Node will stop. Proceed?`)) {
-      return;
-    }
-
-    setRestoringRemote(true);
-    try {
-      const res = await fetch('/api/snapshot/restore/remote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          manifestUrl: manifestUrl.trim(),
-          releasePublicKeyHex: releasePubKey.trim(),
-          targetDataPath: remoteRestoreTarget.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start remote snapshot restoration');
-      setShowModal(true);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setRestoringRemote(false);
-    }
-  };
-
-  // Handler: Test with Mock Server
-  const handleLoadMockServer = async () => {
-    try {
-      const res = await fetch('/api/snapshot/mock/info');
-      if (!res.ok) throw new Error('Failed to load mock server info');
-      const data = await res.json();
-      setManifestUrl(data.manifestUrl);
-      if (data.mockPublicKeyHex) {
-        setReleasePubKey(data.mockPublicKeyHex);
-      }
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
-
-  // Cancel running operation
-  const handleCancel = async () => {
-    try {
-      await fetch('/api/snapshot/cancel', { method: 'POST' });
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  const isPubKeyValid = prefs.releasePubKey.trim().length === 64 && /^[0-9a-fA-F]+$/.test(prefs.releasePubKey.trim());
 
   return (
     <div className="space-y-6 animate-in fade-in duration-150">
-      
-      {/* Visual Status Badges */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="p-3.5 bg-[#13171F] border border-emerald-500/30 rounded-xl flex items-start space-x-3">
-          <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg flex-shrink-0 mt-0.5">
-            <CheckCircle2 className="w-4 h-4" />
+      {/* Section Header & Subtitle */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#262B34] gap-2">
+        <div className="space-y-1">
+          <div className="flex items-center space-x-2">
+            <Sliders className="w-4 h-4 text-slate-300" />
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
+              Snapshot & Fast-Sync Defaults
+            </h3>
           </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center space-x-2">
-              <h4 className="text-xs font-semibold text-white">Part 1: Local Snapshot Engine</h4>
-              <span className="px-2 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-mono">
-                Operational & Verified
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Multi-threaded Zstandard compression/decompression directly to/from disk with zero remote dependencies.
-            </p>
-          </div>
+          <p className="text-xs text-slate-400">
+            Configure system-wide default storage locations, compression algorithms, remote sync endpoints, and verification keys.
+          </p>
         </div>
 
-        <div className="p-3.5 bg-[#13171F] border border-amber-500/30 rounded-xl flex items-start space-x-3">
-          <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg flex-shrink-0 mt-0.5">
-            <AlertTriangle className="w-4 h-4" />
-          </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center space-x-2">
-              <h4 className="text-xs font-semibold text-white">Part 2: Pluggable Remote Sync</h4>
-              <span className="px-2 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[10px] font-mono">
-                Mock Tested (Unverified on Cloud)
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Backend-agnostic manifest (R2 / S3 / B2) with Ed25519 signature & streaming SHA-256 verification.
-            </p>
-          </div>
+        {/* 3-state Badges (Gray / Green / Amber) */}
+        <div className="flex items-center space-x-2">
+          <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-800/80 text-zinc-300 border border-zinc-700">
+            Engine: Native Fast-Sync
+          </span>
+          {isPubKeyValid ? (
+            <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40 flex items-center space-x-1">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Ed25519 Configured</span>
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-amber-950/40 text-amber-400 border border-amber-500/40 flex items-center space-x-1">
+              <AlertTriangle className="w-3 h-3" />
+              <span>Invalid PubKey</span>
+            </span>
+          )}
         </div>
       </div>
 
-      {/* 3 Main Functional Cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Main Configuration Card */}
+      <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-5 space-y-5">
         
-        {/* Card 1: Create Local Snapshot */}
-        <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[#262B34]">
-              <div className="flex items-center space-x-2">
-                <UploadCloud className="w-4 h-4 text-emerald-400" />
-                <h4 className="text-xs font-semibold text-white">Create Local Snapshot</h4>
-              </div>
-              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
-                Height: {blockHeight ? blockHeight.toLocaleString() : 'Live Tip'}
+        {/* Row 1: Default Paths */}
+        <div className="space-y-3">
+          <div className="flex items-center space-x-2 text-slate-200 font-medium text-xs">
+            <Folder className="w-4 h-4 text-slate-400" />
+            <span>Filesystem Directories</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <DirectoryDropdown
+                label="Default Blockchain Data Directory (Source/Target)"
+                value={prefs.defaultDataPath}
+                onChange={(val) => handleUpdate('defaultDataPath', val)}
+                placeholder="./chainconfig/data"
+                prompt="Select Default Blockchain Data Directory"
+              />
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Primary data folder scanned during backups and populated during fast-sync.
               </span>
             </div>
 
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Package your active blockchain data into an archive. Generates a SHA-256 manifest alongside the file.
-            </p>
-
-            <div className="space-y-2 pt-1">
+            <div>
               <DirectoryDropdown
-                label="Source Data Directory"
-                value={createSourcePath}
-                onChange={setCreateSourcePath}
-                placeholder="./chainconfig/data"
-                prompt="Select Source Blockchain Directory"
-              />
-
-              <DirectoryDropdown
-                label="Destination Folder"
-                value={createTargetPath}
-                onChange={setCreateTargetPath}
+                label="Default Snapshot & Backup Folder"
+                value={prefs.defaultSnapshotFolder}
+                onChange={(val) => handleUpdate('defaultSnapshotFolder', val)}
                 placeholder="/Volumes/SSD/snapshots"
-                prompt="Select Snapshot Save Directory"
+                prompt="Select Default Snapshot Storage Directory"
               />
-
-              <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Compression Format</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCreateFormat('tar.zst')}
-                    className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all ${
-                      createFormat === 'tar.zst'
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
-                    }`}
-                  >
-                    .tar.zst (Zstandard)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCreateFormat('tar.gz')}
-                    className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all ${
-                      createFormat === 'tar.gz'
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
-                    }`}
-                  >
-                    .tar.gz (Gzip)
-                  </button>
-                </div>
-              </div>
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Default location where new archives and downloaded snapshots will be saved.
+              </span>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={handleCreateSnapshot}
-            disabled={creating || snapshotStatus?.stage === 'archiving'}
-            className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
-          >
-            <Archive className="w-3.5 h-3.5" />
-            <span>{creating ? 'Initializing...' : 'Generate Snapshot Archive'}</span>
-          </button>
         </div>
 
-        {/* Card 2: Restore from Local Archive */}
-        <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[#262B34]">
-              <div className="flex items-center space-x-2">
-                <HardDrive className="w-4 h-4 text-blue-400" />
-                <h4 className="text-xs font-semibold text-white">Restore Local Archive</h4>
+        <div className="h-px bg-[#262B34]" />
+
+        {/* Row 2: Default Compression Format */}
+        <div className="space-y-3">
+          <div className="flex items-center space-x-2 text-slate-200 font-medium text-xs">
+            <Archive className="w-4 h-4 text-slate-400" />
+            <span>Default Compression Format</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+            <button
+              type="button"
+              onClick={() => handleUpdate('defaultCompressionFormat', 'tar.zst')}
+              className={`p-3 rounded-lg border text-left transition-all ${
+                prefs.defaultCompressionFormat === 'tar.zst'
+                  ? 'bg-emerald-950/20 border-emerald-500/50 text-white'
+                  : 'bg-[#181B20] border-[#262B34] text-slate-400 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-mono font-bold">.tar.zst (Zstandard)</span>
+                {prefs.defaultCompressionFormat === 'tar.zst' && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
+                    Active Default
+                  </span>
+                )}
               </div>
-              <span className="text-[10px] font-mono text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">
-                Direct Unpack
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Multi-threaded Zstandard compression. 5x faster backup and decompression with high ratio.
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleUpdate('defaultCompressionFormat', 'tar.gz')}
+              className={`p-3 rounded-lg border text-left transition-all ${
+                prefs.defaultCompressionFormat === 'tar.gz'
+                  ? 'bg-emerald-950/20 border-emerald-500/50 text-white'
+                  : 'bg-[#181B20] border-[#262B34] text-slate-400 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-mono font-bold">.tar.gz (Gzip)</span>
+                {prefs.defaultCompressionFormat === 'tar.gz' && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
+                    Active Default
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Universal standard gzip format. Broad compatibility with legacy archive extractors.
+              </p>
+            </button>
+          </div>
+        </div>
+
+        <div className="h-px bg-[#262B34]" />
+
+        {/* Row 3: Remote Snapshot & Signature Verification */}
+        <div className="space-y-3">
+          <div className="flex items-center space-x-2 text-slate-200 font-medium text-xs">
+            <Globe className="w-4 h-4 text-slate-400" />
+            <span>Remote Sync & Verification</span>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-slate-300 block mb-1">
+                Default Snapshot / Manifest URL
+              </label>
+              <input
+                type="text"
+                value={prefs.defaultRemoteUrl}
+                onChange={(e) => handleUpdate('defaultRemoteUrl', e.target.value)}
+                placeholder="http://207.180.195.181/snapshot.tar.xz"
+                className="w-full px-3 py-2 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none transition-all"
+              />
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Direct archive URL (.tar.xz, .tar.zst) or release manifest (.json) with checksums and signatures.
               </span>
             </div>
 
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Extract an existing archive (<code className="text-slate-300">.tar.zst</code>, <code className="text-slate-300">.tar.gz</code>, <code className="text-slate-300">.tar.xz</code>) into your active data directory.
-            </p>
-
-            <div className="space-y-2 pt-1">
-              <DirectoryDropdown
-                label="Select Local Archive"
-                value={localArchivePath}
-                onChange={setLocalArchivePath}
-                placeholder="/Volumes/SSD/snapshot.tar.zst"
-                mode="file"
-                prompt="Select Snapshot Archive File"
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-slate-300 flex items-center space-x-1.5">
+                  <Key className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Release Verification Public Key (Ed25519)</span>
+                </label>
+                <span className="text-[10px] font-mono text-slate-500">64-char Hexadecimal</span>
+              </div>
+              <input
+                type="text"
+                value={prefs.releasePubKey}
+                onChange={(e) => handleUpdate('releasePubKey', e.target.value)}
+                placeholder="538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
+                className={`w-full px-3 py-2 bg-[#0F1115] border rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none transition-all ${
+                  isPubKeyValid ? 'border-[#262B34] focus:border-zinc-500' : 'border-amber-500/50 focus:border-amber-500'
+                }`}
               />
-
-              <DirectoryDropdown
-                label="Target Data Directory"
-                value={localRestoreTarget}
-                onChange={setLocalRestoreTarget}
-                placeholder="./chainconfig/data"
-                prompt="Select Target Data Directory"
-              />
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Official Sirius release public key used to cryptographically verify snapshot manifest signatures before unpacking.
+              </span>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={handleRestoreLocal}
-            disabled={restoringLocal || snapshotStatus?.stage === 'extracting'}
-            className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
-          >
-            <Play className="w-3.5 h-3.5" />
-            <span>{restoringLocal ? 'Extracting...' : 'Restore from Local File'}</span>
-          </button>
-        </div>
-
-        {/* Card 3: Pluggable Remote Snapshot Sync */}
-        <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[#262B34]">
-              <div className="flex items-center space-x-2">
-                <DownloadCloud className="w-4 h-4 text-indigo-400" />
-                <h4 className="text-xs font-semibold text-white">Restore Remote Snapshot</h4>
-              </div>
-              <button
-                type="button"
-                onClick={handleLoadMockServer}
-                className="text-[10px] font-mono text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded flex items-center space-x-1 transition-all"
-                title="Populate test URL pointing to embedded mock server"
-              >
-                <RefreshCw className="w-2.5 h-2.5" />
-                <span>Test Mock URL</span>
-              </button>
-            </div>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Streams verified archive from generic HTTPS URL (Cloudflare R2, S3, B2). Verifies Ed25519 signature and SHA-256 on the fly.
-            </p>
-
-            <div className="space-y-2 pt-1">
-              <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Manifest URL (.json)</label>
-                <input
-                  type="text"
-                  value={manifestUrl}
-                  onChange={(e) => setManifestUrl(e.target.value)}
-                  placeholder="https://pub-xxx.r2.dev/manifest.json"
-                  className="w-full px-3 py-1.5 bg-[#181B20] border border-[#262B34] rounded-lg text-xs text-white font-mono focus:outline-none focus:border-indigo-500 transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Release Public Key (Ed25519)</label>
-                <input
-                  type="text"
-                  value={releasePubKey}
-                  onChange={(e) => setReleasePubKey(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-[#181B20] border border-[#262B34] rounded-lg text-[11px] text-slate-300 font-mono focus:outline-none focus:border-indigo-500 transition-all"
-                />
-              </div>
-
-              <DirectoryDropdown
-                label="Target Data Directory"
-                value={remoteRestoreTarget}
-                onChange={setRemoteRestoreTarget}
-                placeholder="./chainconfig/data"
-                prompt="Select Target Data Directory"
-              />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleRestoreRemote}
-            disabled={restoringRemote || snapshotStatus?.stage === 'downloading'}
-            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>{restoringRemote ? 'Verifying & Streaming...' : 'Verify & Restore Remote Snapshot'}</span>
-          </button>
         </div>
 
       </div>
 
-      {/* Progress & Verification Modal */}
-      {showModal && (
-        <SnapshotModal
-          status={snapshotStatus}
-          onCancel={handleCancel}
-          onClose={handleCloseModal}
-        />
-      )}
+      {/* Action Bar (Save & Reset Defaults) */}
+      <div className="bg-[#181B20] border border-[#262B34] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center space-x-2 text-xs">
+          {savedSuccess ? (
+            <div className="flex items-center space-x-1.5 text-emerald-400 font-medium">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Snapshot preferences saved successfully.</span>
+            </div>
+          ) : isDirty ? (
+            <div className="flex items-center space-x-1.5 text-amber-400 font-medium">
+              <AlertTriangle className="w-4 h-4" />
+              <span>You have unsaved snapshot configuration changes.</span>
+            </div>
+          ) : (
+            <div className="flex items-center space-x-1.5 text-slate-500">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Snapshot preferences are current.</span>
+            </div>
+          )}
+        </div>
 
+        <div className="flex items-center space-x-3">
+          <button
+            type="button"
+            onClick={handleResetDefaults}
+            className="px-3 py-1.5 bg-[#13171F] hover:bg-[#262B34] text-slate-400 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-all flex items-center space-x-1.5"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset Defaults</span>
+          </button>
 
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!isDirty}
+            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save Snapshot Settings</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

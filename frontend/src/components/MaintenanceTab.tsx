@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Wrench,
   RefreshCw,
@@ -18,100 +18,373 @@ import {
   Layers,
   Zap,
   ArrowUpCircle,
+  Database,
+  Radio,
+  Sliders,
+  Check,
+  Activity,
 } from 'lucide-react';
-import { SnapshotStatus, DataBackupStatus, StorageConvertStatus, UpdateInfo } from '../types';
+import {
+  SnapshotStatus,
+  DataBackupStatus,
+  StorageConvertStatus,
+  UpdateInfo,
+  NodeMetrics,
+  SnapshotManagerStatus,
+} from '../types';
 import { DirectoryDropdown } from './DirectoryDropdown';
+import { ConfirmDestructiveModal } from './ConfirmDestructiveModal';
+import { loadSnapshotPreferences } from './SnapshotSubTab';
 
 export const MaintenanceTab: React.FC = () => {
-  const [resetting, setResetting] = useState(false);
-  const [resetDone, setResetDone] = useState(false);
+  // Saved Preferences from Settings -> Snapshots
+  const [prefs, setPrefs] = useState(() => loadSnapshotPreferences());
 
-  // Fast-sync snapshot state (Remote vs Local)
-  const [snapshotMode, setSnapshotMode] = useState<'remote' | 'local'>('remote');
-  const [snapshotUrl, setSnapshotUrl] = useState('http://207.180.195.181/snapshot.tar.xz');
-  const [localSnapshotPath, setLocalSnapshotPath] = useState('');
-  const [snapshotStatus, setSnapshotStatus] = useState<SnapshotStatus | null>(null);
-  const [cancellingSnapshot, setCancellingSnapshot] = useState(false);
+  useEffect(() => {
+    const handlePrefsUpdated = (e: any) => {
+      if (e.detail) setPrefs(e.detail);
+    };
+    window.addEventListener('sirius-snapshot-prefs-updated', handlePrefsUpdated);
+    return () => window.removeEventListener('sirius-snapshot-prefs-updated', handlePrefsUpdated);
+  }, []);
 
-  // Official updater state
+  // Global Node State & Metrics (Status Strip)
+  const [nodeStatus, setNodeStatus] = useState<string>('stopped');
+  const [blockHeight, setBlockHeight] = useState<number>(0);
+  const [networkHeight, setNetworkHeight] = useState<number>(0);
+  const [peersCount, setPeersCount] = useState<number>(0);
+  const [metrics, setMetrics] = useState<NodeMetrics | null>(null);
+  const [autoRecovery, setAutoRecovery] = useState<boolean>(true);
+
+  // Free Disk Space Readout
+  const [diskSpaceData, setDiskSpaceData] = useState<{ free: string; total: string; used: string } | null>(null);
+
+  // Backup Card State
+  const [backupSource, setBackupSource] = useState(() => prefs.defaultDataPath);
+  const [backupTarget, setBackupTarget] = useState(() => prefs.defaultSnapshotFolder);
+  const [backupFormat, setBackupFormat] = useState<'zst' | 'gz'>(() =>
+    prefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst'
+  );
+  const [dataBackupStatus, setDataBackupStatus] = useState<DataBackupStatus | null>(null);
+  const [startingBackup, setStartingBackup] = useState(false);
+  const [cancellingBackup, setCancellingBackup] = useState(false);
+
+  // Remote Sync Card State
+  const [remoteSyncUrl, setRemoteSyncUrl] = useState(() => prefs.defaultRemoteUrl);
+  const [remoteSyncTarget, setRemoteSyncTarget] = useState(() => prefs.defaultDataPath);
+  const [remoteSyncPubKey, setRemoteSyncPubKey] = useState(() => prefs.releasePubKey);
+  const [remoteSnapshotStatus, setRemoteSnapshotStatus] = useState<SnapshotStatus | null>(null);
+  const [remoteManagerStatus, setRemoteManagerStatus] = useState<SnapshotManagerStatus | null>(null);
+  const [startingRemoteSync, setStartingRemoteSync] = useState(false);
+  const [cancellingRemoteSync, setCancellingRemoteSync] = useState(false);
+
+  // Restore Local Archive Card State
+  const [localArchivePath, setLocalArchivePath] = useState('');
+  const [localRestoreTarget, setLocalRestoreTarget] = useState(() => prefs.defaultDataPath);
+  const [startingLocalRestore, setStartingLocalRestore] = useState(false);
+  const [cancellingLocalRestore, setCancellingLocalRestore] = useState(false);
+
+  // Official Updater State
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
 
-
-  // Clean logs & cache state
+  // Clean Logs & Cache State
   const [cleaning, setCleaning] = useState(false);
   const [cleanMessage, setCleanMessage] = useState<string | null>(null);
 
-  // Watchdog state
-  const [autoRecovery, setAutoRecovery] = useState(true);
-
-  // Blockchain Data Backup state
-  const [dataBackupSource, setDataBackupSource] = useState('./chainconfig/data');
-  const [dataBackupTarget, setDataBackupTarget] = useState('');
-  const [dataBackupFormat, setDataBackupFormat] = useState<'zst' | 'gz'>('zst');
-  const [dataBackupStatus, setDataBackupStatus] = useState<DataBackupStatus | null>(null);
-  const [startingDataBackup, setStartingDataBackup] = useState(false);
-  const [cancellingDataBackup, setCancellingDataBackup] = useState(false);
-
-  // Storage Conversion state
-  const [convertSourcePath, setConvertSourcePath] = useState('./chainconfig/data');
+  // Storage Conversion State
+  const [convertSourcePath, setConvertSourcePath] = useState(() => prefs.defaultDataPath);
   const [convertStatus, setConvertStatus] = useState<StorageConvertStatus | null>(null);
   const [startingConvert, setStartingConvert] = useState(false);
   const [cancellingConvert, setCancellingConvert] = useState(false);
 
-  // Fetch live snapshot & data backup status periodically
+  // Disaster Recovery Package (.drpkg) & Settings Export State
+  const [drMode, setDrMode] = useState<'dr' | 'settings'>('dr');
+  const [drPassphrase, setDrPassphrase] = useState('');
+  const [showDrPassphrase, setShowDrPassphrase] = useState(false);
+  const [drExporting, setDrExporting] = useState(false);
+  const [drRestoring, setDrRestoring] = useState(false);
+  const [drMessage, setDrMessage] = useState<string | null>(null);
+  const [drError, setDrError] = useState<string | null>(null);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [restoringSettings, setRestoringSettings] = useState(false);
+
+  // Danger Zone: Nemesis Reset State
+  const [resetting, setResetting] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
+
+  // Type-to-Confirm Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    expectedText: string;
+    confirmButtonText: string;
+    action: () => Promise<void>;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    expectedText: '',
+    confirmButtonText: '',
+    action: async () => {},
+  });
+
+  // Polling Function
+  const fetchStatus = useCallback(async () => {
+    try {
+      const [statusRes, backupRes, snapRes, snapMgrRes, convertRes] = await Promise.all([
+        fetch('/api/status'),
+        fetch('/api/maintenance/data-backup/status'),
+        fetch('/api/maintenance/snapshot/status'),
+        fetch('/api/snapshot/status'),
+        fetch('/api/maintenance/storage-convert/status'),
+      ]);
+
+      if (statusRes.ok) {
+        const sData = await statusRes.json();
+        setNodeStatus(sData.status || 'stopped');
+        setBlockHeight(sData.blockHeight || 0);
+        setNetworkHeight(sData.networkHeight || 0);
+        setPeersCount(sData.peersCount || 0);
+        setMetrics(sData.metrics || null);
+        if (sData.updateInfo) setUpdateInfo(sData.updateInfo);
+        if (typeof sData.autoRecovery === 'boolean') setAutoRecovery(sData.autoRecovery);
+      }
+
+      if (backupRes.ok) {
+        const bData: DataBackupStatus = await backupRes.json();
+        setDataBackupStatus(bData);
+      }
+
+      if (snapRes.ok) {
+        const snapData: SnapshotStatus = await snapRes.json();
+        setRemoteSnapshotStatus(snapData);
+      }
+
+      if (snapMgrRes.ok) {
+        const mgrData: SnapshotManagerStatus = await snapMgrRes.json();
+        setRemoteManagerStatus(mgrData);
+      }
+
+      if (convertRes.ok) {
+        const cData: StorageConvertStatus = await convertRes.json();
+        setConvertStatus(cData);
+      }
+    } catch (e) {
+      // Ignore network polling glitches
+    }
+  }, []);
+
+  // Poll disk space for backup destination / target data path
   useEffect(() => {
-    const checkStatus = async () => {
+    const fetchDiskSpace = async () => {
       try {
-        const [snapRes, backupRes, convertRes, statusRes] = await Promise.all([
-          fetch('/api/maintenance/snapshot/status'),
-          fetch('/api/maintenance/data-backup/status'),
-          fetch('/api/maintenance/storage-convert/status'),
-          fetch('/api/status')
-        ]);
-        if (snapRes.ok) {
-          const data: SnapshotStatus = await snapRes.json();
-          setSnapshotStatus(data);
-        }
-        if (backupRes.ok) {
-          const bData: DataBackupStatus = await backupRes.json();
-          setDataBackupStatus(bData);
-        }
-        if (convertRes.ok) {
-          const cData: StorageConvertStatus = await convertRes.json();
-          setConvertStatus(cData);
-        }
-        if (statusRes.ok) {
-          const sData = await statusRes.json();
-          if (sData.updateInfo) setUpdateInfo(sData.updateInfo);
-          if (typeof sData.autoRecovery === 'boolean') setAutoRecovery(sData.autoRecovery);
+        const checkPath = backupTarget || backupSource || './chainconfig/data';
+        const res = await fetch(`/api/system/disk-space?path=${encodeURIComponent(checkPath)}`);
+        if (res.ok) {
+          const dData = await res.json();
+          setDiskSpaceData(dData);
         }
       } catch (e) {
-        // ignore network glitches
+        // ignore
       }
     };
 
-    checkStatus();
-    const interval = setInterval(checkStatus, 1000);
+    fetchDiskSpace();
+    const interval = setInterval(fetchDiskSpace, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [backupTarget, backupSource]);
 
-  const handleResetChain = async () => {
-    if (!window.confirm('Are you sure you want to reset the blockchain data to the genesis nemesis block? This will delete local sync state and restart synchronization from block 1.')) {
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 1000);
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
+
+  // Watchdog Toggle
+  const handleToggleWatchdog = async () => {
+    try {
+      const res = await fetch('/api/maintenance/auto-recovery/toggle', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setAutoRecovery(data.autoRecovery);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // 1. Backup Handler
+  const handleStartBackup = async () => {
+    setStartingBackup(true);
+    try {
+      const res = await fetch('/api/maintenance/data-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourcePath: backupSource.trim(),
+          targetPath: backupTarget.trim(),
+          format: backupFormat,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start data backup');
+      fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setStartingBackup(false);
+    }
+  };
+
+  const handleCancelBackup = async () => {
+    setCancellingBackup(true);
+    try {
+      const res = await fetch('/api/maintenance/data-backup/cancel', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to cancel data backup');
+      fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setCancellingBackup(false);
+    }
+  };
+
+  // 2. Remote Sync Handlers (Protected by Type-to-Confirm Modal)
+  const triggerRemoteSyncModal = () => {
+    if (!remoteSyncUrl.trim()) {
+      alert('Please specify a snapshot or manifest URL');
       return;
     }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Confirm Remote Snapshot Fast-Sync',
+      description: `Fast-syncing from remote server will stop the node engine and overwrite existing blockchain blocks in "${remoteSyncTarget}".`,
+      expectedText: 'RESTORE-REMOTE',
+      confirmButtonText: 'Start Remote Sync',
+      action: executeRemoteSync,
+    });
+  };
 
+  const executeRemoteSync = async () => {
+    setStartingRemoteSync(true);
+    try {
+      const url = remoteSyncUrl.trim();
+      const isManifest = url.endsWith('.json') || Boolean(remoteSyncPubKey.trim());
+
+      let res: Response;
+      if (isManifest && url.endsWith('.json')) {
+        res = await fetch('/api/snapshot/restore/remote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            manifestUrl: url,
+            releasePublicKeyHex: remoteSyncPubKey.trim(),
+            targetDataPath: remoteSyncTarget.trim(),
+          }),
+        });
+      } else {
+        res = await fetch('/api/maintenance/snapshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'remote',
+            url: url,
+            sourcePath: '',
+          }),
+        });
+      }
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start remote snapshot restoration');
+      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+      fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setStartingRemoteSync(false);
+    }
+  };
+
+  const handleCancelRemoteSync = async () => {
+    setCancellingRemoteSync(true);
+    try {
+      await Promise.all([
+        fetch('/api/maintenance/snapshot/cancel', { method: 'POST' }).catch(() => {}),
+        fetch('/api/snapshot/cancel', { method: 'POST' }).catch(() => {}),
+      ]);
+      fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setCancellingRemoteSync(false);
+    }
+  };
+
+  // 3. Local Restore Handlers (Protected by Type-to-Confirm Modal)
+  const triggerLocalRestoreModal = () => {
+    if (!localArchivePath.trim()) {
+      alert('Please select a local snapshot archive file (.tar.zst, .tar.gz, .tar.xz)');
+      return;
+    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Confirm Local Archive Restoration',
+      description: `Extracting "${localArchivePath}" will pause the node and replace existing blockchain data in "${localRestoreTarget}".`,
+      expectedText: 'RESTORE-LOCAL',
+      confirmButtonText: 'Restore from Local File',
+      action: executeLocalRestore,
+    });
+  };
+
+  const executeLocalRestore = async () => {
+    setStartingLocalRestore(true);
+    try {
+      const res = await fetch('/api/snapshot/restore/local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          archivePath: localArchivePath.trim(),
+          targetDataPath: localRestoreTarget.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start local archive restore');
+      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+      fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setStartingLocalRestore(false);
+    }
+  };
+
+  // 4. Danger Zone: Nemesis Reset (Protected by Type-to-Confirm Modal)
+  const triggerNemesisResetModal = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Confirm Genesis Nemesis Reset (Block 1)',
+      description: 'This will completely wipe local block and transactional databases, keeping only the genesis Nemesis block (00001.dat). All local blockchain sync progress will be lost and the node will re-sync from Block 1.',
+      expectedText: 'RESET-CHAIN',
+      confirmButtonText: 'Reset Blockchain to Block 1',
+      action: executeNemesisReset,
+    });
+  };
+
+  const executeNemesisReset = async () => {
     setResetting(true);
     setResetDone(false);
-
     try {
       const res = await fetch('/api/maintenance/reset', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to reset chain');
-
       setResetDone(true);
-      alert('Blockchain data successfully reset to genesis nemesis block. You can now start the node.');
+      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+      alert('Blockchain data successfully reset to genesis nemesis block (Block 1). Ready to restart.');
+      fetchStatus();
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -119,49 +392,39 @@ export const MaintenanceTab: React.FC = () => {
     }
   };
 
-  const handleStartSnapshot = async () => {
-    const isLocal = snapshotMode === 'local';
-    const targetDesc = isLocal ? `local archive "${localSnapshotPath || 'specified path'}"` : `remote server "${snapshotUrl}"`;
-
-    if (!window.confirm(`Restore blockchain data from ${targetDesc}? Existing blocks will be fast-forwarded. Continue?`)) {
-      return;
-    }
-
+  // Protocol Updater Handlers
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
     try {
-      const res = await fetch('/api/maintenance/snapshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: snapshotMode,
-          url: snapshotUrl.trim(),
-          sourcePath: localSnapshotPath.trim(),
-        }),
-      });
-
+      const res = await fetch('/api/maintenance/update/check');
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start snapshot process');
-    } catch (e: any) {
-      alert(e.message);
+      if (res.ok && data) setUpdateInfo(data);
+    } catch (e) {
+      // ignore
+    } finally {
+      setCheckingUpdate(false);
     }
   };
 
-  const handleCancelSnapshot = async () => {
-    if (!window.confirm('Are you sure you want to cancel the snapshot extraction? Any incomplete extraction will be halted.')) {
+  const handleApplyUpdate = async () => {
+    if (!window.confirm('Apply official network updates from GitHub? This will sync network seed peers and restart the node while preserving custom native patches.')) {
       return;
     }
-
-    setCancellingSnapshot(true);
+    setApplyingUpdate(true);
     try {
-      const res = await fetch('/api/maintenance/snapshot/cancel', { method: 'POST' });
+      const res = await fetch('/api/maintenance/update/apply', { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to cancel snapshot');
+      if (!res.ok) throw new Error(data.error || 'Failed to apply official update');
+      alert('Official network configuration updated successfully.');
+      handleCheckUpdate();
     } catch (e: any) {
       alert(e.message);
     } finally {
-      setCancellingSnapshot(false);
+      setApplyingUpdate(false);
     }
   };
 
+  // Clean Cache & Logs Handler
   const handleCleanLogs = async () => {
     setCleaning(true);
     setCleanMessage(null);
@@ -169,7 +432,7 @@ export const MaintenanceTab: React.FC = () => {
       const res = await fetch('/api/maintenance/clean-logs', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to clean logs');
-      setCleanMessage(`Freed ${(data.freedMB || 0).toFixed(2)} MB of disk space by purging historical logs and temporary cache.`);
+      setCleanMessage(`Freed ${(data.freedMB || 0).toFixed(2)} MB of disk space by purging historical logs and stale server locks.`);
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -177,52 +440,129 @@ export const MaintenanceTab: React.FC = () => {
     }
   };
 
-  const handleStartDataBackup = async () => {
-    const formatLabel = dataBackupFormat === 'zst' ? '.tar.zst (Zstandard)' : '.tar.gz (Gzip)';
-    if (!window.confirm(`Create a full ${formatLabel} compressed backup archive of blockchain data from "${dataBackupSource}" to "${dataBackupTarget || 'default directory'}"?`)) {
+  // Storage Convert Handlers
+  const handleStartConvert = async () => {
+    if (!window.confirm('Convert legacy loose block files into compact 4-file Bitcoin-style chunks? This will pause the node, pack blocks.dat / statements.dat / blocks.idx, and delete old loose files to free inodes.')) {
       return;
     }
-
-    setStartingDataBackup(true);
+    setStartingConvert(true);
     try {
-      const res = await fetch('/api/maintenance/data-backup', {
+      const res = await fetch('/api/maintenance/storage-convert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourcePath: dataBackupSource.trim(),
-          targetPath: dataBackupTarget.trim(),
-          format: dataBackupFormat,
-        }),
+        body: JSON.stringify({ dataPath: convertSourcePath }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start data backup');
+      if (!res.ok) throw new Error(data.error || 'Failed to start storage migration');
+      fetchStatus();
     } catch (e: any) {
       alert(e.message);
     } finally {
-      setStartingDataBackup(false);
+      setStartingConvert(false);
     }
   };
 
-  const handleCancelDataBackup = async () => {
-    if (!window.confirm('Are you sure you want to cancel the ongoing blockchain data backup? Incomplete archive will be removed.')) {
+  const handleCancelConvert = async () => {
+    setCancellingConvert(true);
+    try {
+      await fetch('/api/maintenance/storage-convert/cancel', { method: 'POST' });
+      fetchStatus();
+    } catch (e) {
+      // ignore
+    } finally {
+      setCancellingConvert(false);
+    }
+  };
+
+  // Disaster Recovery Handlers
+  const handleExportDR = async () => {
+    if (!drPassphrase || drPassphrase.length < 8) {
+      alert('Passphrase must be at least 8 characters long to encrypt the disaster recovery package.');
+      return;
+    }
+    setDrExporting(true);
+    setDrError(null);
+    setDrMessage(null);
+    try {
+      const res = await fetch('/api/system/recovery/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase: drPassphrase }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to export disaster recovery package');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sirius-recovery-package-${new Date().toISOString().slice(0, 10)}.drpkg`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setDrMessage('Full Disaster Recovery Package exported and encrypted with Argon2id + AES-256-GCM.');
+      setDrPassphrase('');
+    } catch (err: any) {
+      setDrError(err.message);
+    } finally {
+      setDrExporting(false);
+    }
+  };
+
+  const handleImportDR = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!drPassphrase || drPassphrase.length < 8) {
+      alert('Please enter the decryption passphrase in the Encryption Passphrase field before selecting a recovery package file.');
+      e.target.value = '';
       return;
     }
 
-    setCancellingDataBackup(true);
+    if (!window.confirm(`Restore ALL Catapult configurations, certificates, and harvesting keys from "${file.name}"? This will overwrite existing node credentials on this host.`)) {
+      e.target.value = '';
+      return;
+    }
+
+    setDrRestoring(true);
+    setDrError(null);
+    setDrMessage(null);
+    const pass = drPassphrase;
     try {
-      const res = await fetch('/api/maintenance/data-backup/cancel', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to cancel data backup');
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setCancellingDataBackup(false);
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const rawContent = event.target?.result as string;
+          let pkgObj: any;
+          try {
+            pkgObj = JSON.parse(rawContent);
+          } catch {
+            throw new Error('Invalid recovery package file (not valid JSON format)');
+          }
+
+          const res = await fetch('/api/system/recovery/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passphrase: pass, package: pkgObj }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Failed to restore disaster recovery package');
+          setDrMessage('Disaster recovery package decrypted and restored! Please restart node to apply.');
+          setDrPassphrase('');
+        } catch (err: any) {
+          setDrError(err.message);
+        } finally {
+          setDrRestoring(false);
+        }
+      };
+      reader.readAsText(file);
+    } catch (err: any) {
+      setDrError(err.message);
+      setDrRestoring(false);
     }
   };
-
-  // Settings & statistics (.json) export/import
-  const [restoringSettings, setRestoringSettings] = useState(false);
-  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
 
   const handleExportSettings = async () => {
     try {
@@ -237,7 +577,7 @@ export const MaintenanceTab: React.FC = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      setSettingsMessage('Settings and statistics exported successfully.');
+      setSettingsMessage('Settings exported successfully.');
     } catch (e: any) {
       alert(e.message);
     }
@@ -246,10 +586,6 @@ export const MaintenanceTab: React.FC = () => {
   const handleImportSettings = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (!window.confirm(`Import settings from "${file.name}"? Note: This updates non-sensitive configuration parameters and stats only. It does not restore private keys or blockchain state.`)) {
-      return;
-    }
 
     setRestoringSettings(true);
     setSettingsMessage(null);
@@ -279,776 +615,937 @@ export const MaintenanceTab: React.FC = () => {
     }
   };
 
-  // Full Encrypted Disaster Recovery Package (.drpkg) state
-  const [drMode, setDrMode] = useState<'dr' | 'settings'>('dr');
-  const [drPassphrase, setDrPassphrase] = useState('');
-  const [showDrPassphrase, setShowDrPassphrase] = useState(false);
-  const [drExporting, setDrExporting] = useState(false);
-  const [drRestoring, setDrRestoring] = useState(false);
-  const [drMessage, setDrMessage] = useState<string | null>(null);
-  const [drError, setDrError] = useState<string | null>(null);
-
-  const handleExportDR = async () => {
-    if (!drPassphrase || drPassphrase.length < 8) {
-      alert('Passphrase must be at least 8 characters long to encrypt the disaster recovery package.');
-      return;
-    }
-    setDrExporting(true);
-    setDrError(null);
-    setDrMessage(null);
-    try {
-      const res = await fetch('/api/system/recovery/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passphrase: drPassphrase }),
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'Failed to export disaster recovery package');
-      }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sirius-recovery-package-${new Date().toISOString().slice(0, 10)}.drpkg`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      setDrMessage('Full Disaster Recovery Package exported and encrypted with Argon2id + AES-256-GCM.');
-      setDrPassphrase(''); // Clear plaintext passphrase from state
-    } catch (err: any) {
-      setDrError(err.message);
-    } finally {
-      setDrExporting(false);
-    }
-  };
-
-  const handleImportDR = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!drPassphrase || drPassphrase.length < 8) {
-      alert('Please enter the decryption passphrase in the Encryption Passphrase field before selecting a recovery package file.');
-      e.target.value = '';
-      return;
-    }
-
-    if (!window.confirm(`Restore ALL 21 Catapult configurations, certificates, and harvesting keys from "${file.name}"? This will overwrite existing configuration on this machine.`)) {
-      e.target.value = '';
-      return;
-    }
-
-    setDrRestoring(true);
-    setDrError(null);
-    setDrMessage(null);
-    const pass = drPassphrase;
-    try {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const rawContent = event.target?.result as string;
-          let pkgObj: any;
-          try {
-            pkgObj = JSON.parse(rawContent);
-          } catch {
-            throw new Error('Invalid recovery package file (not valid JSON format)');
-          }
-
-          const res = await fetch('/api/system/recovery/restore', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              passphrase: pass,
-              package: pkgObj,
-            }),
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Failed to restore disaster recovery package');
-          setDrMessage('Disaster recovery package decrypted and restored! Please restart node to apply.');
-          setDrPassphrase('');
-        } catch (err: any) {
-          setDrError(err.message);
-        } finally {
-          setDrRestoring(false);
-        }
-      };
-      reader.readAsText(file);
-    } catch (err: any) {
-      setDrError(err.message);
-      setDrRestoring(false);
-    }
-  };
-
-  const handleCheckUpdate = async () => {
-    setCheckingUpdate(true);
-    try {
-      const res = await fetch('/api/maintenance/update/check');
-      const data = await res.json();
-      if (res.ok && data) {
-        setUpdateInfo(data);
-      }
-    } catch (e) {
-      // ignore
-    } finally {
-      setCheckingUpdate(false);
-    }
-  };
-
-  const handleApplyUpdate = async () => {
-    if (!window.confirm('Apply official network updates from GitHub? This will sync network seed peers and restart the node while preserving custom native patches.')) {
-      return;
-    }
-
-    setApplyingUpdate(true);
-    try {
-      const res = await fetch('/api/maintenance/update/apply', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to apply official update');
-      alert('Official network configuration updated successfully.');
-      handleCheckUpdate();
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setApplyingUpdate(false);
-    }
-  };
-
-  const handleToggleWatchdog = async () => {
-    try {
-      const res = await fetch('/api/maintenance/auto-recovery/toggle', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        setAutoRecovery(data.autoRecovery);
-      }
-    } catch (e) {
-      // ignore
-    }
-  };
-
-  const handleStartConvert = async () => {
-    if (!window.confirm('Convert legacy loose block files into compact 4-file Bitcoin-style chunks? This will stop the node, pack blocks.dat / statements.dat / blocks.idx, and delete old loose files to free inodes.')) {
-      return;
-    }
-
-    setStartingConvert(true);
-    try {
-      const res = await fetch('/api/maintenance/storage-convert', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataPath: convertSourcePath })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start storage migration');
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setStartingConvert(false);
-    }
-  };
-
-  const handleCancelConvert = async () => {
-    setCancellingConvert(true);
-    try {
-      await fetch('/api/maintenance/storage-convert/cancel', { method: 'POST' });
-    } catch (e) {
-      // ignore
-    } finally {
-      setCancellingConvert(false);
-    }
-  };
-
-  const isSnapshotRunning = snapshotStatus?.stage === 'downloading' || snapshotStatus?.stage === 'extracting';
-  const isDataBackupRunning = dataBackupStatus?.stage === 'backing_up';
+  // State calculations for live operations
+  const isBackupRunning = dataBackupStatus?.stage === 'backing_up';
+  const isRemoteSyncRunning =
+    remoteSnapshotStatus?.stage === 'downloading' ||
+    remoteSnapshotStatus?.stage === 'extracting' ||
+    (remoteManagerStatus?.stage &&
+      ['fetching_manifest', 'verifying_signature', 'downloading', 'verifying_checksum', 'extracting'].includes(
+        remoteManagerStatus.stage
+      ));
+  const isLocalRestoreRunning = remoteManagerStatus?.stage === 'extracting' && remoteManagerStatus?.operation === 'restore_local';
   const isConvertRunning = convertStatus?.status === 'running';
 
+  const syncPercent =
+    networkHeight > 0 ? Math.min(100, Math.max(0, (blockHeight / networkHeight) * 100)) : 0;
+  const isSynced = networkHeight > 0 && Math.abs(networkHeight - blockHeight) <= 10;
+
+  // Free disk readout helper
+  const availableDiskFree = diskSpaceData?.free || metrics?.diskFree || 'Checking...';
+
   return (
-    <div className="h-full flex flex-col justify-between p-3 sm:p-4 space-y-2.5 max-w-7xl mx-auto overflow-hidden">
-      {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-2 border-b border-[#262B34] gap-2 flex-shrink-0">
-        <div className="flex items-center space-x-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[#181B20] border border-[#262B34] flex items-center justify-center flex-shrink-0">
-            <Wrench className="w-4 h-4 text-blue-400" />
+    <div className="space-y-6 animate-in fade-in duration-150 pb-8">
+      
+      {/* LEVEL 1: Page Title & Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#262B34] gap-2">
+        <div className="flex items-center space-x-3">
+          <div className="w-8 h-8 rounded-lg bg-[#181B20] border border-[#262B34] flex items-center justify-center text-slate-300 flex-shrink-0">
+            <Wrench className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase">
+              <h1 className="text-base font-bold text-white tracking-wider uppercase">
                 Maintenance & Synchronization Center
-              </h2>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
-                Native v1.9.7 (Patches 1 & 2 Active)
+              </h1>
+              {/* Status Badge: Gray (Info) */}
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                Native v1.9.7
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-mono">
-              High-speed streaming fast-sync, multi-threaded .tar.zst backup, protocol sync, and node self-healing watchdog.
+            <p className="text-xs text-slate-400">
+              Operations center for blockchain backups, fast-sync snapshot streams, data migration, and recovery tools.
             </p>
           </div>
         </div>
 
-        {/* Watchdog Status Indicator */}
+        {/* Watchdog Toggle Button */}
         <button
+          type="button"
           onClick={handleToggleWatchdog}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center space-x-1.5 flex-shrink-0 ${
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center space-x-2 flex-shrink-0 ${
             autoRecovery
-              ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/50'
-              : 'bg-[#181B20] border-[#262B34] text-slate-400 hover:bg-[#262B34]'
+              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/60'
+              : 'bg-zinc-800/80 border-zinc-700 text-zinc-400 hover:bg-zinc-700'
           }`}
           title="Toggle Auto-Recovery Process Watchdog"
         >
-          <span className={`w-2 h-2 rounded-full ${autoRecovery ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-slate-500'}`} />
-          <span>Watchdog: {autoRecovery ? 'ACTIVE' : 'DISABLED'}</span>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              autoRecovery ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-zinc-500'
+            }`}
+          />
+          <span className="font-mono">Watchdog: {autoRecovery ? 'ACTIVE' : 'DISABLED'}</span>
         </button>
       </div>
 
-      {/* Top Row: 3 Modular Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 flex-shrink-0">
-        {/* Card 1: Official Protocol Updater */}
-        <div className="operator-card rounded-xl p-3 flex flex-col justify-between space-y-2">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
-              <div className="flex items-center space-x-1.5">
-                <DownloadCloud className="w-3.5 h-3.5 text-slate-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
-                  Official Protocol Updater
-                </h3>
-              </div>
-              <span className="text-[10px] font-mono font-bold bg-blue-600/15 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30">
-                {updateInfo?.currentVersion || 'v1.9.7'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 leading-tight">
-              Synchronizes official seeds, peers, and network configurations from GitHub while preserving local C++ native performance patches.
-            </p>
-            <div className="p-2 bg-[#0F1115] rounded-lg border border-[#262B34] text-[11px] flex items-center justify-between font-mono">
-              <span className="text-slate-400">Release Status:</span>
-              <span className={updateInfo?.hasUpdate ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
-                {updateInfo?.hasUpdate ? `Update ${updateInfo.latestVersion} Available` : `Up to Date (${updateInfo?.currentVersion || 'v1.9.7'})`}
-              </span>
-            </div>
-          </div>
-
-          <div className="pt-1.5 border-t border-[#262B34] flex items-center justify-between gap-2">
-            <button
-              onClick={handleCheckUpdate}
-              disabled={checkingUpdate}
-              className="px-2.5 py-1 bg-[#181B20] hover:bg-[#262B34] text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-colors flex items-center space-x-1"
-            >
-              <RefreshCw className={`w-3 h-3 ${checkingUpdate ? 'animate-spin' : ''}`} />
-              <span>{checkingUpdate ? 'Checking...' : 'Check GitHub'}</span>
-            </button>
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('open-engine-updater'))}
-              className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-xs font-semibold border border-indigo-500/40 transition-all flex items-center space-x-1"
-            >
-              <ArrowUpCircle className="w-3 h-3" />
-              <span>Engine Binary</span>
-            </button>
-            <button
-              onClick={handleApplyUpdate}
-              disabled={applyingUpdate}
-              className="px-3 py-1 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1"
-            >
-              <DownloadCloud className="w-3 h-3" />
-              <span>{applyingUpdate ? 'Updating...' : 'Sync Configs'}</span>
-            </button>
+      {/* COMPACT STATUS STRIP (Requirement 5) */}
+      <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        {/* Strip 1: Node State */}
+        <div className="flex items-center space-x-2.5">
+          <div
+            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+              nodeStatus === 'running'
+                ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
+                : nodeStatus === 'starting'
+                ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
+                : 'bg-zinc-500'
+            }`}
+          />
+          <div>
+            <span className="text-slate-400 text-[11px] block">Node State</span>
+            <span className="font-bold text-white font-mono uppercase tracking-wide">
+              {nodeStatus}
+            </span>
           </div>
         </div>
 
-        {/* Card 2: Disaster Recovery Package (Encrypted) & Settings Export */}
-        <div className="operator-card rounded-xl p-3 flex flex-col justify-between space-y-2">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
-              <div className="flex items-center space-x-1.5">
-                {drMode === 'dr' ? (
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                ) : (
-                  <FolderInput className="w-3.5 h-3.5 text-slate-400" />
-                )}
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
-                  {drMode === 'dr' ? 'Disaster Recovery' : 'Node Settings'}
-                </h3>
-              </div>
-              <div className="flex items-center space-x-1">
-                <button
-                  type="button"
-                  onClick={() => setDrMode('dr')}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
-                    drMode === 'dr' ? 'bg-emerald-600 text-white' : 'bg-[#181B20] text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Full DR (Encrypted)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDrMode('settings')}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
-                    drMode === 'settings' ? 'bg-amber-600 text-white' : 'bg-[#181B20] text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Settings Only
-                </button>
-              </div>
+        {/* Strip 2: Connected Peers */}
+        <div className="flex items-center space-x-2.5">
+          <Radio className="w-4 h-4 text-slate-400 flex-shrink-0" />
+          <div>
+            <span className="text-slate-400 text-[11px] block">Peer Connectivity</span>
+            <span className="font-bold text-white font-mono">
+              {peersCount} {peersCount === 1 ? 'Peer' : 'Peers'} Connected
+            </span>
+          </div>
+        </div>
+
+        {/* Strip 3: Height & Sync Progress */}
+        <div className="flex items-center space-x-2.5">
+          <Activity className="w-4 h-4 text-slate-400 flex-shrink-0" />
+          <div>
+            <span className="text-slate-400 text-[11px] block">Height / Consensus</span>
+            <div className="flex items-center space-x-1.5 font-mono">
+              <span className="text-white font-bold">{blockHeight.toLocaleString()}</span>
+              {networkHeight > 0 && (
+                <span className={`text-[10px] font-bold ${isSynced ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  ({syncPercent.toFixed(1)}%)
+                </span>
+              )}
             </div>
+          </div>
+        </div>
 
-            {drMode === 'dr' ? (
-              <>
-                <p className="text-[11px] text-slate-400 leading-tight">
-                  Full disaster recovery archive: all 21 Catapult configs, TLS certificates, and unredacted keys encrypted with Argon2id + AES-256-GCM.
-                </p>
+        {/* Strip 4: Drive Free Space */}
+        <div className="flex items-center space-x-2.5">
+          <HardDrive className="w-4 h-4 text-slate-400 flex-shrink-0" />
+          <div>
+            <span className="text-slate-400 text-[11px] block">Storage Available</span>
+            <span className="font-bold text-white font-mono">{availableDiskFree}</span>
+          </div>
+        </div>
+      </div>
 
-                <div className="space-y-1 pt-0.5">
-                  <div className="flex items-center justify-between text-[11px] text-slate-300">
-                    <span className="flex items-center space-x-1">
-                      <Lock className="w-3 h-3 text-emerald-400" />
-                      <span>Encryption Passphrase:</span>
-                    </span>
-                    <span className="text-[9.5px] text-slate-500 font-mono">Min 8 chars</span>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showDrPassphrase ? 'text' : 'password'}
-                      value={drPassphrase}
-                      onChange={(e) => setDrPassphrase(e.target.value)}
-                      placeholder="Enter strong passphrase..."
-                      className="w-full bg-[#0F1115] border border-[#262B34] focus:border-emerald-500 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 pr-8"
-                    />
+      {/* LEVEL 2: Section Header 1: Snapshot & Backup Operations */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between pb-1 border-b border-[#262B34]">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-2">
+            <Archive className="w-3.5 h-3.5 text-slate-400" />
+            <span>Snapshot & Backup Operations</span>
+          </h2>
+          <span className="text-[11px] text-slate-500 font-mono">
+            Free Disk: {availableDiskFree}
+          </span>
+        </div>
+
+        {/* 3 Operational Cards: Backup, Remote Sync, Restore Local Archive */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          
+          {/* CARD 1: BACKUP (Merged Create Snapshot + Data Backup) */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  <Archive className="w-4 h-4 text-slate-300" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    Backup
+                  </h3>
+                </div>
+                {/* 3-State Status Badge: Green (Ready/Done) / Amber (Backing up) */}
+                {isBackupRunning ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/40 text-amber-400 border border-amber-500/40 uppercase">
+                    Backing Up
+                  </span>
+                ) : dataBackupStatus?.stage === 'complete' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-500/40 uppercase">
+                    Completed
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Ready
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Create a full point-in-time compressed archive of all blockchain block and state directories directly to local or external SSD storage.
+              </p>
+
+              {/* Form: Source path, Destination path, Compression format */}
+              <div className="space-y-2 pt-1">
+                <DirectoryDropdown
+                  label="Source Blockchain Directory (data.path)"
+                  value={backupSource}
+                  onChange={setBackupSource}
+                  placeholder="./chainconfig/data"
+                  prompt="Select Source Blockchain Directory"
+                />
+
+                <DirectoryDropdown
+                  label="Destination Folder"
+                  value={backupTarget}
+                  onChange={setBackupTarget}
+                  placeholder="/Volumes/SSD/snapshots"
+                  prompt="Select Backup Save Directory"
+                />
+
+                <div>
+                  <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                    Compression Format
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setShowDrPassphrase(!showDrPassphrase)}
-                      className="absolute right-2 top-1.5 text-slate-500 hover:text-slate-300"
+                      onClick={() => setBackupFormat('zst')}
+                      disabled={isBackupRunning}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all ${
+                        backupFormat === 'zst'
+                          ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/50'
+                          : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
+                      }`}
                     >
-                      {showDrPassphrase ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      .tar.zst (Zstandard)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBackupFormat('gz')}
+                      disabled={isBackupRunning}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all ${
+                        backupFormat === 'gz'
+                          ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/50'
+                          : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
+                      }`}
+                    >
+                      .tar.gz (Gzip)
                     </button>
                   </div>
                 </div>
 
-                {drMessage && (
-                  <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] flex items-center space-x-1 truncate">
-                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
-                    <span className="truncate">{drMessage}</span>
+                {/* Requirement 5: "Last backup" readout and Disk space readout */}
+                <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] space-y-1 text-[11px] font-mono">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span>Free Disk Space:</span>
+                    <span className="text-slate-200 font-bold">{availableDiskFree}</span>
                   </div>
-                )}
-                {drError && (
-                  <div className="p-2 bg-red-950/30 border border-red-500/30 text-red-400 rounded-lg text-[11px] flex items-center space-x-1 truncate">
-                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                    <span className="truncate">{drError}</span>
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span>Last Backup:</span>
+                    <span className="text-slate-200 font-bold truncate max-w-[180px]">
+                      {dataBackupStatus?.lastBackupTime
+                        ? `${dataBackupStatus.lastBackupTime} (${dataBackupStatus.lastBackupSize || ''})`
+                        : 'No backups recorded'}
+                    </span>
                   </div>
-                )}
-              </>
-            ) : (
-              <>
-                <p className="text-[11px] text-slate-400 leading-tight">
-                  Export portable non-sensitive settings (friendly name, ports, custom peer lists, and harvest stats).
-                </p>
-
-                {/* Explicit Disaster Recovery Limitation Warning */}
-                <div className="p-2 bg-amber-950/20 border border-amber-500/30 rounded-lg text-[10.5px] leading-relaxed text-amber-200/90 flex items-start space-x-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                  <span>
-                    <strong className="text-amber-300 font-semibold">Not a Disaster Recovery Backup:</strong> Private keys (bootKey/harvestKey), blockchain data, certificates, and Catapult templates are <strong className="text-amber-200">not included</strong>.
-                  </span>
                 </div>
 
-                {settingsMessage ? (
-                  <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] flex items-center space-x-1 truncate">
-                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
-                    <span className="truncate">{settingsMessage}</span>
+                {/* Live Progress Bar (Requirement 5) */}
+                {isBackupRunning && (
+                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-amber-500/40 space-y-1.5 animate-in fade-in duration-150">
+                    <div className="flex justify-between text-[11px] font-mono">
+                      <span className="text-amber-400 font-bold">
+                        {dataBackupStatus?.percentage ? `${dataBackupStatus.percentage.toFixed(1)}%` : 'Archiving...'}
+                      </span>
+                      <span className="text-slate-400 truncate max-w-[160px]">
+                        {dataBackupStatus?.currentFile || 'Scanning files...'}
+                      </span>
+                    </div>
+                    <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                        style={{ width: `${Math.max(5, dataBackupStatus?.percentage || 0)}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">{dataBackupStatus?.message}</p>
                   </div>
-                ) : null}
-              </>
-            )}
-          </div>
-
-          <div className="pt-1.5 border-t border-[#262B34] flex items-center justify-between gap-2">
-            {drMode === 'dr' ? (
-              <>
-                <label className="px-2.5 py-1 bg-[#181B20] hover:bg-[#262B34] text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-colors cursor-pointer flex items-center space-x-1">
-                  <FolderInput className="w-3 h-3" />
-                  <span>{drRestoring ? 'Restoring...' : 'Restore Package'}</span>
-                  <input type="file" accept=".drpkg,.json" onChange={handleImportDR} className="hidden" disabled={drRestoring} />
-                </label>
-                <button
-                  onClick={handleExportDR}
-                  disabled={drExporting}
-                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs border border-emerald-500/30 transition-all flex items-center space-x-1"
-                >
-                  <DownloadCloud className="w-3 h-3" />
-                  <span>{drExporting ? 'Encrypting...' : 'Export Package'}</span>
-                </button>
-              </>
-            ) : (
-              <>
-                <label className="px-2.5 py-1 bg-[#181B20] hover:bg-[#262B34] text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-colors cursor-pointer flex items-center space-x-1">
-                  <FolderInput className="w-3 h-3" />
-                  <span>{restoringSettings ? 'Importing...' : 'Import Settings'}</span>
-                  <input type="file" accept=".json" onChange={handleImportSettings} className="hidden" disabled={restoringSettings} />
-                </label>
-                <button
-                  onClick={handleExportSettings}
-                  className="px-3 py-1 bg-[#262B34] hover:bg-[#323844] text-white rounded-lg text-xs font-semibold shadow-xs border border-[#3A4250] transition-all flex items-center space-x-1"
-                >
-                  <DownloadCloud className="w-3 h-3" />
-                  <span>Export Settings</span>
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Card 3: Fast-Sync Snapshot Stream (Remote vs Local Archive) */}
-        <div className="operator-card rounded-xl p-3 flex flex-col justify-between space-y-2">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
-              <div className="flex items-center space-x-1.5">
-                <DownloadCloud className="w-3.5 h-3.5 text-slate-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
-                  Fast-Sync Snapshot
-                </h3>
-              </div>
-              <div className="flex items-center space-x-1">
-                <button
-                  type="button"
-                  onClick={() => setSnapshotMode('remote')}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
-                    snapshotMode === 'remote' ? 'bg-blue-600 text-white' : 'bg-[#181B20] text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Remote Server
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSnapshotMode('local')}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
-                    snapshotMode === 'local' ? 'bg-emerald-600 text-white' : 'bg-[#181B20] text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Local Backup
-                </button>
+                )}
               </div>
             </div>
-            <p className="text-[11px] text-slate-400 leading-tight">
-              {snapshotMode === 'remote'
-                ? 'Direct streaming decompression from official mainnet snapshot server.'
-                : 'Restores locally created backup archives (.tar.zst, .tar.xz, .tar.gz) using fast multi-threaded codecs.'}
-            </p>
-            <div>
-              {snapshotMode === 'remote' ? (
-                <input
-                  type="text"
-                  value={snapshotUrl}
-                  onChange={(e) => setSnapshotUrl(e.target.value)}
-                  disabled={isSnapshotRunning}
-                  placeholder="http://207.180.195.181/snapshot.tar.xz"
-                  className="w-full px-2.5 py-1 bg-[#0F1115] border border-[#262B34] rounded-lg text-[11px] font-mono text-slate-100 placeholder-slate-500 focus:outline-hidden focus:border-blue-500 disabled:opacity-50"
-                />
+
+            {/* Action Buttons */}
+            <div className="pt-2 border-t border-[#262B34]">
+              {!isBackupRunning ? (
+                <button
+                  type="button"
+                  onClick={handleStartBackup}
+                  disabled={startingBackup}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span>{startingBackup ? 'Initializing...' : 'Create Backup Archive'}</span>
+                </button>
               ) : (
-                <DirectoryDropdown
-                  mode="file"
-                  value={localSnapshotPath}
-                  onChange={setLocalSnapshotPath}
-                  placeholder="~/sirius-data-backup-*.tar.zst"
-                  prompt="Select Sirius Snapshot Archive"
-                />
+                <button
+                  type="button"
+                  onClick={handleCancelBackup}
+                  disabled={cancellingBackup}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
+                >
+                  <StopCircle className="w-3.5 h-3.5" />
+                  <span>{cancellingBackup ? 'Cancelling...' : 'Cancel Backup'}</span>
+                </button>
               )}
             </div>
           </div>
 
-          <div className="pt-1.5 border-t border-[#262B34] flex items-center justify-between">
-            <span className="text-[10px] text-slate-400 font-mono truncate mr-2">
-              {snapshotStatus?.stage && snapshotStatus.stage !== 'idle' ? snapshotStatus.stage.toUpperCase() : 'Ready'}
-            </span>
-            {!isSnapshotRunning ? (
+          {/* CARD 2: REMOTE SYNC (Merged Fast-Sync Snapshot + Remote Restore) */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  <DownloadCloud className="w-4 h-4 text-slate-300" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    Remote Sync
+                  </h3>
+                </div>
+                {/* 3-State Status Badge: Gray / Green / Amber */}
+                {isRemoteSyncRunning ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/40 text-amber-400 border border-amber-500/40 uppercase">
+                    Streaming
+                  </span>
+                ) : remoteSnapshotStatus?.stage === 'complete' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-500/40 uppercase">
+                    Synced
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Ready
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Direct streaming fast-sync decompression from remote snapshot servers (Cloudflare R2, S3, B2, or HTTP). Direct streaming unpack with zero intermediate disk overhead.
+              </p>
+
+              {/* Form: URL, Target path, Optional Ed25519 Pubkey */}
+              <div className="space-y-2 pt-1">
+                <div>
+                  <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                    Manifest or Snapshot URL
+                  </label>
+                  <input
+                    type="text"
+                    value={remoteSyncUrl}
+                    onChange={(e) => setRemoteSyncUrl(e.target.value)}
+                    disabled={isRemoteSyncRunning}
+                    placeholder="http://207.180.195.181/snapshot.tar.xz"
+                    className="w-full px-3 py-1.5 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none transition-all disabled:opacity-50"
+                  />
+                </div>
+
+                <DirectoryDropdown
+                  label="Target Data Directory (data.path)"
+                  value={remoteSyncTarget}
+                  onChange={setRemoteSyncTarget}
+                  placeholder="./chainconfig/data"
+                  prompt="Select Target Blockchain Data Directory"
+                />
+
+                <div>
+                  <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                    Release Verification Public Key (Ed25519 - Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={remoteSyncPubKey}
+                    onChange={(e) => setRemoteSyncPubKey(e.target.value)}
+                    disabled={isRemoteSyncRunning}
+                    placeholder="538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
+                    className="w-full px-3 py-1.5 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-[11px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none transition-all disabled:opacity-50"
+                  />
+                </div>
+
+                {/* Target Disk Space Readout */}
+                <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Target Free Space:</span>
+                  <span className="text-slate-200 font-bold">{availableDiskFree}</span>
+                </div>
+
+                {/* Live Progress Bar (Requirement 5) */}
+                {isRemoteSyncRunning && (
+                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-amber-500/40 space-y-1.5 animate-in fade-in duration-150">
+                    <div className="flex justify-between text-[11px] font-mono">
+                      <span className="text-amber-400 font-bold">
+                        {remoteSnapshotStatus?.download?.percentage
+                          ? `${remoteSnapshotStatus.download.percentage.toFixed(1)}%`
+                          : remoteManagerStatus?.progress?.percentage
+                          ? `${remoteManagerStatus.progress.percentage.toFixed(1)}%`
+                          : 'Streaming...'}
+                      </span>
+                      <span className="text-slate-400 truncate max-w-[160px]">
+                        {remoteSnapshotStatus?.stage?.toUpperCase() || remoteManagerStatus?.stage?.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.max(
+                            5,
+                            remoteSnapshotStatus?.download?.percentage ||
+                              remoteManagerStatus?.progress?.percentage ||
+                              0
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      {remoteSnapshotStatus?.message || remoteManagerStatus?.message}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-2 border-t border-[#262B34]">
+              {!isRemoteSyncRunning ? (
+                <button
+                  type="button"
+                  onClick={triggerRemoteSyncModal}
+                  disabled={startingRemoteSync}
+                  className="w-full py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
+                >
+                  <DownloadCloud className="w-3.5 h-3.5" />
+                  <span>{startingRemoteSync ? 'Initializing...' : 'Start Remote Sync'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCancelRemoteSync}
+                  disabled={cancellingRemoteSync}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
+                >
+                  <StopCircle className="w-3.5 h-3.5" />
+                  <span>{cancellingRemoteSync ? 'Cancelling...' : 'Cancel Remote Sync'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* CARD 3: RESTORE LOCAL ARCHIVE */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  <HardDrive className="w-4 h-4 text-slate-300" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    Restore Local Archive
+                  </h3>
+                </div>
+                {/* 3-State Status Badge */}
+                {isLocalRestoreRunning ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/40 text-amber-400 border border-amber-500/40 uppercase">
+                    Extracting
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Direct Unpack
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Extract an existing archive (<code className="text-slate-300">.tar.zst</code>, <code className="text-slate-300">.tar.gz</code>, <code className="text-slate-300">.tar.xz</code>) directly into your active data directory.
+              </p>
+
+              {/* Form: Select Archive File, Target data path */}
+              <div className="space-y-2 pt-1">
+                <DirectoryDropdown
+                  label="Select Local Archive File"
+                  value={localArchivePath}
+                  onChange={setLocalArchivePath}
+                  placeholder="/Volumes/SSD/snapshots/snapshot.tar.zst"
+                  mode="file"
+                  prompt="Select Sirius Snapshot Archive File"
+                />
+
+                <DirectoryDropdown
+                  label="Target Data Directory (data.path)"
+                  value={localRestoreTarget}
+                  onChange={setLocalRestoreTarget}
+                  placeholder="./chainconfig/data"
+                  prompt="Select Target Data Directory"
+                />
+
+                {/* Target Disk Space Readout */}
+                <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Target Free Space:</span>
+                  <span className="text-slate-200 font-bold">{availableDiskFree}</span>
+                </div>
+
+                {/* Live Progress Bar (Requirement 5) */}
+                {isLocalRestoreRunning && (
+                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-amber-500/40 space-y-1.5 animate-in fade-in duration-150">
+                    <div className="flex justify-between text-[11px] font-mono">
+                      <span className="text-amber-400 font-bold">
+                        {remoteManagerStatus?.progress?.percentage
+                          ? `${remoteManagerStatus.progress.percentage.toFixed(1)}%`
+                          : 'Extracting...'}
+                      </span>
+                      <span className="text-slate-400 truncate max-w-[160px]">
+                        {remoteManagerStatus?.progress?.currentItem || 'Unpacking files...'}
+                      </span>
+                    </div>
+                    <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.max(5, remoteManagerStatus?.progress?.percentage || 0)}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">{remoteManagerStatus?.message}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-2 border-t border-[#262B34]">
+              {!isLocalRestoreRunning ? (
+                <button
+                  type="button"
+                  onClick={triggerLocalRestoreModal}
+                  disabled={startingLocalRestore}
+                  className="w-full py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
+                >
+                  <HardDrive className="w-3.5 h-3.5" />
+                  <span>{startingLocalRestore ? 'Extracting...' : 'Restore from Local File'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCancelRemoteSync}
+                  disabled={cancellingLocalRestore}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center space-x-1.5"
+                >
+                  <StopCircle className="w-3.5 h-3.5" />
+                  <span>{cancellingLocalRestore ? 'Cancelling...' : 'Cancel Restore'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* LEVEL 2: Section Header 2: System Utilities & Recovery */}
+      <div className="space-y-3 pt-2">
+        <div className="pb-1 border-b border-[#262B34]">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-2">
+            <Sliders className="w-3.5 h-3.5 text-slate-400" />
+            <span>System Utilities & Node Health</span>
+          </h2>
+        </div>
+
+        {/* 4 Modular Utility Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          {/* UTILITY 1: Protocol & Engine Updater */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-3">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  <DownloadCloud className="w-4 h-4 text-slate-300" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    Official Protocol Updater
+                  </h3>
+                </div>
+                {/* 3-State Badge: Gray (Version) */}
+                <span className="text-[10px] font-mono bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded border border-zinc-700">
+                  {updateInfo?.currentVersion || 'v1.9.7'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Synchronizes official seeds, peers, and network configurations from GitHub while preserving local C++ native performance patches.
+              </p>
+              <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] text-[11px] flex items-center justify-between font-mono">
+                <span className="text-slate-400">Release Status:</span>
+                {/* 3-State Status: Amber (Update) or Green (Up to Date) */}
+                <span className={updateInfo?.hasUpdate ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                  {updateInfo?.hasUpdate
+                    ? `Update ${updateInfo.latestVersion} Available`
+                    : `Up to Date (${updateInfo?.currentVersion || 'v1.9.7'})`}
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-[#262B34] flex items-center justify-between gap-2">
               <button
-                onClick={handleStartSnapshot}
-                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-xs border border-blue-500/30 transition-all flex items-center space-x-1"
+                type="button"
+                onClick={handleCheckUpdate}
+                disabled={checkingUpdate}
+                className="px-3 py-1.5 bg-[#181B20] hover:bg-[#262B34] text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-colors flex items-center space-x-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${checkingUpdate ? 'animate-spin' : ''}`} />
+                <span>{checkingUpdate ? 'Checking...' : 'Check GitHub'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('open-engine-updater'))}
+                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold border border-zinc-600 transition-all flex items-center space-x-1"
+              >
+                <ArrowUpCircle className="w-3 h-3" />
+                <span>Engine Binary</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyUpdate}
+                disabled={applyingUpdate}
+                className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1"
               >
                 <DownloadCloud className="w-3 h-3" />
-                <span>{snapshotMode === 'remote' ? 'Start Remote Sync' : 'Restore Local File'}</span>
+                <span>{applyingUpdate ? 'Updating...' : 'Sync Configs'}</span>
               </button>
-            ) : (
-              <button
-                onClick={handleCancelSnapshot}
-                disabled={cancellingSnapshot}
-                className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1"
-              >
-                <StopCircle className="w-3 h-3" />
-                <span>Cancel Sync</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Section: 2 Columns (Left: Blockchain Backup & Chunk Migration; Right: Maintenance Utilities) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 flex-1 items-stretch">
-        {/* Card 4: Blockchain Data Backup */}
-        <div className="operator-card rounded-xl p-3.5 flex flex-col justify-between space-y-2.5">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
-              <div className="flex items-center space-x-2">
-                <Archive className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
-                  Blockchain Data Backup (Full Archive)
-                </h3>
-              </div>
-              {dataBackupStatus && dataBackupStatus.stage !== 'idle' && (
-                <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold uppercase border ${
-                  dataBackupStatus.stage === 'backing_up'
-                    ? 'bg-amber-950/30 text-amber-400 border-amber-500/40'
-                    : dataBackupStatus.stage === 'complete'
-                    ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/40'
-                    : 'bg-blue-600/15 text-blue-400 border-blue-500/30'
-                }`}>
-                  {dataBackupStatus.stage === 'backing_up' ? 'BACKING UP' : dataBackupStatus.stage}
-                </span>
-              )}
             </div>
+          </div>
 
-            <p className="text-xs text-slate-400 leading-tight">
-              Create a full point-in-time compressed archive of all block directories (<code className="font-mono text-emerald-300">00000/</code>, RocksDB state cache, index) directly to internal or external storage.
-            </p>
-
-            {/* Format Selection with Clear Explanation */}
-            <div className="p-2 rounded-lg bg-[#0F1115] border border-[#262B34] space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-300">Compression Format:</span>
-                <div className="flex items-center space-x-1.5">
+          {/* UTILITY 2: Disaster Recovery Package & Settings */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-3">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  {drMode === 'dr' ? (
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <FolderInput className="w-4 h-4 text-slate-300" />
+                  )}
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    {drMode === 'dr' ? 'Disaster Recovery' : 'Node Settings'}
+                  </h3>
+                </div>
+                <div className="flex items-center space-x-1">
                   <button
                     type="button"
-                    onClick={() => setDataBackupFormat('zst')}
-                    className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold transition-all ${
-                      dataBackupFormat === 'zst'
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-[#181B20] text-slate-400 hover:text-slate-200 border border-[#262B34]'
+                    onClick={() => setDrMode('dr')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                      drMode === 'dr'
+                        ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/40'
+                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200'
                     }`}
                   >
-                    .tar.zst (Zstandard)
+                    Full DR
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDataBackupFormat('gz')}
-                    className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold transition-all ${
-                      dataBackupFormat === 'gz'
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'bg-[#181B20] text-slate-400 hover:text-slate-200 border border-[#262B34]'
+                    onClick={() => setDrMode('settings')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                      drMode === 'settings'
+                        ? 'bg-zinc-700 text-zinc-200 border border-zinc-600'
+                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200'
                     }`}
                   >
-                    .tar.gz (Gzip)
+                    Settings Only
                   </button>
                 </div>
               </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
-                {dataBackupFormat === 'zst' ? (
-                  <>
-                    <strong className="text-emerald-400">Recommended (Ultra-Fast):</strong> Multi-threaded Zstandard uses all CPU cores for 5x–10x faster backup.
-                  </>
+
+              {drMode === 'dr' ? (
+                <>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Full disaster recovery archive: all 21 Catapult configs, TLS certificates, and unredacted keys encrypted with Argon2id + AES-256-GCM.
+                  </p>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
+                      <span className="flex items-center space-x-1">
+                        <Lock className="w-3 h-3 text-emerald-400" />
+                        <span>Passphrase:</span>
+                      </span>
+                      <span className="text-[9.5px] text-slate-500 font-mono">Min 8 chars</span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showDrPassphrase ? 'text' : 'password'}
+                        value={drPassphrase}
+                        onChange={(e) => setDrPassphrase(e.target.value)}
+                        placeholder="Enter encryption passphrase..."
+                        className="w-full bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 pr-8"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDrPassphrase(!showDrPassphrase)}
+                        className="absolute right-2 top-1.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showDrPassphrase ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {drMessage && (
+                    <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] flex items-center space-x-1.5 truncate">
+                      <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate">{drMessage}</span>
+                    </div>
+                  )}
+                  {drError && (
+                    <div className="p-2 bg-amber-950/30 border border-amber-500/30 text-amber-400 rounded-lg text-[11px] flex items-center space-x-1.5 truncate">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate">{drError}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Export portable non-sensitive settings (friendly name, ports, custom peer lists, and harvest stats).
+                  </p>
+                  <div className="p-2 bg-zinc-800/60 border border-zinc-700 rounded-lg text-[10.5px] leading-relaxed text-zinc-300 flex items-start space-x-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <span>
+                      Private keys (bootKey/harvestKey), certificates, and blockchain state are omitted from settings export.
+                    </span>
+                  </div>
+                  {settingsMessage && (
+                    <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] flex items-center space-x-1.5 truncate">
+                      <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate">{settingsMessage}</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-[#262B34] flex items-center justify-between gap-2">
+              {drMode === 'dr' ? (
+                <>
+                  <label className="px-3 py-1.5 bg-[#181B20] hover:bg-[#262B34] text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-colors cursor-pointer flex items-center space-x-1">
+                    <FolderInput className="w-3 h-3" />
+                    <span>{drRestoring ? 'Restoring...' : 'Restore Package'}</span>
+                    <input type="file" accept=".drpkg,.json" onChange={handleImportDR} className="hidden" disabled={drRestoring} />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleExportDR}
+                    disabled={drExporting}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs border border-emerald-500/30 transition-all flex items-center space-x-1"
+                  >
+                    <DownloadCloud className="w-3 h-3" />
+                    <span>{drExporting ? 'Encrypting...' : 'Export Package'}</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label className="px-3 py-1.5 bg-[#181B20] hover:bg-[#262B34] text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-[#262B34] transition-colors cursor-pointer flex items-center space-x-1">
+                    <FolderInput className="w-3 h-3" />
+                    <span>{restoringSettings ? 'Importing...' : 'Import Settings'}</span>
+                    <input type="file" accept=".json" onChange={handleImportSettings} className="hidden" disabled={restoringSettings} />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleExportSettings}
+                    className="px-3.5 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-xs font-semibold shadow-xs border border-zinc-600 transition-all flex items-center space-x-1"
+                  >
+                    <DownloadCloud className="w-3 h-3" />
+                    <span>Export Settings</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* UTILITY 3: Storage Migration to Chunked Format */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-3">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  <Layers className="w-4 h-4 text-slate-300" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    Migrate Legacy Storage to Chunked Format
+                  </h3>
+                </div>
+                {/* 3-State Badge */}
+                {isConvertRunning ? (
+                  <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold uppercase bg-amber-950/40 text-amber-400 border border-amber-500/40">
+                    Converting
+                  </span>
+                ) : convertStatus?.status === 'completed' ? (
+                  <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold uppercase bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
+                    Complete
+                  </span>
                 ) : (
-                  <>
-                    <strong className="text-blue-400">Standard Compatibility:</strong> Universal Gzip archive compatible with older legacy tools.
-                  </>
+                  <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Chunked
+                  </span>
                 )}
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Packs millions of loose legacy block files into compact 4-file chunks (<code className="font-mono text-emerald-400">blocks.dat</code>, <code className="font-mono text-emerald-400">statements.dat</code>, <code className="font-mono text-emerald-400">blocks.idx</code>) per 65k-block folder to drastically free filesystem inodes.
               </p>
-            </div>
 
-            {/* Roomy Directory Selectors */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
-              <DirectoryDropdown label="Source (data.path)" value={dataBackupSource} onChange={setDataBackupSource} placeholder="./chainconfig/data" prompt="Select Backup Source Directory" />
-              <DirectoryDropdown label="Destination Folder" value={dataBackupTarget} onChange={setDataBackupTarget} placeholder="/Volumes/SSD/backups" prompt="Select Backup Destination Directory" />
-            </div>
+              <DirectoryDropdown
+                label="Blockchain Data Path"
+                value={convertSourcePath}
+                onChange={setConvertSourcePath}
+                placeholder="./chainconfig/data"
+                prompt="Select Blockchain Data Directory"
+              />
 
-            {/* Live Progress or Status Message */}
-            {dataBackupStatus?.stage === 'backing_up' && (
-              <div className="p-2 bg-[#0F1115] rounded-lg border border-amber-500/30 space-y-1 mt-1">
-                <div className="flex justify-between text-[11px] font-mono">
-                  <span className="text-amber-400 font-bold">{dataBackupStatus.percentage ? `${dataBackupStatus.percentage.toFixed(1)}%` : 'Archiving...'}</span>
-                  <span className="text-slate-400 truncate max-w-[280px]">{dataBackupStatus.currentFile || 'Scanning files...'}</span>
+              {/* Progress Bar (Requirement 5) */}
+              {isConvertRunning && (
+                <div className="p-2.5 bg-[#0F1115] rounded-lg border border-amber-500/40 space-y-1.5 animate-in fade-in duration-150">
+                  <div className="flex justify-between text-[11px] font-mono">
+                    <span className="text-amber-400 font-bold">
+                      {convertStatus?.percent}% ({convertStatus?.convertedBlocks?.toLocaleString()} blocks)
+                    </span>
+                    <span className="text-slate-400 truncate max-w-[160px]">
+                      Folder: {convertStatus?.currentDir}
+                    </span>
+                  </div>
+                  <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${Math.max(5, convertStatus?.percent || 0)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                    <span>{convertStatus?.message}</span>
+                    <span className="text-rose-400">Deleted: {convertStatus?.deletedFiles?.toLocaleString()} files</span>
+                  </div>
                 </div>
-                <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
-                  <div
-                    className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(5, dataBackupStatus.percentage || 0)}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 truncate">{dataBackupStatus.message}</p>
-              </div>
-            )}
-
-            {dataBackupStatus?.stage === 'complete' && (
-              <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs flex items-center space-x-1.5 mt-1">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                <span className="truncate">{dataBackupStatus.message}</span>
-              </div>
-            )}
-
-            {dataBackupStatus?.stage === 'error' && (
-              <div className="p-2 bg-rose-950/30 border border-rose-500/30 text-rose-400 rounded-lg text-xs flex items-center space-x-1.5 mt-1">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                <span className="truncate">{dataBackupStatus.errorMessage || dataBackupStatus.message}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="pt-2 border-t border-[#262B34] flex items-center justify-between">
-            <span className="text-[11px] text-slate-400 font-mono truncate mr-2">
-              {dataBackupStatus?.stage === 'backing_up' ? 'Archiving data.path...' : `Selected Format: .tar.${dataBackupFormat}`}
-            </span>
-            {!isDataBackupRunning ? (
-              <button
-                onClick={handleStartDataBackup}
-                disabled={startingDataBackup}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
-              >
-                <Archive className="w-3.5 h-3.5" />
-                <span>{startingDataBackup ? 'Starting...' : 'Create Data Backup'}</span>
-              </button>
-            ) : (
-              <button
-                onClick={handleCancelDataBackup}
-                disabled={cancellingDataBackup}
-                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
-              >
-                <StopCircle className="w-3.5 h-3.5" />
-                <span>{cancellingDataBackup ? 'Cancelling...' : 'Cancel Backup'}</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Card 5: Migrate Legacy Storage to Chunked Format */}
-        <div className="operator-card rounded-xl p-3.5 flex flex-col justify-between space-y-2.5">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
-              <div className="flex items-center space-x-2">
-                <Layers className="w-4 h-4 text-slate-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
-                  Migrate Legacy Storage to Chunked Format
-                </h3>
-              </div>
-              {convertStatus && convertStatus.status !== 'idle' && (
-                <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold uppercase border ${
-                  convertStatus.status === 'running'
-                    ? 'bg-amber-950/30 text-amber-400 border-amber-500/40'
-                    : convertStatus.status === 'completed'
-                    ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/40'
-                    : 'bg-rose-950/30 text-rose-400 border-rose-500/40'
-                }`}>
-                  {convertStatus.status === 'running' ? 'CONVERTING' : convertStatus.status}
-                </span>
               )}
             </div>
 
-            <p className="text-xs text-slate-400 leading-tight">
-              Packs 27.6M individual legacy <code className="font-mono text-blue-400">.dat</code> / <code className="font-mono text-blue-400">.stmt</code> files into compact 4-file chunks (<code className="font-mono text-emerald-300">blocks.dat</code>, <code className="font-mono text-emerald-300">statements.dat</code>, <code className="font-mono text-emerald-300">blocks.idx</code>) per 65k-block folder. Saves millions of filesystem inodes instantly.
+            <div className="pt-2 border-t border-[#262B34] flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-mono">
+                {isConvertRunning ? 'Migrating files in background...' : 'Zero-loss consolidation'}
+              </span>
+              {!isConvertRunning ? (
+                <button
+                  type="button"
+                  onClick={handleStartConvert}
+                  disabled={startingConvert}
+                  className="px-3.5 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs border border-zinc-600 transition-all flex items-center space-x-1.5"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{startingConvert ? 'Starting...' : 'Start Migration'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCancelConvert}
+                  disabled={cancellingConvert}
+                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
+                >
+                  <StopCircle className="w-3.5 h-3.5" />
+                  <span>{cancellingConvert ? 'Cancelling...' : 'Cancel Migration'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* UTILITY 4: Clean Logs & Cache */}
+          <div className="bg-[#13171F] border border-[#262B34] rounded-xl p-4 flex flex-col justify-between space-y-3">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-[#262B34]">
+                <div className="flex items-center space-x-2">
+                  <Trash2 className="w-4 h-4 text-slate-300" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                    Clean Cache & Logs
+                  </h3>
+                </div>
+                {/* 3-State Badge: Gray */}
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                  Maintenance
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Purges historical rotated log files and removes stale <code className="text-slate-300 font-mono">data/server.lock</code> handles to prevent restart lockouts.
+              </p>
+              {cleanMessage && (
+                <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] font-mono truncate">
+                  {cleanMessage}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-[#262B34] flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-mono">
+                Preserves active current log
+              </span>
+              <button
+                type="button"
+                onClick={handleCleanLogs}
+                disabled={cleaning}
+                className="px-3.5 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{cleaning ? 'Cleaning...' : 'Purge Logs'}</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* LEVEL 2: Section Header 3: DANGER ZONE (Requirement 3) */}
+      <div className="pt-4 space-y-3">
+        <div className="h-px bg-rose-900/30" />
+        
+        <div className="flex items-center space-x-2">
+          <ShieldAlert className="w-4 h-4 text-rose-400" />
+          <h2 className="text-xs font-bold uppercase tracking-wider text-rose-400">
+            Danger Zone
+          </h2>
+        </div>
+
+        {/* Distinct Destructive Card with Red/Danger Accent Styling */}
+        <div className="border border-rose-900/50 bg-rose-950/10 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1 max-w-2xl">
+            <div className="flex items-center space-x-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                Nemesis Reset (Block 1)
+              </h3>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-rose-950/50 text-rose-400 border border-rose-800/60">
+                Irreversible Action
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Preserves genesis Nemesis block (<code className="text-rose-300 font-mono">00001.dat</code>) while completely erasing all subsequent synced blockchain blocks, cache indexes, and transaction history. Forces node to restart synchronization from scratch at Block 1.
             </p>
-
-            <div className="mt-1">
-              <DirectoryDropdown label="Blockchain Data Path" value={convertSourcePath} onChange={setConvertSourcePath} placeholder="./chainconfig/data" prompt="Select Blockchain Data Directory" />
-            </div>
-
-            {/* Live Progress Bar */}
-            {convertStatus?.status === 'running' && (
-              <div className="p-2 bg-[#0F1115] rounded-lg border border-amber-500/30 space-y-1 mt-1">
-                <div className="flex justify-between text-[11px] font-mono">
-                  <span className="text-amber-400 font-bold">{convertStatus.percent}% ({convertStatus.convertedBlocks.toLocaleString()} blocks)</span>
-                  <span className="text-slate-400 truncate max-w-[200px]">Folder: {convertStatus.currentDir}</span>
-                </div>
-                <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
-                  <div
-                    className="bg-gradient-to-r from-amber-500 via-blue-500 to-emerald-400 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(5, convertStatus.percent)}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>{convertStatus.message}</span>
-                  <span className="text-rose-400">Deleted: {convertStatus.deletedFiles.toLocaleString()} files</span>
-                </div>
-              </div>
-            )}
-
-            {convertStatus?.status === 'completed' && (
-              <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs flex items-center space-x-1.5 mt-1">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                <span className="truncate">{convertStatus.message}</span>
-              </div>
-            )}
-
-            {convertStatus?.status === 'failed' && (
-              <div className="p-2 bg-rose-950/30 border border-rose-500/30 text-rose-400 rounded-lg text-xs flex items-center space-x-1.5 mt-1">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                <span className="truncate">{convertStatus.error || convertStatus.message}</span>
-              </div>
+            {resetDone && (
+              <span className="text-[11px] text-emerald-400 font-mono block font-semibold pt-1">
+                ✓ Reset complete. Blockchain is at Block 1 genesis state.
+              </span>
             )}
           </div>
 
-          <div className="pt-2 border-t border-[#262B34] flex items-center justify-between">
-            <span className="text-[11px] text-slate-400 font-mono truncate mr-2">
-              {convertStatus?.status === 'running' ? 'Migrating files in background...' : 'Zero-loss in-place consolidation'}
-            </span>
-            {!isConvertRunning ? (
-              <button
-                onClick={handleStartConvert}
-                disabled={startingConvert}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs border border-blue-500/30 transition-all flex items-center space-x-1.5"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{startingConvert ? 'Starting...' : 'Start Migration'}</span>
-              </button>
-            ) : (
-              <button
-                onClick={handleCancelConvert}
-                disabled={cancellingConvert}
-                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
-              >
-                <StopCircle className="w-3.5 h-3.5" />
-                <span>{cancellingConvert ? 'Cancelling...' : 'Cancel Migration'}</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Footer Utilities (Clean Logs & Nemesis Reset) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-        {/* Utility 1: Clean Cache & Logs */}
-        <div className="operator-card rounded-xl p-3 flex items-center justify-between space-x-3">
-          <div className="space-y-0.5">
-            <div className="flex items-center space-x-1.5">
-              <Trash2 className="w-3.5 h-3.5 text-amber-400" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-white">Clean Cache & Logs</h3>
-            </div>
-            <p className="text-[11px] text-slate-400">Purges historical rotated log files and clears stale server.lock handles.</p>
-            {cleanMessage && <span className="text-[10px] text-emerald-400 font-mono block truncate">{cleanMessage}</span>}
-          </div>
           <button
-            onClick={handleCleanLogs}
-            disabled={cleaning}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1 flex-shrink-0"
-          >
-            <Trash2 className="w-3 h-3" />
-            <span>{cleaning ? 'Cleaning...' : 'Purge Logs'}</span>
-          </button>
-        </div>
-
-        {/* Utility 2: Nemesis Reset */}
-        <div className="operator-card rounded-xl p-3 flex items-center justify-between space-x-3">
-          <div className="space-y-0.5">
-            <div className="flex items-center space-x-1.5">
-              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-white">Nemesis Reset (Block 1)</h3>
-            </div>
-            <p className="text-[11px] text-slate-400">Preserves Nemesis genesis (00001.dat) while wiping local state to re-sync from Block 1.</p>
-            {resetDone && <span className="text-[10px] text-emerald-400 font-mono block">Reset complete. Ready to start.</span>}
-          </div>
-          <button
-            onClick={handleResetChain}
+            type="button"
+            onClick={triggerNemesisResetModal}
             disabled={resetting}
-            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1 flex-shrink-0"
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5 flex-shrink-0"
           >
-            <RefreshCw className={`w-3 h-3 ${resetting ? 'animate-spin' : ''}`} />
-            <span>{resetting ? 'Resetting...' : 'Reset Chain'}</span>
+            <ShieldAlert className="w-3.5 h-3.5" />
+            <span>{resetting ? 'Resetting...' : 'Reset to Genesis Block 1'}</span>
           </button>
         </div>
       </div>
+
+      {/* Type-to-Confirm Modal for All Destructive Actions (Requirement 3) */}
+      <ConfirmDestructiveModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.action}
+        title={confirmModal.title}
+        description={confirmModal.description}
+        expectedText={confirmModal.expectedText}
+        confirmButtonText={confirmModal.confirmButtonText}
+        inProgress={resetting || startingRemoteSync || startingLocalRestore}
+      />
+
     </div>
   );
 };

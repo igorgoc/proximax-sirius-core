@@ -107,6 +107,19 @@ export interface DataBackupStatus {
   format?: string;
   message: string;
   errorMessage?: string;
+  lastBackupTime?: string;
+  lastBackupSize?: string;
+  lastBackupFile?: string;
+}
+
+export interface DiskSpaceInfo {
+  path: string;
+  freeBytes?: number;
+  totalBytes?: number;
+  usedBytes?: number;
+  free: string;
+  total: string;
+  used: string;
 }
 
 export type SnapshotOpStage =

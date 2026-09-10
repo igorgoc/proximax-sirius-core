@@ -191,6 +191,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/system/recovery/restore", s.handleRecoveryRestore)
 	mux.HandleFunc("/api/system/browse-dirs", s.handleSystemBrowseDirs)
 	mux.HandleFunc("/api/system/native-pick-dir", s.handleNativePickDir)
+	mux.HandleFunc("/api/system/disk-space", s.handleSystemDiskSpace)
 	mux.HandleFunc("/api/system/shutdown", s.handleSystemShutdown)
 	mux.HandleFunc("/api/console/query", s.handleConsoleQuery)
 
@@ -1373,6 +1374,15 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 		"canceled": true,
 		"error":    fmt.Sprintf("%v", err),
 	})
+}
+
+func (s *Server) handleSystemDiskSpace(w http.ResponseWriter, r *http.Request) {
+	reqPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if reqPath == "" {
+		reqPath = s.configMgr.GetDataPath()
+	}
+	info := s.supervisor.GetDiskSpace(reqPath)
+	jsonResponse(w, info)
 }
 
 func (s *Server) handleWatchdogToggle(w http.ResponseWriter, r *http.Request) {

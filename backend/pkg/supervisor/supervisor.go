@@ -110,14 +110,27 @@ const (
 )
 
 type DataBackupStatus struct {
-	Stage         DataBackupStage `json:"stage"`
-	BackedUpBytes int64           `json:"backedUpBytes"`
-	TotalBytes    int64           `json:"totalBytes"`
-	Percentage    float64         `json:"percentage"`
-	CurrentFile   string          `json:"currentFile"`
-	TargetFile    string          `json:"targetFile,omitempty"`
-	Message       string          `json:"message"`
-	ErrorMessage  string          `json:"errorMessage,omitempty"`
+	Stage          DataBackupStage `json:"stage"`
+	BackedUpBytes  int64           `json:"backedUpBytes"`
+	TotalBytes     int64           `json:"totalBytes"`
+	Percentage     float64         `json:"percentage"`
+	CurrentFile    string          `json:"currentFile"`
+	TargetFile     string          `json:"targetFile,omitempty"`
+	Message        string          `json:"message"`
+	ErrorMessage   string          `json:"errorMessage,omitempty"`
+	LastBackupTime string          `json:"lastBackupTime,omitempty"`
+	LastBackupSize string          `json:"lastBackupSize,omitempty"`
+	LastBackupFile string          `json:"lastBackupFile,omitempty"`
+}
+
+type DiskSpaceInfo struct {
+	Path       string `json:"path"`
+	FreeBytes  uint64 `json:"freeBytes"`
+	TotalBytes uint64 `json:"totalBytes"`
+	UsedBytes  uint64 `json:"usedBytes"`
+	Free       string `json:"free"`
+	Total      string `json:"total"`
+	Used       string `json:"used"`
 }
 
 type ProcessSupervisor struct {
@@ -1606,8 +1619,90 @@ func (dc *ProcessSupervisor) setSnapshotCancelled() {
 
 func (dc *ProcessSupervisor) GetDataBackupStatus() DataBackupStatus {
 	dc.dataBackupMu.RLock()
-	defer dc.dataBackupMu.RUnlock()
-	return dc.dataBackupStatus
+	st := dc.dataBackupStatus
+	dc.dataBackupMu.RUnlock()
+
+	if st.LastBackupTime == "" {
+		lastTime, lastSize, lastFile := dc.findNewestBackupFile("")
+		if lastTime != "" {
+			st.LastBackupTime = lastTime
+			st.LastBackupSize = lastSize
+			st.LastBackupFile = lastFile
+		}
+	}
+	return st
+}
+
+func (dc *ProcessSupervisor) findNewestBackupFile(searchDir string) (string, string, string) {
+	dirsToScan := []string{}
+	if searchDir != "" {
+		dirsToScan = append(dirsToScan, searchDir)
+	}
+	dirsToScan = append(dirsToScan,
+		filepath.Join(dc.chainConfigPath, ".."),
+		filepath.Join(dc.chainConfigPath, "..", "snapshots"),
+		filepath.Join(dc.chainConfigPath, "..", "backups"),
+		"/Volumes/SSD/snapshots",
+		"/Volumes/SSD/backups",
+	)
+
+	var newestTime time.Time
+	var newestSize int64
+	var newestFile string
+
+	for _, d := range dirsToScan {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			n := e.Name()
+			if (strings.HasPrefix(n, "sirius-data-backup-") || strings.HasPrefix(n, "sirius-snapshot-")) &&
+				(strings.HasSuffix(n, ".tar.zst") || strings.HasSuffix(n, ".tar.gz") || strings.HasSuffix(n, ".tar.xz")) {
+				info, err := e.Info()
+				if err == nil && info.ModTime().After(newestTime) {
+					newestTime = info.ModTime()
+					newestSize = info.Size()
+					newestFile = filepath.Join(d, n)
+				}
+			}
+		}
+	}
+
+	if !newestTime.IsZero() {
+		return newestTime.Format("2006-01-02 15:04:05"), formatBytes(newestSize), filepath.Base(newestFile)
+	}
+	return "", "", ""
+}
+
+func (dc *ProcessSupervisor) GetDiskSpace(targetPath string) DiskSpaceInfo {
+	p := targetPath
+	if p == "" {
+		p = filepath.Join(dc.chainConfigPath, "data")
+	} else if !filepath.IsAbs(p) {
+		p = filepath.Join(dc.chainConfigPath, "..", p)
+	}
+	free, total, used, err := getDiskSpaceBytes(p)
+	if err != nil || total == 0 {
+		return DiskSpaceInfo{
+			Path:  p,
+			Free:  "Unknown",
+			Total: "Unknown",
+			Used:  "Unknown",
+		}
+	}
+	return DiskSpaceInfo{
+		Path:       p,
+		FreeBytes:  free,
+		TotalBytes: total,
+		UsedBytes:  used,
+		Free:       formatBytes(int64(free)),
+		Total:      formatBytes(int64(total)),
+		Used:       formatBytes(int64(used)),
+	}
 }
 
 func (dc *ProcessSupervisor) CancelDataBackup() error {
@@ -1864,6 +1959,9 @@ func (dc *ProcessSupervisor) CreateDataBackup(sourceDataPath, targetDestPath, fo
 		dc.dataBackupStatus.BackedUpBytes = backedUpBytes
 		dc.dataBackupStatus.Percentage = 100.0
 		dc.dataBackupStatus.Message = fmt.Sprintf("Data backup completed successfully! Archive saved to %s (%s)", filepath.Base(targetFilePath), formatBytes(backedUpBytes))
+		dc.dataBackupStatus.LastBackupTime = time.Now().Format("2006-01-02 15:04:05")
+		dc.dataBackupStatus.LastBackupSize = formatBytes(backedUpBytes)
+		dc.dataBackupStatus.LastBackupFile = filepath.Base(targetFilePath)
 		dc.dataBackupMu.Unlock()
 
 		dc.broadcastLog(fmt.Sprintf("[Data Backup] Full blockchain data backup created successfully: %s (%s)", targetFilePath, formatBytes(backedUpBytes)))
