@@ -182,6 +182,23 @@ type ProcessSupervisor struct {
 	knownPeersCache map[string]ConnectedPeer
 	knownPeersMu    sync.RWMutex
 	knownPeersTime  time.Time
+
+	// Log purge state
+	logPurgeMu          sync.RWMutex
+	lastLogPurgeTime    string
+	lastLogPurgeFreedMB float64
+}
+
+type LogStats struct {
+	LogsDir          string   `json:"logsDir"`
+	LogCount         int      `json:"logCount"`
+	TotalBytes       int64    `json:"totalBytes"`
+	TotalMB          float64  `json:"totalMB"`
+	ServerLockFound  bool     `json:"serverLockFound"`
+	ActiveLogFound   bool     `json:"activeLogFound"`
+	RotatedCount     int      `json:"rotatedCount"`
+	LastPurgeTime    string   `json:"lastPurgeTime,omitempty"`
+	LastPurgeFreedMB float64  `json:"lastPurgeFreedMB,omitempty"`
 }
 
 type ConnectedPeer struct {
@@ -1970,6 +1987,46 @@ func (dc *ProcessSupervisor) CreateDataBackup(sourceDataPath, targetDestPath, fo
 	return nil
 }
 
+func (dc *ProcessSupervisor) GetLogStats(dataPath string) LogStats {
+	dc.logPurgeMu.RLock()
+	lastPurge := dc.lastLogPurgeTime
+	lastFreed := dc.lastLogPurgeFreedMB
+	dc.logPurgeMu.RUnlock()
+
+	logsDir := filepath.Join(dc.chainConfigPath, "logs")
+	stats := LogStats{
+		LogsDir:          logsDir,
+		LastPurgeTime:    lastPurge,
+		LastPurgeFreedMB: lastFreed,
+	}
+
+	if entries, err := os.ReadDir(logsDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".log") {
+				stats.LogCount++
+				if info, err := e.Info(); err == nil {
+					stats.TotalBytes += info.Size()
+				}
+				if e.Name() == "server.log" || e.Name() == "manager.log" {
+					stats.ActiveLogFound = true
+				} else {
+					stats.RotatedCount++
+				}
+			}
+		}
+	}
+	stats.TotalMB = float64(stats.TotalBytes) / (1024 * 1024)
+
+	if dataPath != "" {
+		lockPath := filepath.Join(dataPath, "server.lock")
+		if _, err := os.Stat(lockPath); err == nil {
+			stats.ServerLockFound = true
+		}
+	}
+
+	return stats
+}
+
 func (dc *ProcessSupervisor) CleanLogsAndCache(dataPath string) (int64, error) {
 	logsDir := filepath.Join(dc.chainConfigPath, "logs")
 	var reclaimed int64
@@ -1977,14 +2034,35 @@ func (dc *ProcessSupervisor) CleanLogsAndCache(dataPath string) (int64, error) {
 	if entries, err := os.ReadDir(logsDir); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".log") {
-				info, err := e.Info()
-				if err == nil {
-					reclaimed += info.Size()
-					_ = os.Remove(filepath.Join(logsDir, e.Name()))
+				if e.Name() == "manager.log" {
+					info, err := e.Info()
+					if err == nil && info.Size() > 0 {
+						reclaimed += info.Size()
+						_ = os.Truncate(filepath.Join(logsDir, e.Name()), 0)
+					}
+				} else {
+					info, err := e.Info()
+					if err == nil {
+						reclaimed += info.Size()
+						_ = os.Remove(filepath.Join(logsDir, e.Name()))
+					}
 				}
 			}
 		}
 	}
+
+	if dataPath != "" {
+		lockPath := filepath.Join(dataPath, "server.lock")
+		if _, err := os.Stat(lockPath); err == nil {
+			_ = os.Remove(lockPath)
+		}
+	}
+
+	freedMB := float64(reclaimed) / (1024 * 1024)
+	dc.logPurgeMu.Lock()
+	dc.lastLogPurgeTime = time.Now().Format("2006-01-02 15:04:05")
+	dc.lastLogPurgeFreedMB = freedMB
+	dc.logPurgeMu.Unlock()
 
 	return reclaimed, nil
 }

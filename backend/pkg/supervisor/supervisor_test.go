@@ -223,3 +223,74 @@ func TestProcessSupervisor_DataIntegrityPreflight(t *testing.T) {
 	}
 }
 
+func TestProcessSupervisor_CleanLogsAndStats(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "chainconfig")
+	logsDir := filepath.Join(configDir, "logs")
+	dataDir := filepath.Join(tmpDir, "data")
+
+	_ = os.MkdirAll(logsDir, 0755)
+	_ = os.MkdirAll(dataDir, 0755)
+
+	// Create sample log files
+	_ = os.WriteFile(filepath.Join(logsDir, "server_0001.log"), []byte("sample-log-content-1"), 0644)
+	_ = os.WriteFile(filepath.Join(logsDir, "recovery_0000.log"), []byte("sample-log-content-2"), 0644)
+	_ = os.WriteFile(filepath.Join(logsDir, "manager.log"), []byte("manager-log-content"), 0644)
+	_ = os.WriteFile(filepath.Join(dataDir, "server.lock"), []byte("locked"), 0644)
+
+	s := NewProcessSupervisor(configDir)
+
+	// Verify stats before cleaning
+	stats := s.GetLogStats(dataDir)
+	if stats.LogCount != 3 {
+		t.Errorf("expected 3 log files, got %d", stats.LogCount)
+	}
+	if !stats.ServerLockFound {
+		t.Errorf("expected server.lock to be found")
+	}
+	if stats.TotalBytes <= 0 {
+		t.Errorf("expected positive total log bytes, got %d", stats.TotalBytes)
+	}
+
+	// Clean logs and cache
+	freedBytes, err := s.CleanLogsAndCache(dataDir)
+	if err != nil {
+		t.Fatalf("CleanLogsAndCache failed: %v", err)
+	}
+	if freedBytes <= 0 {
+		t.Errorf("expected positive freed bytes, got %d", freedBytes)
+	}
+
+	// Verify stale server.lock was removed
+	if _, err := os.Stat(filepath.Join(dataDir, "server.lock")); !os.IsNotExist(err) {
+		t.Errorf("expected server.lock to be removed, but it still exists")
+	}
+
+	// Verify rotated logs removed
+	if _, err := os.Stat(filepath.Join(logsDir, "server_0001.log")); !os.IsNotExist(err) {
+		t.Errorf("expected server_0001.log to be removed")
+	}
+	if _, err := os.Stat(filepath.Join(logsDir, "recovery_0000.log")); !os.IsNotExist(err) {
+		t.Errorf("expected recovery_0000.log to be removed")
+	}
+
+	// Verify manager.log was truncated to 0
+	info, err := os.Stat(filepath.Join(logsDir, "manager.log"))
+	if err != nil {
+		t.Fatalf("manager.log should exist (truncated), got error: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Errorf("expected manager.log to be truncated to 0 bytes, got %d", info.Size())
+	}
+
+	// Verify updated stats
+	afterStats := s.GetLogStats(dataDir)
+	if afterStats.ServerLockFound {
+		t.Errorf("expected serverLockFound to be false after cleanup")
+	}
+	if afterStats.LastPurgeTime == "" {
+		t.Errorf("expected LastPurgeTime to be set")
+	}
+}
+
+

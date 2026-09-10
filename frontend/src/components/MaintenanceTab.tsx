@@ -33,6 +33,7 @@ import {
   UpdateInfo,
   NodeMetrics,
   SnapshotManagerStatus,
+  LogStats,
 } from '../types';
 import { DirectoryDropdown } from './DirectoryDropdown';
 import { ConfirmDestructiveModal } from './ConfirmDestructiveModal';
@@ -134,6 +135,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
   // Clean Logs & Cache State
   const [cleaning, setCleaning] = useState(false);
   const [cleanMessage, setCleanMessage] = useState<string | null>(null);
+  const [logStats, setLogStats] = useState<LogStats | null>(null);
 
   // Storage Conversion State
   const [convertSourcePath, setConvertSourcePath] = useState(() => prefs.defaultDataPath);
@@ -333,6 +335,27 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
     const interval = setInterval(fetchStatus, 1000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // Log Stats Fetcher
+  const fetchLogStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/maintenance/clean-logs');
+      if (res.ok) {
+        const data = await res.json();
+        setLogStats(data);
+      }
+    } catch {
+      // Ignore polling errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeSubTab === 'system') {
+      fetchLogStats();
+      const interval = setInterval(fetchLogStats, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [activeSubTab, fetchLogStats]);
 
   // Watchdog Toggle
   const handleToggleWatchdog = async () => {
@@ -564,6 +587,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to clean logs');
       setCleanMessage(`Freed ${(data.freedMB || 0).toFixed(2)} MB of disk space by purging historical logs and stale server locks.`);
+      await fetchLogStats();
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -1734,17 +1758,68 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                       Clean Cache & Logs
                     </h3>
                   </div>
-                  {/* 3-State Badge: Gray */}
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
-                    Maintenance
-                  </span>
+                  {/* 3-State Badge: Gray (Maintenance), Amber (Purging / High usage / Stale lock) */}
+                  {cleaning ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-950/40 text-amber-400 border border-amber-500/40">
+                      Purging...
+                    </span>
+                  ) : logStats?.serverLockFound ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-950/40 text-amber-400 border border-amber-500/40">
+                      Stale Lock
+                    </span>
+                  ) : (logStats?.totalMB ?? 0) > 100 ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-950/40 text-amber-400 border border-amber-500/40">
+                      {(logStats?.totalMB ?? 0).toFixed(0)} MB
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                      Maintenance
+                    </span>
+                  )}
                 </div>
+
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Purges historical rotated log files and removes stale <code className="text-slate-300 font-mono">data/server.lock</code> handles to prevent restart lockouts.
+                  Purges historical rotated log files and removes stale <code className="text-slate-300 font-mono">data/server.lock</code> handles to reclaim disk space and prevent restart lockouts.
                 </p>
+
+                {/* Telemetry & Purge Preview Box */}
+                <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] space-y-1.5 text-[11px] font-mono">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Log Footprint:</span>
+                    <span className="text-slate-200 font-medium">
+                      {logStats ? `${logStats.logCount} file${logStats.logCount === 1 ? '' : 's'} (${logStats.totalMB.toFixed(1)} MB)` : 'Scanning logs...'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Server Lockfile:</span>
+                    {logStats?.serverLockFound ? (
+                      <span className="text-amber-400 font-bold flex items-center space-x-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        <span>stale server.lock found</span>
+                      </span>
+                    ) : (
+                      <span className="text-emerald-400 font-medium flex items-center space-x-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>clean (unlocked)</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="pt-1.5 border-t border-[#1C2028] flex items-center justify-between text-[10px]">
+                    <span className="text-slate-400">Last Purge:</span>
+                    <span className={logStats?.lastPurgeTime ? 'text-emerald-400' : 'text-slate-400'}>
+                      {logStats?.lastPurgeTime
+                        ? `${logStats.lastPurgeTime} (${(logStats.lastPurgeFreedMB ?? 0).toFixed(2)} MB freed)`
+                        : 'Ready to purge'}
+                    </span>
+                  </div>
+                </div>
+
                 {cleanMessage && (
-                  <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] font-mono truncate">
-                    {cleanMessage}
+                  <div className="p-2 bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[11px] font-mono flex items-center space-x-1.5 truncate animate-in fade-in duration-150">
+                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                    <span className="truncate">{cleanMessage}</span>
                   </div>
                 )}
               </div>
@@ -1757,7 +1832,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                   type="button"
                   onClick={handleCleanLogs}
                   disabled={cleaning}
-                  className="px-3.5 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1.5"
+                  className="px-3.5 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs border border-zinc-600 transition-all flex items-center space-x-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>{cleaning ? 'Cleaning...' : 'Purge Logs'}</span>

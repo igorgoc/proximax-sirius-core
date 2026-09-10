@@ -355,4 +355,17 @@ export interface NetworkValidatorStats {
   topValidators: ActiveValidatorSummary[];
 }
 
+export interface LogStats {
+  logsDir: string;
+  logCount: number;
+  totalBytes: number;
+  totalMB: number;
+  serverLockFound: boolean;
+  activeLogFound?: boolean;
+  rotatedCount?: number;
+  lastPurgeTime?: string;
+  lastPurgeFreedMB?: number;
+}
+
+
 

@@ -953,23 +953,37 @@ func (s *Server) handleMaintenanceStorageConvertCancel(w http.ResponseWriter, r 
 }
 
 func (s *Server) handleMaintenanceCleanLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
+	dataPath := s.configMgr.GetDataPath()
+
+	if r.Method == http.MethodGet {
+		stats := s.supervisor.GetLogStats(dataPath)
+		jsonResponse(w, stats)
+		return
+	}
+
+	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	freedBytes, err := s.supervisor.CleanLogsAndCache(s.configMgr.GetDataPath())
+	freedBytes, err := s.supervisor.CleanLogsAndCache(dataPath)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	freedMB := float64(freedBytes) / (1024 * 1024)
+	stats := s.supervisor.GetLogStats(dataPath)
 	jsonResponse(w, map[string]interface{}{
-		"status":     "success",
-		"freedBytes": freedBytes,
-		"freedMB":    freedMB,
-		"message":    "Successfully cleaned logs and temporary cache.",
+		"status":          "success",
+		"freedBytes":      freedBytes,
+		"freedMB":         freedMB,
+		"message":         "Successfully cleaned logs and temporary cache.",
+		"logCount":        stats.LogCount,
+		"totalMB":         stats.TotalMB,
+		"serverLockFound": stats.ServerLockFound,
+		"logsDir":         stats.LogsDir,
+		"lastPurgeTime":   stats.LastPurgeTime,
 	})
 }
 
