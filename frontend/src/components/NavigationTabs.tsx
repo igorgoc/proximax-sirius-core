@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Shield, Network, Sliders, Terminal } from 'lucide-react';
+import { LayoutDashboard, Shield, Network, Sliders, Terminal, Wrench } from 'lucide-react';
 
 interface NavigationTabsProps {
   activeTab: string;
@@ -12,6 +12,7 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({ activeTab, setAc
     { id: 'validator', label: 'Validator', icon: Shield },
     { id: 'network', label: 'Network', icon: Network },
     { id: 'config', label: 'Settings', icon: Sliders },
+    { id: 'maintenance', label: 'Maintenance', icon: Wrench },
   ];
 
   return (
