@@ -867,7 +867,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Operations center for blockchain backups, fast-sync snapshot streams, data migration, and recovery tools.
+              Backups, fast sync, and node maintenance.
             </p>
           </div>
         </div>
@@ -988,8 +988,8 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
 
         <div className="text-[11px] text-slate-500 font-mono hidden sm:block">
           {activeSubTab === 'snapshots'
-            ? 'Blockchain backup archives, fast-sync snapshot streams, and local unpack'
-            : 'Protocol updating, encrypted disaster recovery, chunk migration, and log cache cleaning'}
+            ? 'Backups & Fast Sync'
+            : 'System Tools & Updates'}
         </div>
       </div>
 
@@ -1025,7 +1025,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Create a full point-in-time compressed archive of all blockchain block and state directories directly to local or external SSD storage.
+                  Save a complete backup of your node data.
                 </p>
 
                 {/* Form: Source path, Destination path, Compression format */}
@@ -1238,7 +1238,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Direct streaming fast-sync decompression from remote snapshot servers (Cloudflare R2, S3, B2, or HTTP). Direct streaming unpack with zero intermediate disk overhead.
+                  Download latest blockchain data to sync quickly.
                 </p>
 
                 {/* Form: URL, Target path, and Read-Only Verification PubKey with link */}
@@ -1292,7 +1292,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                           <span>Authenticity Verification</span>
                         </div>
                         <div className="text-slate-200 text-xs truncate">
-                          Verified via official Ed25519 signature & SHA-256 before unpack
+                          Verified with official signature before saving.
                         </div>
                       </div>
                     </div>
@@ -1392,7 +1392,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Extract an existing archive (<code className="text-slate-300">.tar.zst</code>, <code className="text-slate-300">.tar.gz</code>, <code className="text-slate-300">.tar.xz</code>) directly into your active data directory.
+                  Restore blockchain data from a local backup file.
                 </p>
 
                 {/* Form: Select Archive File, Target data path */}
@@ -1512,7 +1512,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Synchronizes official seeds, peers, and network configurations from GitHub while preserving local C++ native performance patches.
+                  Update network settings and peers from GitHub.
                 </p>
                 <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] text-[11px] flex items-center justify-between font-mono">
                   <span className="text-slate-400">Release Status:</span>
@@ -1619,7 +1619,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 {drMode === 'dr' ? (
                   <>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Full disaster recovery archive: all 21 Catapult configs, TLS certificates, and unredacted keys encrypted with Argon2id + AES-256-GCM.
+                      Create an encrypted backup of your node settings and keys.
                     </p>
 
                     <div className="space-y-1">
@@ -1664,12 +1664,12 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 ) : (
                   <>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Export portable non-sensitive settings (friendly name, ports, custom peer lists, and harvest stats).
+                      Export non-sensitive settings (no private keys).
                     </p>
                     <div className="p-2 bg-zinc-800/60 border border-zinc-700 rounded-lg text-[10.5px] leading-relaxed text-zinc-300 flex items-start space-x-1.5">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
                       <span>
-                        Private keys (bootKey/harvestKey), certificates, and blockchain state are omitted from settings export.
+                        Private keys and certificates are never included.
                       </span>
                     </div>
                     {settingsMessage && (
@@ -1747,7 +1747,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Packs millions of loose legacy block files into compact 4-file chunks (<code className="font-mono text-emerald-400">blocks.dat</code>, <code className="font-mono text-emerald-400">statements.dat</code>, <code className="font-mono text-emerald-400">blocks.idx</code>) per 65k-block folder to drastically free filesystem inodes.
+                  Pack block files into compact storage to save disk space.
                 </p>
 
                 <DirectoryDropdown
@@ -1842,7 +1842,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Purges historical rotated log files and removes stale <code className="text-slate-300 font-mono">data/server.lock</code> handles to reclaim disk space and prevent restart lockouts.
+                  Delete old log files to free up disk space.
                 </p>
 
                 {/* Telemetry & Purge Preview Box */}
@@ -1930,7 +1930,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
               </span>
             </div>
             <p className="text-[11px] text-slate-300 leading-relaxed">
-              Preserves genesis Nemesis block (<code className="text-rose-300 font-mono">00001.dat</code>) while completely erasing all subsequent synced blockchain blocks, cache indexes, and transaction history. Forces node to restart synchronization from scratch at Block 1.
+              Erase synced chain data and restart synchronization from Block 1.
             </p>
             {resetDone && (
               <span className="text-[11px] text-emerald-400 font-mono block font-semibold pt-1">
