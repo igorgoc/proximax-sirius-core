@@ -111,8 +111,15 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	nm := network.NewNetworkManager()
 	mig := migrator.New()
 
-	releasePubKey := "538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
-	if eu != nil {
+	releasePubKey := "68b1a927c47850a5d4244305b2670960d9fe6f048e5a458d801959b606f3e917"
+	if snapManifestBytes, err := os.ReadFile("chainconfig/snapshot.compat.json"); err == nil {
+		var smManifest struct {
+			ReleasePublicKeyHex string `json:"releasePublicKeyHex"`
+		}
+		if json.Unmarshal(snapManifestBytes, &smManifest) == nil && smManifest.ReleasePublicKeyHex != "" {
+			releasePubKey = smManifest.ReleasePublicKeyHex
+		}
+	} else if eu != nil {
 		if m, err := eu.LoadManifest(); err == nil && m.ReleasePublicKeyHex != "" {
 			releasePubKey = m.ReleasePublicKeyHex
 		}
