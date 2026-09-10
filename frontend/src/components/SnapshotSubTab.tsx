@@ -42,11 +42,23 @@ export const loadSnapshotPreferences = (fallbackDataPath?: string): SnapshotPref
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return {
+      // Auto-migrate legacy deprecated IP URL to official Hugging Face URL
+      let remoteUrl = parsed.defaultRemoteUrl;
+      let needsSave = false;
+      if (!remoteUrl || remoteUrl.includes('207.180.195.181')) {
+        remoteUrl = DEFAULT_SNAPSHOT_PREFS.defaultRemoteUrl;
+        needsSave = true;
+      }
+      const merged: SnapshotPreferences = {
         ...DEFAULT_SNAPSHOT_PREFS,
         ...parsed,
+        defaultRemoteUrl: remoteUrl,
         defaultDataPath: parsed.defaultDataPath || fallbackDataPath || DEFAULT_SNAPSHOT_PREFS.defaultDataPath,
       };
+      if (needsSave) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      }
+      return merged;
     }
   } catch (e) {
     console.error('Failed to load snapshot preferences from storage:', e);

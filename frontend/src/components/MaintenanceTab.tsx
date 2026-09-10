@@ -38,7 +38,7 @@ import {
 import { DirectoryDropdown } from './DirectoryDropdown';
 import { ConfirmDestructiveModal } from './ConfirmDestructiveModal';
 import { SyncConfigsModal } from './SyncConfigsModal';
-import { loadSnapshotPreferences, SnapshotPreferences } from './SnapshotSubTab';
+import { loadSnapshotPreferences, SnapshotPreferences, DEFAULT_SNAPSHOT_PREFS } from './SnapshotSubTab';
 
 interface MaintenanceTabProps {
   onOpenSettings?: (subtab?: string) => void;
@@ -79,7 +79,12 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
   const [cancellingBackup, setCancellingBackup] = useState(false);
 
   // Remote Sync Card State
-  const [remoteSyncUrl, setRemoteSyncUrl] = useState(() => prefs.defaultRemoteUrl);
+  const [remoteSyncUrl, setRemoteSyncUrl] = useState(() => {
+    if (!prefs.defaultRemoteUrl || prefs.defaultRemoteUrl.includes('207.180.195.181')) {
+      return DEFAULT_SNAPSHOT_PREFS.defaultRemoteUrl;
+    }
+    return prefs.defaultRemoteUrl;
+  });
   const [remoteSyncTarget, setRemoteSyncTarget] = useState(() => prefs.defaultDataPath);
   const [remoteSnapshotStatus, setRemoteSnapshotStatus] = useState<SnapshotStatus | null>(null);
   const [remoteManagerStatus, setRemoteManagerStatus] = useState<SnapshotManagerStatus | null>(null);
@@ -106,7 +111,12 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
         if (!current.backupFormat) {
           setBackupFormat(newPrefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst');
         }
-        if (!current.remoteSyncUrl) setRemoteSyncUrl(newPrefs.defaultRemoteUrl);
+        if (!current.remoteSyncUrl) {
+          const nextUrl = !newPrefs.defaultRemoteUrl || newPrefs.defaultRemoteUrl.includes('207.180.195.181')
+            ? DEFAULT_SNAPSHOT_PREFS.defaultRemoteUrl
+            : newPrefs.defaultRemoteUrl;
+          setRemoteSyncUrl(nextUrl);
+        }
         if (!current.remoteSyncTarget) setRemoteSyncTarget(newPrefs.defaultDataPath);
         if (!current.localRestoreTarget) setLocalRestoreTarget(newPrefs.defaultDataPath);
         return current;
@@ -208,7 +218,11 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
         setBackupFormat(prefs.defaultCompressionFormat === 'tar.gz' ? 'gz' : 'zst');
         break;
       case 'remoteSyncUrl':
-        setRemoteSyncUrl(prefs.defaultRemoteUrl);
+        setRemoteSyncUrl(
+          !prefs.defaultRemoteUrl || prefs.defaultRemoteUrl.includes('207.180.195.181')
+            ? DEFAULT_SNAPSHOT_PREFS.defaultRemoteUrl
+            : prefs.defaultRemoteUrl
+        );
         break;
       case 'remoteSyncTarget':
         setRemoteSyncTarget(prefs.defaultDataPath);
