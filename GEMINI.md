@@ -13,7 +13,7 @@ always_on: true
 - Ensure private keys are only stored securely in `chainconfig/resources/config-harvesting.properties` and `config-user.properties`.
 
 ## 2. Fast-Sync & Storage Optimization
-- Use direct streaming decompression (`tar -xJf -`) from `http://207.180.195.181/snapshot.tar.xz` without intermediate tar file saving to eliminate disk overhead.
+- Use direct streaming decompression from `https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst` without intermediate tar file saving to eliminate disk overhead.
 - Enforce Docker log rotation (`--log-opt max-size=250m --log-opt max-file=3`) and Sirius log caps (`rotationSize=25MB`, `maxTotalSize=250MB`).
 - Maintain `.dockerignore` ignoring `chainconfig/data/` and `chainconfig/logs/` so Docker builds remain sub-10 seconds.
 - Automatically clear `data/server.lock` on restart/recovery.

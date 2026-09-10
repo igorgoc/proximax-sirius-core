@@ -3,7 +3,7 @@ set -e
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 DATA_DIR="$DIR/chainconfig/data"
-SNAPSHOT_URL="${1:-http://207.180.195.181/snapshot.tar.xz}"
+SNAPSHOT_URL="${1:-https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst}"
 
 echo "================================================================="
 echo "  ProximaX Sirius Core - Native Host Fast Sync Stream"
@@ -20,9 +20,11 @@ cd "$DIR" && docker compose stop sirius-core || true
 echo "[2/4] Removing stale server.lock..."
 rm -f "$DATA_DIR/server.lock"
 
-echo "[3/4] Streaming and decompressing snapshot directly to macOS disk..."
+echo "[3/4] Streaming and decompressing snapshot directly to disk..."
 echo "      (Zero intermediate archive storage)"
-if command -v curl &> /dev/null; then
+if [[ "$SNAPSHOT_URL" == *".zst"* ]] && command -v zstd &> /dev/null; then
+    curl -L --progress-bar "$SNAPSHOT_URL" | zstd -d -c | tar -xf - -C "$DIR/chainconfig" -m -b 2048
+elif command -v curl &> /dev/null; then
     curl -L --progress-bar "$SNAPSHOT_URL" | tar -xf - -C "$DIR/chainconfig" -m -b 2048
 elif command -v wget &> /dev/null; then
     wget -qO- "$SNAPSHOT_URL" | tar -xf - -C "$DIR/chainconfig" -m -b 2048

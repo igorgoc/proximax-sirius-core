@@ -29,7 +29,7 @@ import (
 const (
 	DefaultContainerName = "sirius-native-peer"
 	DefaultImageName     = "Native Sirius Core v1.9.8"
-	DefaultSnapshotUrl   = "http://207.180.195.181/snapshot.tar.xz"
+	DefaultSnapshotUrl   = "https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst"
 
 	Nemesis00001Url = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/00001.dat"
 	NemesisHashesUrl = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/hashes.dat"
@@ -1287,6 +1287,19 @@ func (dc *ProcessSupervisor) CancelSnapshot() error {
 	return nil
 }
 
+type snapshotCountingReader struct {
+	r      io.Reader
+	onRead func(n int)
+}
+
+func (c *snapshotCountingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 && c.onRead != nil {
+		c.onRead(n)
+	}
+	return n, err
+}
+
 func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath string) error {
 	if snapshotUrl == "" {
 		snapshotUrl = DefaultSnapshotUrl
@@ -1303,7 +1316,13 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 		strings.HasSuffix(host, ".xpxsirius.io") ||
 		strings.HasSuffix(host, ".proximax.io") ||
 		host == "xpxsirius.io" ||
-		host == "proximax.io"
+		host == "proximax.io" ||
+		host == "huggingface.co" ||
+		strings.HasSuffix(host, ".huggingface.co") ||
+		host == "hf.co" ||
+		strings.HasSuffix(host, ".hf.co") ||
+		strings.HasSuffix(host, ".cloudfront.net") ||
+		strings.HasSuffix(host, ".amazonaws.com")
 
 	if !allowed {
 		return fmt.Errorf("unauthorized snapshot download host: %s", host)
@@ -1360,7 +1379,17 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 		dc.snapshotStatus.Message = "Streaming and decompressing snapshot directly into data directory..."
 		dc.snapshotMu.Unlock()
 
-		tarCmd := exec.CommandContext(ctx, "tar", "-xJf", "-", "-C", targetDir)
+		lowerUrl := strings.ToLower(snapshotUrl)
+		isZstd := strings.Contains(lowerUrl, ".tar.zst") || strings.Contains(lowerUrl, ".zst")
+		isGz := strings.Contains(lowerUrl, ".tar.gz") || strings.Contains(lowerUrl, ".tgz")
+
+		var tarCmd *exec.Cmd
+		if isZstd || isGz {
+			tarCmd = exec.CommandContext(ctx, "tar", "-xf", "-", "-C", targetDir)
+		} else {
+			tarCmd = exec.CommandContext(ctx, "tar", "-xJf", "-", "-C", targetDir)
+		}
+
 		stdinPipe, err := tarCmd.StdinPipe()
 		if err != nil {
 			dc.setSnapshotError(fmt.Sprintf("Failed to open tar stdin: %v", err))
@@ -1372,30 +1401,15 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 			return
 		}
 
-		buf := make([]byte, 512*1024)
 		var downloaded int64
 		startTime := time.Now()
 		lastUpdate := time.Now()
 
-		for {
-			select {
-			case <-ctx.Done():
-				_ = stdinPipe.Close()
-				_ = tarCmd.Process.Kill()
-				dc.setSnapshotCancelled()
-				return
-			default:
-			}
-
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, writeErr := stdinPipe.Write(buf[:n]); writeErr != nil {
-					dc.setSnapshotError(fmt.Sprintf("Extraction write error: %v", writeErr))
-					return
-				}
+		countingBody := &snapshotCountingReader{
+			r: resp.Body,
+			onRead: func(n int) {
 				downloaded += int64(n)
-
-				if time.Since(lastUpdate) >= 500*time.Millisecond {
+				if time.Since(lastUpdate) >= 300*time.Millisecond {
 					lastUpdate = time.Now()
 					elapsed := time.Since(startTime).Seconds()
 					speed := float64(downloaded) / (1024 * 1024 * elapsed)
@@ -1416,6 +1430,51 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 					dc.snapshotStatus.Download.ETASeconds = eta
 					dc.snapshotStatus.Message = fmt.Sprintf("Streaming: %.1f%% (%s) at %.1f MB/s", percentage, formatBytes(downloaded), speed)
 					dc.snapshotMu.Unlock()
+				}
+			},
+		}
+
+		var compReader io.Reader = countingBody
+		var closeComp func() error
+
+		if isZstd {
+			zDecoder, errZ := zstd.NewReader(countingBody, zstd.WithDecoderConcurrency(0))
+			if errZ != nil {
+				dc.setSnapshotError(fmt.Sprintf("Failed to initialize Zstandard decoder: %v", errZ))
+				return
+			}
+			compReader = zDecoder
+			closeComp = func() error { zDecoder.Close(); return nil }
+		} else if isGz {
+			gzDecoder, errG := gzip.NewReader(countingBody)
+			if errG != nil {
+				dc.setSnapshotError(fmt.Sprintf("Failed to initialize Gzip decoder: %v", errG))
+				return
+			}
+			compReader = gzDecoder
+			closeComp = gzDecoder.Close
+		}
+
+		if closeComp != nil {
+			defer closeComp()
+		}
+
+		buf := make([]byte, 512*1024)
+		for {
+			select {
+			case <-ctx.Done():
+				_ = stdinPipe.Close()
+				_ = tarCmd.Process.Kill()
+				dc.setSnapshotCancelled()
+				return
+			default:
+			}
+
+			n, readErr := compReader.Read(buf)
+			if n > 0 {
+				if _, writeErr := stdinPipe.Write(buf[:n]); writeErr != nil {
+					dc.setSnapshotError(fmt.Sprintf("Extraction write error: %v", writeErr))
+					return
 				}
 			}
 
