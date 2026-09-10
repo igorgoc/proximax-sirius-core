@@ -445,7 +445,6 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             manifestUrl: url,
-            releasePublicKeyHex: prefs.releasePubKey.trim(),
             targetDataPath: remoteSyncTarget.trim(),
           }),
         });
@@ -1268,34 +1267,24 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                     />
                   </div>
 
-                  {/* Read-only verification pubkey row with link to Settings */}
+                  {/* Cryptographic Authenticity Invariant */}
                   <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px]">
                     <div className="flex items-center space-x-2.5 min-w-0">
-                      <div className="w-6 h-6 rounded bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-slate-300 flex-shrink-0">
-                        <Key className="w-3.5 h-3.5" />
+                      <div className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                        <ShieldCheck className="w-3.5 h-3.5" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center space-x-1.5 text-slate-400 text-[10.5px]">
-                          <span>Release Verification Key (Ed25519)</span>
-                          <span className="px-1.5 py-0.2 rounded text-[9.5px] font-mono text-zinc-400 bg-zinc-800/80 border border-zinc-700">
-                            from Settings
-                          </span>
+                          <span>Authenticity Verification</span>
                         </div>
-                        <div className="font-mono text-slate-200 truncate max-w-[200px] sm:max-w-[260px] text-xs">
-                          {prefs.releasePubKey
-                            ? `${prefs.releasePubKey.slice(0, 14)}...${prefs.releasePubKey.slice(-14)}`
-                            : 'Not configured'}
+                        <div className="text-slate-200 text-xs truncate">
+                          Verified via official Ed25519 signature & SHA-256 before unpack
                         </div>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={navigateToSettingsSnapshots}
-                      className="text-[11px] font-mono text-zinc-400 hover:text-white underline underline-offset-2 flex-shrink-0 ml-2 transition-colors"
-                      title="Open Settings → Snapshots to update verification key"
-                    >
-                      edit in Settings →
-                    </button>
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 flex-shrink-0 ml-2">
+                      Fail-Closed
+                    </span>
                   </div>
 
                   {/* Target Disk Space Readout */}
