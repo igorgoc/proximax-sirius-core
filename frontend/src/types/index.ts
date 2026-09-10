@@ -246,6 +246,8 @@ export interface EngineUpdateStatus {
   message?: string;
   lastChecked?: string;
   rollbackOccurred?: boolean;
+  isInstalled?: boolean;
+  isInitialSetup?: boolean;
 }
 
 export interface SeedPingInfo {

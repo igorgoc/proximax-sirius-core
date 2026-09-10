@@ -4,6 +4,7 @@ import {
   ShieldCheck, 
   AlertTriangle, 
   ArrowUpCircle, 
+  DownloadCloud,
   RefreshCw, 
   CheckCircle2, 
   HardDrive, 
@@ -68,7 +69,8 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
 
   if (!isOpen) return null;
 
-  const currentVer = localStatus?.currentVersion || 'v1.9.7';
+  const isInitial = localStatus?.isInstalled === false || localStatus?.isInitialSetup;
+  const currentVer = isInitial ? 'Not Installed' : (localStatus?.currentVersion || 'v1.9.7');
   const targetVer = localStatus?.targetVersion || 'v1.9.8';
   const isApplying = localStatus?.isApplying || false;
   const state = localStatus?.state || 'idle';
@@ -109,7 +111,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
 
   // Step progress calculation
   const getStepStatus = (stepIndex: number) => {
-    // Step 0: Verification, Step 1: Swap, Step 2: Healthcheck
+    // Step 0: Verification, Step 1: Swap/Install, Step 2: Healthcheck/Probe
     if (isCompleted) return 'completed';
     if (isRolledBack) {
       if (stepIndex <= 1) return 'completed';
@@ -144,17 +146,21 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
         <div className="px-6 py-4 border-b border-zinc-800 bg-zinc-900/90 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center">
-              <ArrowUpCircle className="w-5 h-5 text-indigo-400" />
+              {isInitial ? <DownloadCloud className="w-5 h-5 text-indigo-400" /> : <ArrowUpCircle className="w-5 h-5 text-indigo-400" />}
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-base font-semibold text-zinc-100">Sirius Core Engine Updater</h3>
+                <h3 className="text-base font-semibold text-zinc-100">
+                  {isInitial ? 'Sirius Engine Initial Setup' : 'Sirius Core Engine Updater'}
+                </h3>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">
                   cpp-xpx-chain
                 </span>
               </div>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Atomic, signed, zero-downtime C++ blockchain engine updates with automated rollback
+                {isInitial 
+                  ? 'Cryptographically verified download and installation of native Sirius consensus engine' 
+                  : 'Atomic, signed, zero-downtime C++ blockchain engine updates with automated rollback'}
               </p>
             </div>
           </div>
@@ -174,12 +180,16 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
           <div className="grid grid-cols-2 gap-4 bg-zinc-800/40 p-4 rounded-lg border border-zinc-800">
             <div>
               <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider block mb-1">
-                Active Node Version
+                Active Node Engine
               </span>
               <div className="flex items-center space-x-2">
-                <span className="font-mono text-lg font-bold text-zinc-200">{currentVer}</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-zinc-700/50 text-zinc-300 border border-zinc-600/50">
-                  Installed
+                <span className={`font-mono text-lg font-bold ${isInitial ? 'text-zinc-500 italic' : 'text-zinc-200'}`}>{currentVer}</span>
+                <span className={`text-xs px-2 py-0.5 rounded border ${
+                  isInitial 
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' 
+                    : 'bg-zinc-700/50 text-zinc-300 border-zinc-600/50'
+                }`}>
+                  {isInitial ? 'Setup Required' : 'Installed'}
                 </span>
               </div>
             </div>
@@ -257,7 +267,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                   </div>
                 </div>
 
-                {/* Step 2: Atomic Swap */}
+                {/* Step 2: Atomic Swap / Install */}
                 <div className={`p-3.5 rounded-lg border transition-all flex items-start space-x-3.5 ${
                   getStepStatus(1) === 'active' 
                     ? 'bg-indigo-950/30 border-indigo-500/50 text-indigo-200' 
@@ -275,18 +285,20 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                   </div>
                   <div className="flex-1">
                     <div className="text-xs font-semibold flex items-center justify-between">
-                      <span>2. Atomic Binary Swap & Fallback Preservation</span>
+                      <span>{isInitial ? '2. Atomic Binary Download & Installation' : '2. Atomic Binary Swap & Fallback Preservation'}</span>
                       <span className="text-[10px] font-mono uppercase opacity-75">
                         {getStepStatus(1)}
                       </span>
                     </div>
                     <p className="text-[11px] opacity-80 mt-0.5">
-                      Stops active node gracefully, creates <code className="text-zinc-300">sirius.bc.bak</code> backup, and renames verified binary atomically.
+                      {isInitial 
+                        ? 'Extracts verified executable and runtime components to the node bin directory.'
+                        : <>Stops active node gracefully, creates <code className="text-zinc-300">sirius.bc.bak</code> backup, and renames verified binary atomically.</>}
                     </p>
                   </div>
                 </div>
 
-                {/* Step 3: Healthcheck */}
+                {/* Step 3: Healthcheck / Probe */}
                 <div className={`p-3.5 rounded-lg border transition-all flex items-start space-x-3.5 ${
                   getStepStatus(2) === 'active' 
                     ? 'bg-indigo-950/30 border-indigo-500/50 text-indigo-200' 
@@ -304,13 +316,15 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                   </div>
                   <div className="flex-1">
                     <div className="text-xs font-semibold flex items-center justify-between">
-                      <span>3. Post-Update Operational Healthcheck Probe</span>
+                      <span>{isInitial ? '3. Engine Execution & Dynamic Link Verification' : '3. Post-Update Operational Healthcheck Probe'}</span>
                       <span className="text-[10px] font-mono uppercase opacity-75">
                         {getStepStatus(2)}
                       </span>
                     </div>
                     <p className="text-[11px] opacity-80 mt-0.5">
-                      Starts new binary and verifies heartbeat & block height progression. Triggers instant auto-rollback on failure.
+                      {isInitial 
+                        ? 'Verifies engine executable runs correctly and validates shared library dependencies (RocksDB, Boost, OpenSSL).'
+                        : 'Starts new binary and verifies heartbeat & block height progression. Triggers instant auto-rollback on failure.'}
                     </p>
                   </div>
                 </div>
@@ -333,9 +347,9 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                       {isRolledBack 
                         ? 'Automated Rollback Executed' 
                         : isCompleted 
-                        ? 'Engine Operational' 
+                        ? (isInitial ? 'Engine Setup Complete' : 'Engine Operational') 
                         : isFailed
-                        ? 'Verification Error'
+                        ? (isInitial ? 'Setup Failed (Network or Verification Error)' : 'Verification Error')
                         : 'Supervisor Log'}
                     </span>
                   </div>
@@ -438,7 +452,15 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
         {/* Modal Footer */}
         <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/90 flex items-center justify-between">
           <div className="text-xs text-zinc-500">
-            {isApplying ? 'Applying update...' : isRolledBack ? 'Rollback completed' : 'Safe to proceed'}
+            {isApplying 
+              ? (isInitial ? 'Setting up engine...' : 'Applying update...') 
+              : isRolledBack 
+              ? 'Rollback completed' 
+              : isFailed 
+              ? (isInitial ? 'Setup failed — check connection' : 'Update failed')
+              : isCompleted 
+              ? (isInitial ? 'Engine ready for node launch' : 'Engine ready') 
+              : 'Safe to proceed'}
           </div>
 
           <div className="flex items-center space-x-3">
@@ -447,10 +469,21 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
               disabled={isApplying}
               className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors disabled:opacity-40"
             >
-              {isCompleted || isRolledBack ? 'Close' : 'Cancel'}
+              {isCompleted || isRolledBack ? (isInitial ? 'Enter Cockpit' : 'Close') : 'Cancel'}
             </button>
 
-            {!isCompleted && !isRolledBack && (
+            {isFailed && (
+              <button
+                onClick={() => handleApply('normal')}
+                disabled={isApplying}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all flex items-center space-x-2 disabled:opacity-40"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry Setup</span>
+              </button>
+            )}
+
+            {!isCompleted && !isRolledBack && !isFailed && (
               <button
                 onClick={() => handleApply('normal')}
                 disabled={isApplying}
@@ -459,12 +492,12 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                 {isApplying ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Applying Engine Update...</span>
+                    <span>{isInitial ? 'Setting Up Sirius Engine...' : 'Applying Engine Update...'}</span>
                   </>
                 ) : (
                   <>
-                    <ArrowUpCircle className="w-3.5 h-3.5" />
-                    <span>Apply Engine Update ({targetVer})</span>
+                    {isInitial ? <DownloadCloud className="w-3.5 h-3.5" /> : <ArrowUpCircle className="w-3.5 h-3.5" />}
+                    <span>{isInitial ? `Install Sirius Engine (${targetVer})` : `Apply Engine Update (${targetVer})`}</span>
                   </>
                 )}
               </button>

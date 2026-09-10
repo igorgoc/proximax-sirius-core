@@ -80,7 +80,19 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	manifestPath := filepath.Join(filepath.Dir(configMgr.GetResourcesPath()), "engine.compat.json")
 	eu := updater.NewEngineUpdater(supervisor.GetBinPath(), manifestPath, supervisor, nil)
 	go func() {
-		_, _ = eu.CheckUpdate("")
+		if !eu.IsEngineInstalled() {
+			log.Printf("[Sirius Engine] No native engine binary detected in %s. Initiating automatic initial engine setup...", supervisor.GetBinPath())
+			targetVer := eu.GetStatus().TargetVersion
+			if targetVer == "" || targetVer == "none" {
+				targetVer = "v1.9.8"
+			}
+			dataPath := configMgr.GetDataPath()
+			if err := eu.DownloadAndApplyUpdate(targetVer, dataPath); err != nil {
+				log.Printf("[Sirius Engine] Initial engine setup failed: %v", err)
+			}
+		} else {
+			_, _ = eu.CheckUpdate("")
+		}
 		ticker := time.NewTicker(30 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {

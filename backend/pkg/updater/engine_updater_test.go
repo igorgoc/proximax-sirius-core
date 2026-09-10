@@ -435,3 +435,103 @@ func TestZipArchiveExtraction_Direct(t *testing.T) {
 	}
 }
 
+func TestEngineUpdater_InitialSetup_WhenNoBinary(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sirius-init-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	binDir := filepath.Join(tempDir, "bin")
+	_ = os.MkdirAll(binDir, 0755)
+
+	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed generating ed25519 key: %v", err)
+	}
+	pubKeyHex := hex.EncodeToString(pubKey)
+
+	manifestPath := filepath.Join(tempDir, "engine.compat.json")
+	manifest := CompatibilityManifest{
+		EngineRepository:    "proximax-test/cpp-xpx-chain",
+		EngineMinCompatible: "v1.9.0",
+		EngineMaxCompatible: "v1.9.99",
+		RecommendedVersion:  "v1.9.8",
+		ReleasePublicKeyHex: pubKeyHex,
+	}
+	mData, _ := json.Marshal(manifest)
+	_ = os.WriteFile(manifestPath, mData, 0644)
+
+	mockController := &MockLifecycleController{}
+	updater := NewEngineUpdater(binDir, manifestPath, mockController, func(action, details string) {
+		t.Logf("[%s] %s", action, details)
+	})
+
+	// Initial check: binary is missing
+	if updater.IsEngineInstalled() {
+		t.Fatalf("expected IsEngineInstalled() to be false when binDir is empty")
+	}
+	status := updater.GetStatus()
+	if status.IsInstalled {
+		t.Fatalf("expected status.IsInstalled to be false")
+	}
+	if !status.IsInitialSetup {
+		t.Fatalf("expected status.IsInitialSetup to be true")
+	}
+	if !status.HasUpdate {
+		t.Fatalf("expected status.HasUpdate to be true")
+	}
+	if status.CurrentVersion != "none" {
+		t.Fatalf("expected currentVersion to be 'none', got %s", status.CurrentVersion)
+	}
+
+	// Prepare package
+	assetName, binaryName := PlatformAssetDescriptor()
+	dummyBinContent := []byte("VALID_NEW_ENGINE_BINARY_INITIAL_SETUP")
+	pkgBytes := createPlatformPackage(t, binaryName, dummyBinContent)
+
+	pkgHash := sha256.Sum256(pkgBytes)
+	pkgHashHex := hex.EncodeToString(pkgHash[:])
+	checksumsContent := fmt.Sprintf("%s  %s\n", pkgHashHex, assetName)
+	sig := ed25519.Sign(privKey, []byte(checksumsContent))
+
+	probeCalled := false
+	healthcheckFn := func() error {
+		probeCalled = true
+		return nil
+	}
+
+	err = updater.ApplyUpdate(
+		"v1.9.8",
+		bytes.NewReader(pkgBytes),
+		[]byte(checksumsContent),
+		sig,
+		tempDir,
+		healthcheckFn,
+	)
+	if err != nil {
+		t.Fatalf("ApplyUpdate failed during initial setup: %v", err)
+	}
+
+	if !probeCalled {
+		t.Fatalf("expected healthcheckFn to be called during initial setup")
+	}
+
+	if !updater.IsEngineInstalled() {
+		t.Fatalf("expected IsEngineInstalled() to be true after successful initial setup")
+	}
+	finalStatus := updater.GetStatus()
+	if !finalStatus.IsInstalled {
+		t.Fatalf("expected finalStatus.IsInstalled to be true")
+	}
+	if finalStatus.IsInitialSetup {
+		t.Fatalf("expected finalStatus.IsInitialSetup to be false")
+	}
+	if finalStatus.HasUpdate {
+		t.Fatalf("expected finalStatus.HasUpdate to be false")
+	}
+	if finalStatus.CurrentVersion != "v1.9.8" {
+		t.Fatalf("expected finalStatus.CurrentVersion to be v1.9.8, got %s", finalStatus.CurrentVersion)
+	}
+}
+

@@ -9,9 +9,10 @@ import {
   AlertTriangle,
   Play,
   ExternalLink,
-  Users
+  Users,
+  DownloadCloud
 } from 'lucide-react';
-import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats } from '../types';
+import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats, EngineUpdateStatus } from '../types';
 import { getExplorerBlockUrl, getExplorerAddressUrl } from '../utils/explorer';
 import { formatNumber } from '../utils/format';
 import { formatToLocalTime, formatRelativeTime } from '../utils/date';
@@ -26,6 +27,7 @@ interface OverviewTabProps {
   storageStatus?: StorageStatus | null;
   portCheck?: PortCheckResult | null;
   updateInfo?: any;
+  engineStatus?: EngineUpdateStatus | null;
   autoRecovery?: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -42,6 +44,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   config,
   harvestStats,
   networkValidatorStats,
+  engineStatus,
   onStart,
   setActiveTab,
   loading,
@@ -88,6 +91,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const totalBlocks = harvestStats?.totalBlocksValidated ?? (harvestStats?.validatedBlocks?.length || 0);
   const recentBlocks = harvestStats?.validatedBlocks || [];
 
+  const isEngineMissing = engineStatus?.isInstalled === false || engineStatus?.isInitialSetup;
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto px-4 py-6 select-none">
       
@@ -113,6 +118,35 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
       )}
 
+      {/* 0.5. Engine Not Installed Setup Card */}
+      {isEngineMissing && (
+        <div className="bg-gradient-to-r from-blue-950/70 via-indigo-950/60 to-[#181B20] border border-indigo-500/50 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fadeIn shadow-lg shadow-indigo-950/30">
+          <div className="flex items-center space-x-3.5">
+            <div className="w-10 h-10 rounded-lg bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center flex-shrink-0 animate-pulse">
+              <DownloadCloud className="w-5 h-5 text-indigo-300" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-sm font-semibold text-indigo-100">Sirius Engine Setup Required</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">
+                  {engineStatus?.targetVersion || 'v1.9.8'}
+                </span>
+              </div>
+              <p className="text-xs text-indigo-200/80 mt-0.5">
+                The native Sirius Engine binary is not yet installed. Download and cryptographically verify the matching engine package to run your node.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('open-engine-updater'))}
+            className="flex items-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-semibold shadow-md shadow-indigo-600/30 transition-all flex-shrink-0"
+          >
+            <DownloadCloud className="w-4 h-4" />
+            <span>{engineStatus?.isApplying ? 'View Setup Progress...' : 'Setup Sirius Engine'}</span>
+          </button>
+        </div>
+      )}
+
       {/* 1. Offline Banner State (When Node is Stopped) */}
       {!isRunning && (
         <div className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 flex items-center justify-between">
@@ -127,7 +161,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
           <button
             onClick={onStart}
-            disabled={loading || isStarting}
+            disabled={loading || isStarting || isEngineMissing}
+            title={isEngineMissing ? 'Sirius Engine binary required' : undefined}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors"
           >
             <Play className="w-3.5 h-3.5 fill-current" />

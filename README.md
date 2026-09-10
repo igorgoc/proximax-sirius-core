@@ -59,11 +59,13 @@ In your terminal, navigate to the repository directory and run:
 3. Compile and launch the native manager daemon on port **3080**.
 4. Perform readiness healthchecks and open the dashboard.
 
-### 2. Access the Dashboard
+### 2. Access the Dashboard & Automatic Engine Setup
 Open your browser at:
 👉 **[http://localhost:3080](http://localhost:3080)**
 
-On first launch, the **Setup Wizard** will guide you through:
+> **Automatic Initial Setup:** Download the Node Manager for your platform; it will automatically fetch and verify the matching Sirius Engine on first launch (requires internet access once). The application cryptographically validates the release manifest via Ed25519 signatures and SHA-256 integrity checks before extracting the native engine binary.
+
+On first launch, the **Setup Wizard** will also guide you through:
 - Node network identity and friendly name.
 - Storage path configuration (internal or external SSD).
 - High-speed snapshot synchronization.

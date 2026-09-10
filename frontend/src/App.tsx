@@ -90,11 +90,42 @@ export function App() {
         rollbackOccurred: false,
       };
     }
+    if (testView === 'initial_setup') {
+      return {
+        currentVersion: 'none',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        isInstalled: false,
+        isInitialSetup: true,
+        releaseNotes: 'Official Sirius Engine v1.9.8 release with native consensus performance and P2P fast-sync improvements.',
+        releaseUrl: 'https://github.com/igorgoc/cpp-xpx-chain/releases/tag/v1.9.8',
+        isApplying: true,
+        state: 'verifying',
+        message: 'Downloading Sirius Engine v1.9.8 (verified, signed)...',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'initial_setup_failed') {
+      return {
+        currentVersion: 'none',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        isInstalled: false,
+        isInitialSetup: true,
+        releaseNotes: 'Official Sirius Engine v1.9.8 release with native consensus performance and P2P fast-sync improvements.',
+        releaseUrl: 'https://github.com/igorgoc/cpp-xpx-chain/releases/tag/v1.9.8',
+        isApplying: false,
+        state: 'failed',
+        message: 'Internet connection required for initial engine setup: dial tcp: lookup api.github.com: no such host',
+        rollbackOccurred: false,
+      };
+    }
     if (testView === 'rollback') {
       return {
         currentVersion: 'v1.9.7',
         targetVersion: 'v1.9.8',
         hasUpdate: true,
+        isInstalled: true,
         releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
         isApplying: false,
         state: 'rolled_back',
@@ -106,7 +137,7 @@ export function App() {
   });
   const [engineModalOpen, setEngineModalOpen] = useState(() => {
     const testView = new URLSearchParams(window.location.search).get('test_view');
-    return testView === 'modal' || testView === 'progress' || testView === 'rollback';
+    return testView === 'modal' || testView === 'progress' || testView === 'rollback' || testView === 'initial_setup' || testView === 'initial_setup_failed';
   });
   const [autoRecovery, setAutoRecovery] = useState(true);
 
@@ -134,6 +165,11 @@ export function App() {
             if (testView) return prev;
             return data.engineStatus;
           });
+
+          // Auto open engine setup modal on first load if engine is not installed or currently applying
+          if ((!data.engineStatus.isInstalled || data.engineStatus.isApplying) && !sessionStorage.getItem('engine_setup_dismissed')) {
+            setEngineModalOpen(true);
+          }
         }
         if (typeof data.autoRecovery === 'boolean') setAutoRecovery(data.autoRecovery);
 
@@ -351,6 +387,7 @@ export function App() {
             storageStatus={storageStatus}
             portCheck={portCheck}
             updateInfo={updateInfo}
+            engineStatus={engineStatus}
             autoRecovery={autoRecovery}
             onStart={handleStartNode}
             onStop={handleStopNode}
@@ -447,7 +484,10 @@ export function App() {
       {/* Sirius Engine Update Modal */}
       <EngineUpdateModal
         isOpen={engineModalOpen}
-        onClose={() => setEngineModalOpen(false)}
+        onClose={() => {
+          setEngineModalOpen(false);
+          sessionStorage.setItem('engine_setup_dismissed', 'true');
+        }}
         engineStatus={engineStatus}
         onRefreshStatus={fetchStatus}
       />

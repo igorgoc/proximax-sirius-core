@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -42,6 +43,8 @@ type EngineUpdateStatus struct {
 	CurrentVersion   string    `json:"currentVersion"`
 	TargetVersion    string    `json:"targetVersion,omitempty"`
 	HasUpdate        bool      `json:"hasUpdate"`
+	IsInstalled      bool      `json:"isInstalled"`
+	IsInitialSetup   bool      `json:"isInitialSetup"`
 	ReleaseNotes     string    `json:"releaseNotes,omitempty"`
 	ReleaseUrl       string    `json:"releaseUrl,omitempty"`
 	IsApplying       bool      `json:"isApplying"`
@@ -73,12 +76,32 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 			log.Printf("[EngineUpdater] %s: %s", action, details)
 		}
 	}
+
+	_, binaryName := PlatformAssetDescriptor()
+	isInstalled := false
+	if fi, err := os.Stat(filepath.Join(binDir, binaryName)); err == nil && !fi.IsDir() {
+		isInstalled = true
+	}
+
 	currentVer := CurrentVersion
-	if verBytes, err := os.ReadFile(filepath.Join(binDir, "version.txt")); err == nil {
-		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
-			currentVer = trimmed
+	if isInstalled {
+		if verBytes, err := os.ReadFile(filepath.Join(binDir, "version.txt")); err == nil {
+			if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
+				currentVer = trimmed
+			}
+		}
+	} else {
+		currentVer = "none"
+	}
+
+	targetVer := "v1.9.8"
+	if manifestData, err := os.ReadFile(manifestPath); err == nil {
+		var m CompatibilityManifest
+		if json.Unmarshal(manifestData, &m) == nil && m.RecommendedVersion != "" {
+			targetVer = m.RecommendedVersion
 		}
 	}
+
 	return &EngineUpdater{
 		binDir:       binDir,
 		manifestPath: manifestPath,
@@ -89,9 +112,27 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 		},
 		status: EngineUpdateStatus{
 			CurrentVersion: currentVer,
+			TargetVersion:  targetVer,
 			State:          "idle",
+			IsInstalled:    isInstalled,
+			IsInitialSetup: !isInstalled,
+			HasUpdate:      !isInstalled,
 		},
 	}
+}
+
+// IsEngineInstalled returns true if the native engine executable is present in binDir
+func (u *EngineUpdater) IsEngineInstalled() bool {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.isEngineInstalledLocked()
+}
+
+func (u *EngineUpdater) isEngineInstalledLocked() bool {
+	_, binaryName := PlatformAssetDescriptor()
+	path := filepath.Join(u.binDir, binaryName)
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
 }
 
 func (u *EngineUpdater) GetStatus() EngineUpdateStatus {
@@ -99,6 +140,7 @@ func (u *EngineUpdater) GetStatus() EngineUpdateStatus {
 	defer u.mu.RUnlock()
 	return u.status
 }
+
 
 func (u *EngineUpdater) LoadManifest() (*CompatibilityManifest, error) {
 	data, err := os.ReadFile(u.manifestPath)
@@ -171,11 +213,25 @@ func VerifySignature(pubKeyHex string, message, sigBytes []byte) error {
 	if err != nil || len(pubKeyBytes) != ed25519.PublicKeySize {
 		return fmt.Errorf("invalid release public key format: %w", err)
 	}
-	if !ed25519.Verify(pubKeyBytes, message, sigBytes) {
+
+	sig := sigBytes
+	trimmedSig := strings.TrimSpace(string(sigBytes))
+	if len(trimmedSig) == ed25519.SignatureSize*2 {
+		if decoded, err := hex.DecodeString(trimmedSig); err == nil && len(decoded) == ed25519.SignatureSize {
+			sig = decoded
+		}
+	}
+
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("invalid signature length: got %d bytes, expected %d", len(sig), ed25519.SignatureSize)
+	}
+
+	if !ed25519.Verify(pubKeyBytes, message, sig) {
 		return ErrInvalidSignature
 	}
 	return nil
 }
+
 
 // ParseChecksums searches SHA256SUMS content for the hash belonging to targetFilename
 func ParseChecksums(checksumsData []byte, targetFilename string) (string, error) {
@@ -211,11 +267,18 @@ func (u *EngineUpdater) ApplyUpdate(
 		u.mu.Unlock()
 		return fmt.Errorf("update is already in progress")
 	}
+	wasInitial := !u.isEngineInstalledLocked()
 	u.status.IsApplying = true
+	u.status.IsInitialSetup = wasInitial
+	u.status.IsInstalled = !wasInitial
 	u.status.State = "verifying"
 	u.status.TargetVersion = version
 	u.status.RollbackOccurred = false
-	u.status.Message = "Verifying release authenticity and cryptographic integrity..."
+	if wasInitial {
+		u.status.Message = fmt.Sprintf("Verifying cryptographic signature and integrity for %s...", version)
+	} else {
+		u.status.Message = "Verifying release authenticity and cryptographic integrity..."
+	}
 	u.mu.Unlock()
 
 	defer func() {
@@ -387,15 +450,25 @@ func (u *EngineUpdater) ApplyUpdate(
 	}
 	u.auditLogger("CHECKSUM_VERIFIED", fmt.Sprintf("SHA-256 hash match: %s", actualHash))
 
-	// 5. Gracefully stop node before swapping binaries
-	u.mu.Lock()
-	u.status.State = "swapping"
-	u.status.Message = "Stopping node engine for atomic binary replacement..."
-	u.mu.Unlock()
-
-	if u.controller != nil {
+	// 5. Gracefully stop node before swapping binaries if running
+	wasRunning := false
+	if u.controller != nil && u.controller.IsRunning() {
+		wasRunning = true
+		u.mu.Lock()
+		u.status.State = "swapping"
+		u.status.Message = "Stopping node engine for atomic binary replacement..."
+		u.mu.Unlock()
 		_ = u.controller.StopNode()
 		time.Sleep(1 * time.Second)
+	} else {
+		u.mu.Lock()
+		u.status.State = "swapping"
+		if wasInitial {
+			u.status.Message = fmt.Sprintf("Extracting and installing Sirius Engine %s...", version)
+		} else {
+			u.status.Message = "Staging verified engine binary..."
+		}
+		u.mu.Unlock()
 	}
 
 	// 6. Create atomic backups of existing files and swap
@@ -437,13 +510,17 @@ func (u *EngineUpdater) ApplyUpdate(
 	// 7. Post-update startup and healthcheck probe
 	u.mu.Lock()
 	u.status.State = "healthcheck"
-	u.status.Message = "Starting updated engine and verifying operational healthcheck..."
+	if wasInitial {
+		u.status.Message = "Verifying engine binary execution and dynamic linker dependencies..."
+	} else {
+		u.status.Message = "Starting updated engine and verifying operational healthcheck..."
+	}
 	u.mu.Unlock()
 
 	var startupErr error
 	if healthcheckFn != nil {
 		startupErr = healthcheckFn()
-	} else if u.controller != nil {
+	} else if wasRunning && u.controller != nil {
 		if err := u.controller.StartNode(dataPath); err != nil {
 			startupErr = err
 		} else {
@@ -453,18 +530,33 @@ func (u *EngineUpdater) ApplyUpdate(
 				startupErr = errors.New("engine process exited unexpectedly after startup")
 			}
 		}
+	} else {
+		// Fresh install or node was stopped prior to update:
+		// Execute binary probe to verify binary format, architecture, and shared libraries load without crash
+		binaryPath := filepath.Join(u.binDir, binaryName)
+		cmd := exec.Command(binaryPath, "--version")
+		out, err := cmd.CombinedOutput()
+		if err != nil && !bytes.Contains(out, []byte("catapult version")) && !bytes.Contains(out, []byte("Copyright")) {
+			startupErr = fmt.Errorf("binary probe failed: %v (output: %s)", err, strings.TrimSpace(string(out)))
+		}
 	}
 
 	// 8. Auto-rollback if healthcheck fails
 	if startupErr != nil {
-		u.auditLogger("ROLLBACK_TRIGGERED", fmt.Sprintf("Healthcheck failed (%v). Reverting to backup binary", startupErr))
+		u.auditLogger("ROLLBACK_TRIGGERED", fmt.Sprintf("Healthcheck failed (%v). Reverting changes", startupErr))
 		u.mu.Lock()
 		u.status.State = "rolled_back"
 		u.status.RollbackOccurred = true
-		u.status.Message = fmt.Sprintf("Update failed healthcheck: %v. Reverted to previous version.", startupErr)
+		if wasInitial {
+			u.status.IsInstalled = false
+			u.status.IsInitialSetup = true
+			u.status.Message = fmt.Sprintf("Initial engine setup failed healthcheck: %v. Staged files cleared.", startupErr)
+		} else {
+			u.status.Message = fmt.Sprintf("Update failed healthcheck: %v. Reverted to previous version.", startupErr)
+		}
 		u.mu.Unlock()
 
-		// Stop failed instance
+		// Stop failed instance if it was started
 		if u.controller != nil {
 			_ = u.controller.StopNode()
 		}
@@ -476,8 +568,22 @@ func (u *EngineUpdater) ApplyUpdate(
 			_ = os.Rename(bakPath, targetPath)
 			_ = os.Chmod(targetPath, 0755)
 		}
-		// Restart with restored binary
-		if u.controller != nil {
+		// Clean up newly installed files that had no backup (e.g. on fresh install)
+		for _, entry := range stagedEntries {
+			name := entry.Name()
+			wasBackedUp := false
+			for _, b := range backedUpFiles {
+				if b == name {
+					wasBackedUp = true
+					break
+				}
+			}
+			if !wasBackedUp {
+				_ = os.Remove(filepath.Join(u.binDir, name))
+			}
+		}
+		// Restart with restored binary if it was running before
+		if wasRunning && u.controller != nil {
 			_ = u.controller.StartNode(dataPath)
 		}
 		return fmt.Errorf("%w: %v", ErrHealthcheckFailed, startupErr)
@@ -492,11 +598,17 @@ func (u *EngineUpdater) ApplyUpdate(
 	u.mu.Lock()
 	u.status.CurrentVersion = version
 	u.status.HasUpdate = false
+	u.status.IsInstalled = true
+	u.status.IsInitialSetup = false
 	u.status.State = "completed"
-	u.status.Message = fmt.Sprintf("Successfully updated engine to %s and verified live healthcheck.", version)
+	if wasInitial {
+		u.status.Message = fmt.Sprintf("Sirius Engine %s successfully installed and verified.", version)
+	} else {
+		u.status.Message = fmt.Sprintf("Successfully updated engine to %s and verified live healthcheck.", version)
+	}
 	u.mu.Unlock()
 
-	u.auditLogger("HEALTHCHECK_PASSED", fmt.Sprintf("Engine %s verified healthy. Update complete.", version))
+	u.auditLogger("HEALTHCHECK_PASSED", fmt.Sprintf("Engine %s verified healthy. Setup complete.", version))
 	return nil
 }
 
@@ -512,16 +624,33 @@ func (u *EngineUpdater) recordFailure(action string, err error) {
 func (u *EngineUpdater) ResetStatus() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	currentVer := CurrentVersion
-	if verBytes, err := os.ReadFile(filepath.Join(u.binDir, "version.txt")); err == nil {
-		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
-			currentVer = trimmed
+	isInstalled := u.isEngineInstalledLocked()
+	currentVer := "none"
+	targetVer := CurrentVersion
+
+	if isInstalled {
+		currentVer = CurrentVersion
+		if verBytes, err := os.ReadFile(filepath.Join(u.binDir, "version.txt")); err == nil {
+			if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
+				currentVer = trimmed
+			}
 		}
 	}
+
+	if manifestData, err := os.ReadFile(u.manifestPath); err == nil {
+		var m CompatibilityManifest
+		if json.Unmarshal(manifestData, &m) == nil && m.RecommendedVersion != "" {
+			targetVer = m.RecommendedVersion
+		}
+	}
+
 	u.status = EngineUpdateStatus{
 		CurrentVersion:   currentVer,
+		TargetVersion:    targetVer,
 		State:            "idle",
-		HasUpdate:        false,
+		HasUpdate:        !isInstalled,
+		IsInstalled:      isInstalled,
+		IsInitialSetup:   !isInstalled,
 		IsApplying:       false,
 		RollbackOccurred: false,
 	}
@@ -537,6 +666,17 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.status.LastChecked = time.Now()
+
+	isInstalled := u.isEngineInstalledLocked()
+	u.status.IsInstalled = isInstalled
+	u.status.IsInitialSetup = !isInstalled
+
+	if !isInstalled {
+		u.status.HasUpdate = true
+		if u.status.TargetVersion == "" || u.status.TargetVersion == "none" {
+			u.status.TargetVersion = manifest.RecommendedVersion
+		}
+	}
 
 	if simulateVersion != "" {
 		if !IsVersionCompatible(simulateVersion, manifest.EngineMinCompatible, manifest.EngineMaxCompatible) {
@@ -562,6 +702,10 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 
 	resp, err := u.client.Do(req)
 	if err != nil {
+		if !isInstalled {
+			u.status.State = "failed"
+			u.status.Message = fmt.Sprintf("Internet connection required for initial engine setup: %v", err)
+		}
 		return &u.status, err
 	}
 	defer resp.Body.Close()
@@ -576,13 +720,13 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 			cleanTag := strings.TrimPrefix(ghRelease.TagName, "release-")
 			cleanCurrent := strings.TrimPrefix(u.status.CurrentVersion, "release-")
 
-			isNewer := compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) > 0
+			isNewer := !isInstalled || compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) > 0
 			if !isNewer && cleanTag != cleanCurrent && (strings.Contains(cleanCurrent, "local") || (compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) == 0 && cleanTag != cleanCurrent)) {
 				isNewer = true
 			}
 			isCompat := IsVersionCompatible(cleanTag, manifest.EngineMinCompatible, manifest.EngineMaxCompatible)
 
-			if isNewer && isCompat {
+			if (isNewer || !isInstalled) && isCompat {
 				u.status.HasUpdate = true
 				u.status.TargetVersion = ghRelease.TagName
 				u.status.ReleaseNotes = ghRelease.Body
@@ -614,11 +758,18 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 		u.mu.Unlock()
 		return fmt.Errorf("update is already in progress")
 	}
+	isInitial := !u.isEngineInstalledLocked()
 	u.status.IsApplying = true
+	u.status.IsInitialSetup = isInitial
+	u.status.IsInstalled = !isInitial
 	u.status.State = "verifying"
 	u.status.TargetVersion = targetVersion
 	u.status.RollbackOccurred = false
-	u.status.Message = fmt.Sprintf("Fetching release %s metadata from GitHub...", targetVersion)
+	if isInitial {
+		u.status.Message = fmt.Sprintf("Downloading Sirius Engine %s (verified, signed)...", targetVersion)
+	} else {
+		u.status.Message = fmt.Sprintf("Fetching release %s metadata from GitHub...", targetVersion)
+	}
 	u.mu.Unlock()
 
 	defer func() {
@@ -641,7 +792,7 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 
 	resp, err := u.client.Do(req)
 	if err != nil {
-		u.recordFailure("Failed querying GitHub release", err)
+		u.recordFailure("Failed querying GitHub release (check internet connection)", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -660,7 +811,9 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 		} `json:"assets"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&releaseInfo); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&releaseInfo); err == nil {
+		// Decoded successfully
+	} else {
 		u.recordFailure("Failed decoding release json", err)
 		return err
 	}
@@ -691,7 +844,7 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 	// Download checksums
 	cResp, err := u.client.Get(checksumsUrl)
 	if err != nil {
-		u.recordFailure("Failed downloading checksums", err)
+		u.recordFailure("Failed downloading checksums (check internet connection)", err)
 		return err
 	}
 	defer cResp.Body.Close()
@@ -704,7 +857,7 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 	// Download sig
 	sResp, err := u.client.Get(sigUrl)
 	if err != nil {
-		u.recordFailure("Failed downloading signature", err)
+		u.recordFailure("Failed downloading signature (check internet connection)", err)
 		return err
 	}
 	defer sResp.Body.Close()
@@ -715,13 +868,17 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 	}
 
 	u.mu.Lock()
-	u.status.Message = fmt.Sprintf("Downloading and verifying engine package %s...", assetName)
+	if isInitial {
+		u.status.Message = fmt.Sprintf("Downloading and verifying engine package %s...", assetName)
+	} else {
+		u.status.Message = fmt.Sprintf("Downloading and verifying engine package %s...", assetName)
+	}
 	u.mu.Unlock()
 
 	// Download package
 	pkgResp, err := u.client.Get(assetUrl)
 	if err != nil {
-		u.recordFailure("Failed downloading engine package", err)
+		u.recordFailure("Failed downloading engine package (check internet connection)", err)
 		return err
 	}
 	defer pkgResp.Body.Close()
@@ -798,6 +955,8 @@ func (u *EngineUpdater) TriggerWorkflow(targetVersion, scenario, dataPath string
 		u.status.IsApplying = false
 		u.status.State = "completed"
 		u.status.HasUpdate = false
+		u.status.IsInstalled = true
+		u.status.IsInitialSetup = false
 		u.status.CurrentVersion = targetVersion
 		u.status.Message = fmt.Sprintf("Engine updated successfully to %s. All healthchecks verified.", targetVersion)
 		u.mu.Unlock()
