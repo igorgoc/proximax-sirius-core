@@ -5,10 +5,13 @@ import { SiriusLogo } from './SiriusLogo';
 interface AboutModalProps {
   isOpen: boolean;
   onClose: () => void;
+  version?: string;
 }
 
-export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
+export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose, version }) => {
   if (!isOpen) return null;
+
+  const displayVer = version ? version.replace(/^Native\s+Sirius\s+Core\s+/i, '') : '1.9.8';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 select-none animate-fadeIn">
@@ -28,7 +31,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <h3 className="font-semibold text-sm text-white">ProximaX Sirius Mainnet Peer Node</h3>
-              <p className="text-slate-400 text-[11px] font-mono">Version 1.9.7 (Native Catapult Core)</p>
+              <p className="text-slate-400 text-[11px] font-mono">Version {displayVer} (Native Catapult Core)</p>
             </div>
           </div>
 

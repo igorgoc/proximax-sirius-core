@@ -41,6 +41,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
     if (typeof window !== 'undefined' && window.location.hash === '#snapshots') {
       return 'snapshots';
     }
+    return 'general';
   });
 
   useEffect(() => {
@@ -48,6 +49,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
       const h = window.location.hash.replace('#', '');
       if (h === 'snapshots' || h === 'keys' || h === 'raw' || h === 'general') {
         setActiveSubTab(h as any);
+      } else if (!h) {
+        setActiveSubTab('general');
       }
     };
     window.addEventListener('hashchange', handleHash);

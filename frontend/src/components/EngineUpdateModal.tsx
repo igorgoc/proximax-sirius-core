@@ -70,7 +70,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
   if (!isOpen) return null;
 
   const isInitial = localStatus?.isInstalled === false || localStatus?.isInitialSetup;
-  const currentVer = isInitial ? 'Not Installed' : (localStatus?.currentVersion || 'v1.9.7');
+  const currentVer = isInitial ? 'Not Installed' : (localStatus?.currentVersion || 'v1.9.8');
   const targetVer = localStatus?.targetVersion || 'v1.9.8';
   const isApplying = localStatus?.isApplying || false;
   const state = localStatus?.state || 'idle';

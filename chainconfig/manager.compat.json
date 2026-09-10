@@ -1,6 +1,6 @@
 {
   "managerRepository": "igorgoc/proximax-sirius-core",
   "minCompatibleVersion": "v1.9.0",
-  "recommendedVersion": "v1.9.7",
+  "recommendedVersion": "v1.9.8",
   "releasePublicKeyHex": "e33e8d1519f34d79c11f6390f766c860596435cd5a38eae20d4f2781e88bf43c"
 }

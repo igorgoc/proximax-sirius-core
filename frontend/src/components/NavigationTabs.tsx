@@ -28,7 +28,12 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({ activeTab, setAc
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  if (tab.id === 'config' && window.location.hash) {
+                    window.location.hash = '';
+                  }
+                  setActiveTab(tab.id);
+                }}
                 className={`h-11 flex items-center space-x-2 px-3.5 text-xs font-medium border-b-2 -mb-px transition-all whitespace-nowrap ${
                   isActive
                     ? 'border-blue-500 text-white bg-[#181B20]/80'

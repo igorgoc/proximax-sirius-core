@@ -37,6 +37,7 @@ import {
 } from '../types';
 import { DirectoryDropdown } from './DirectoryDropdown';
 import { ConfirmDestructiveModal } from './ConfirmDestructiveModal';
+import { SyncConfigsModal } from './SyncConfigsModal';
 import { loadSnapshotPreferences, SnapshotPreferences } from './SnapshotSubTab';
 
 interface MaintenanceTabProps {
@@ -131,6 +132,14 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [checkFeedback, setCheckFeedback] = useState<{
+    message: string;
+    time: string;
+    isError: boolean;
+    repo?: string;
+    version?: string;
+  } | null>(null);
 
   // Clean Logs & Cache State
   const [cleaning, setCleaning] = useState(false);
@@ -552,9 +561,39 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
     try {
       const res = await fetch('/api/maintenance/update/check');
       const data = await res.json();
-      if (res.ok && data) setUpdateInfo(data);
-    } catch (e) {
-      // ignore
+      if (res.ok && data) {
+        setUpdateInfo(data);
+        const timeStr = new Date().toLocaleTimeString();
+        if (data.hasUpdate) {
+          setCheckFeedback({
+            message: `New release ${data.latestVersion} available upstream (current: ${data.currentVersion || 'v1.9.8'}).`,
+            time: timeStr,
+            isError: false,
+            repo: 'proximax-storage/cpp-xpx-chain',
+            version: data.latestVersion,
+          });
+        } else {
+          setCheckFeedback({
+            message: `Configurations and protocol are up to date with official upstream (${data.currentVersion || 'v1.9.8'}).`,
+            time: timeStr,
+            isError: false,
+            repo: 'proximax-storage/cpp-xpx-chain',
+            version: data.currentVersion || 'v1.9.8',
+          });
+        }
+      } else {
+        setCheckFeedback({
+          message: data?.error || 'Failed to check GitHub releases',
+          time: new Date().toLocaleTimeString(),
+          isError: true,
+        });
+      }
+    } catch (e: any) {
+      setCheckFeedback({
+        message: e?.message || 'Network error while querying GitHub API',
+        time: new Date().toLocaleTimeString(),
+        isError: true,
+      });
     } finally {
       setCheckingUpdate(false);
     }
@@ -811,7 +850,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
               </h1>
               {/* Status Badge: Gray (Info) */}
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
-                Native v1.9.7
+                Native {updateInfo?.currentVersion || 'v1.9.8'}
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -1466,7 +1505,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                   </div>
                   {/* 3-State Badge: Gray (Version) */}
                   <span className="text-[10px] font-mono bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded border border-zinc-700">
-                    {updateInfo?.currentVersion || 'v1.9.7'}
+                    {updateInfo?.currentVersion || 'v1.9.8'}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
@@ -1478,9 +1517,31 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                   <span className={updateInfo?.hasUpdate ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
                     {updateInfo?.hasUpdate
                       ? `Update ${updateInfo.latestVersion} Available`
-                      : `Up to Date (${updateInfo?.currentVersion || 'v1.9.7'})`}
+                      : `Up to Date (${updateInfo?.currentVersion || 'v1.9.8'})`}
                   </span>
                 </div>
+
+                {/* GitHub Check Feedback Notice */}
+                {checkFeedback && (
+                  <div className={`p-2.5 rounded-lg border text-[11px] leading-snug flex items-start space-x-2 animate-in fade-in duration-150 ${
+                    checkFeedback.isError
+                      ? 'bg-rose-950/30 border-rose-800/40 text-rose-300'
+                      : 'bg-emerald-950/30 border-emerald-800/40 text-emerald-300'
+                  }`}>
+                    {checkFeedback.isError ? (
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-rose-400" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-emerald-400" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold flex items-center justify-between">
+                        <span className="truncate">GitHub Checked ({checkFeedback.repo || 'Upstream'})</span>
+                        <span className="text-[10px] opacity-75 font-mono ml-2 shrink-0">{checkFeedback.time}</span>
+                      </div>
+                      <div className="mt-0.5 text-[10.5px] opacity-90">{checkFeedback.message}</div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-2 border-t border-[#262B34] flex items-center justify-between gap-2">
@@ -1503,12 +1564,11 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                 </button>
                 <button
                   type="button"
-                  onClick={handleApplyUpdate}
-                  disabled={applyingUpdate}
+                  onClick={() => setSyncModalOpen(true)}
                   className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-xs font-semibold shadow-xs transition-all flex items-center space-x-1"
                 >
                   <DownloadCloud className="w-3 h-3" />
-                  <span>{applyingUpdate ? 'Updating...' : 'Sync Configs'}</span>
+                  <span>Sync Configs</span>
                 </button>
               </div>
             </div>
@@ -1898,6 +1958,14 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
         expectedText={confirmModal.expectedText}
         confirmButtonText={confirmModal.confirmButtonText}
         inProgress={resetting || startingRemoteSync || startingLocalRestore}
+      />
+
+      {/* Official Network Configurations Sync Modal */}
+      <SyncConfigsModal
+        isOpen={syncModalOpen}
+        onClose={() => setSyncModalOpen(false)}
+        updateInfo={updateInfo}
+        onRefresh={fetchStatus}
       />
 
     </div>

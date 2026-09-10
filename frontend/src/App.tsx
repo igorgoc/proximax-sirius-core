@@ -471,6 +471,7 @@ export function App() {
       <AboutModal
         isOpen={aboutOpen}
         onClose={() => setAboutOpen(false)}
+        version={metrics?.image || engineStatus?.currentVersion || 'v1.9.8'}
       />
 
       {/* Modern Cyber-Operator Quit Confirm Modal */}

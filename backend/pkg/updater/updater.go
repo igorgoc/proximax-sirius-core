@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	CurrentVersion = "v1.9.7"
+	CurrentVersion = "v1.9.8"
 	GitHubRepo     = "proximax-storage/cpp-xpx-chain"
 	OfficialBase   = "https://raw.githubusercontent.com/proximax-storage/cpp-xpx-chain/master/resources"
 )
@@ -167,7 +167,11 @@ func (um *UpdateManager) ApplyOfficialUpdate(dataPath string) error {
 		"supported-entities.json",
 	}
 
-	for _, fileName := range filesToUpdate {
+	for i, fileName := range filesToUpdate {
+		um.mu.Lock()
+		um.lastInfo.UpdateMessage = fmt.Sprintf("Fetching & verifying %s (%d/%d)...", fileName, i+1, len(filesToUpdate))
+		um.mu.Unlock()
+
 		fileUrl := fmt.Sprintf("%s/%s", OfficialBase, fileName)
 		resp, err := um.httpClient.Get(fileUrl)
 		if err != nil || resp.StatusCode != http.StatusOK {
@@ -225,6 +229,10 @@ func (um *UpdateManager) ApplyOfficialUpdate(dataPath string) error {
 				_ = os.Remove(tmpPath)
 			}
 		}
+
+		um.mu.Lock()
+		um.lastInfo.UpdateMessage = fmt.Sprintf("Installed %s (SHA-256: %s...)", fileName, shaHex[:12])
+		um.mu.Unlock()
 	}
 
 	// 4. Start node back up

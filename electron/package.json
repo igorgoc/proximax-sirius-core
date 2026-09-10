@@ -1,7 +1,7 @@
 {
   "name": "proximax-sirius-mainnet-peer",
   "productName": "ProximaX Sirius Mainnet Peer Node",
-  "version": "1.9.7",
+  "version": "1.9.8",
   "description": "Official standalone native peer validator and node manager cockpit for the ProximaX Sirius Mainnet (Apple Silicon ARM64)",
   "main": "main.cjs",
   "author": "ProximaX Foundation",
