@@ -1244,7 +1244,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                         setRemoteSyncUrl(e.target.value);
                       }}
                       disabled={isRemoteSyncRunning}
-                      placeholder="https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst"
+                      placeholder="https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/manifest.json"
                       className="w-full px-3 py-1.5 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none transition-all disabled:opacity-50"
                     />
                   </div>

@@ -33,8 +33,8 @@ export const DEFAULT_SNAPSHOT_PREFS: SnapshotPreferences = {
   defaultDataPath: './chainconfig/data',
   defaultSnapshotFolder: '/Volumes/SSD/snapshots',
   defaultCompressionFormat: 'tar.zst',
-  defaultRemoteUrl: 'https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst',
-  releasePubKey: '538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c',
+  defaultRemoteUrl: 'https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/manifest.json',
+  releasePubKey: '68b1a927c47850a5d4244305b2670960d9fe6f048e5a458d801959b606f3e917',
 };
 
 export const loadSnapshotPreferences = (fallbackDataPath?: string): SnapshotPreferences => {
@@ -240,7 +240,7 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath 
                 type="text"
                 value={prefs.defaultRemoteUrl}
                 onChange={(e) => handleUpdate('defaultRemoteUrl', e.target.value)}
-                placeholder="https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst"
+                placeholder="https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/manifest.json"
                 className="w-full px-3 py-2 bg-[#0F1115] border border-[#262B34] focus:border-zinc-500 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none transition-all"
               />
               <span className="text-[11px] text-slate-500 mt-1 block">
