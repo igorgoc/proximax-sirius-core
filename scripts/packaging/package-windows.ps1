@@ -49,6 +49,13 @@ if (-not (Test-Path $FrontendDist)) {
 
 # 2. Compile Go backend for Windows
 Write-Host "-> Compiling Go backend for Windows ($Arch)..." -ForegroundColor Green
+if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+    if (Test-Path "$env:ProgramFiles\Go\bin\go.exe") {
+        $env:PATH = "$env:ProgramFiles\Go\bin;$env:PATH"
+    } elseif (Test-Path "C:\Go\bin\go.exe") {
+        $env:PATH = "C:\Go\bin;$env:PATH"
+    }
+}
 Set-Location (Join-Path $RootDir "backend")
 $BackendOut = Join-Path $BuildDir "sirius-core.exe"
 go build -ldflags="-s -w" -o $BackendOut .

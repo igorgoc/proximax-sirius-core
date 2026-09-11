@@ -55,6 +55,8 @@ backend/sirius-core
 backend/proximax-sirius-core
 sirius-core
 /sirius-core
+sirius-core.exe
+/sirius-core.exe
 .sirius-core.pid
 native-core/
 

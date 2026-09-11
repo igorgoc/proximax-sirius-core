@@ -12,8 +12,12 @@ $ErrorActionPreference = "SilentlyContinue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # Automatically detect root directory
-if (Test-Path (Join-Path $ScriptDir "..\..\chainconfig")) {
+if (Test-Path (Join-Path $ScriptDir "..\..\..\chainconfig\resources")) {
+    $RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..\..")).Path
+} elseif (Test-Path (Join-Path $ScriptDir "..\..\chainconfig\resources")) {
     $RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
+} elseif (Test-Path (Join-Path $ScriptDir "chainconfig\resources")) {
+    $RootDir = (Resolve-Path $ScriptDir).Path
 } else {
     $RootDir = $ScriptDir
 }

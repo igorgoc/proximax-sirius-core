@@ -6,6 +6,23 @@ echo =========================================================
 echo   ProximaX Sirius Mainnet Peer Node (Windows Native)
 echo =========================================================
 
+REM Auto-detect standard Go and Node.js install paths if not yet in current session PATH
+where go >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    if exist "%ProgramFiles%\Go\bin\go.exe" (
+        set "PATH=%ProgramFiles%\Go\bin;!PATH!"
+    ) else if exist "C:\Go\bin\go.exe" (
+        set "PATH=C:\Go\bin;!PATH!"
+    )
+)
+
+where node >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    if exist "%ProgramFiles%\nodejs\node.exe" (
+        set "PATH=%ProgramFiles%\nodejs;!PATH!"
+    )
+)
+
 REM 1. If in a pre-built release package (no frontend/backend source directories), delegate to start.bat
 if not exist "%~dp0frontend" (
     if exist "%~dp0start.bat" (
@@ -17,7 +34,13 @@ if not exist "%~dp0frontend" (
 REM 2. Source repo build workflow: build React UI if not built
 if not exist "%~dp0backend\dist\index.html" (
     if exist "%~dp0frontend" (
-        echo -> Building React UI...
+        if not exist "%~dp0frontend\node_modules" (
+            echo -^> Installing frontend dependencies...
+            cd /d "%~dp0frontend"
+            call npm ci
+            cd /d "%~dp0"
+        )
+        echo -^> Building React UI...
         cd /d "%~dp0frontend"
         call npm run build
         if %ERRORLEVEL% NEQ 0 (
@@ -30,7 +53,7 @@ if not exist "%~dp0backend\dist\index.html" (
 )
 
 REM 3. Compile Go backend for Windows
-echo -> Compiling native Go backend (sirius-core.exe)...
+echo -^> Compiling native Go backend (sirius-core.exe)...
 cd /d "%~dp0backend"
 go build -ldflags="-s -w" -o "%~dp0sirius-core.exe" .
 if %ERRORLEVEL% NEQ 0 (
@@ -41,7 +64,7 @@ if %ERRORLEVEL% NEQ 0 (
 cd /d "%~dp0"
 
 REM 4. Launch Node Manager
-echo -> Launching Node Manager...
+echo -^> Launching Node Manager...
 if exist "%~dp0start.bat" (
     call "%~dp0start.bat" %*
 ) else if exist "%~dp0scripts\packaging\windows\start-node.ps1" (

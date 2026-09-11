@@ -40,6 +40,8 @@ if [ "$(uname)" = "Darwin" ]; then
     ( sleep 1 && open "http://localhost:8080" 2>/dev/null || true ) &
 elif command -v xdg-open >/dev/null 2>&1 && [ -n "$DISPLAY" ]; then
     ( sleep 1 && xdg-open "http://localhost:8080" 2>/dev/null || true ) &
+elif grep -qi "microsoft" /proc/version 2>/dev/null; then
+    ( sleep 1 && cmd.exe /c start http://localhost:8080 2>/dev/null || true ) &
 fi
 
 exec "$DIR/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig"

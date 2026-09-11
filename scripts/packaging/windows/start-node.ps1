@@ -17,8 +17,12 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # Automatically detect root directory (handles both dev repository and standalone release package)
-if (Test-Path (Join-Path $ScriptDir "..\..\chainconfig")) {
+if (Test-Path (Join-Path $ScriptDir "..\..\..\chainconfig\resources")) {
+    $RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..\..")).Path
+} elseif (Test-Path (Join-Path $ScriptDir "..\..\chainconfig\resources")) {
     $RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
+} elseif (Test-Path (Join-Path $ScriptDir "chainconfig\resources")) {
+    $RootDir = (Resolve-Path $ScriptDir).Path
 } else {
     $RootDir = $ScriptDir
 }
@@ -47,7 +51,7 @@ $SensitiveFiles = @(
 foreach ($file in $SensitiveFiles) {
     if (Test-Path $file) {
         try {
-            icacls "$file" /inheritance:r /grant:r "$($env:USERNAME):(R,W)" /grant:r "SYSTEM:(R,W)" | Out-Null
+            icacls "$file" /inheritance:r /grant:r "$($env:USERNAME):(F)" /grant:r "SYSTEM:(F)" | Out-Null
             Write-Host "-> Secured NTFS ACL (0600-equivalent): $(Split-Path -Leaf $file)" -ForegroundColor Gray
         } catch {
             Write-Warning "Could not apply NTFS ACL to $file"
@@ -145,6 +149,7 @@ if (-not (Test-Path $BackendExe)) {
 }
 
 $LogFile = Join-Path $LogDir "manager.log"
+$ErrLogFile = Join-Path $LogDir "manager_error.log"
 $ArgsList = @("-port", "$Port", "-chainconfig", (Join-Path $RootDir "chainconfig"))
 
 if ($Foreground) {
@@ -152,7 +157,7 @@ if ($Foreground) {
     & $BackendExe @ArgsList
 } else {
     Write-Host "-> Starting node manager in background..." -ForegroundColor Green
-    $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -RedirectStandardOutput $LogFile -RedirectStandardError $LogFile -PassThru -WindowStyle Hidden
+    $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -RedirectStandardOutput $LogFile -RedirectStandardError $ErrLogFile -PassThru -WindowStyle Hidden
     $Process.Id | Out-File -FilePath $PidFile -Encoding ascii
     Start-Sleep -Seconds 2
 

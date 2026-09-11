@@ -13,10 +13,18 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-if (Test-Path (Join-Path $ScriptDir "..\..\chainconfig")) {
+if (Test-Path (Join-Path $ScriptDir "..\..\..\chainconfig\resources")) {
+    $RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..\..")).Path
+    $StopScript = Join-Path $ScriptDir "stop-node.ps1"
+    $StartScript = Join-Path $ScriptDir "start-node.ps1"
+} elseif (Test-Path (Join-Path $ScriptDir "..\..\chainconfig\resources")) {
     $RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
     $StopScript = Join-Path $ScriptDir "stop-node.ps1"
     $StartScript = Join-Path $ScriptDir "start-node.ps1"
+} elseif (Test-Path (Join-Path $ScriptDir "chainconfig\resources")) {
+    $RootDir = (Resolve-Path $ScriptDir).Path
+    $StopScript = Join-Path $RootDir "stop-node.ps1"
+    $StartScript = Join-Path $RootDir "start-node.ps1"
 } else {
     $RootDir = $ScriptDir
     $StopScript = Join-Path $RootDir "stop-node.ps1"

@@ -709,7 +709,16 @@ func atomicWriteFile(filePath string, data []byte, perm os.FileMode) error {
 
 	// Atomic rename over target file
 	if err := os.Rename(tmpPath, filePath); err != nil {
-		return fmt.Errorf("failed to atomically rename %s to %s: %w", tmpPath, filePath, err)
+		// On Windows NTFS and WSL drvfs mounts, os.Rename over an existing file can fail
+		// with EACCES/EPERM if target file permissions or filesystem locks prevent in-place atomic replace.
+		// Fallback 1: Try unlinking the target file first, then rename
+		_ = os.Remove(filePath)
+		if renameErr := os.Rename(tmpPath, filePath); renameErr != nil {
+			// Fallback 2: Direct write to target file as resilient last resort
+			if writeErr := os.WriteFile(filePath, data, perm); writeErr != nil {
+				return fmt.Errorf("failed to atomically rename %s to %s (%v) and fallback direct write failed: %w", tmpPath, filePath, err, writeErr)
+			}
+		}
 	}
 
 	// Persist directory entry to physical media on POSIX
@@ -727,10 +736,10 @@ func atomicWriteFile(filePath string, data []byte, perm os.FileMode) error {
 func EnforceSecurePermissions(filePath string, perm os.FileMode) error {
 	if runtime.GOOS == "windows" {
 		// On Windows, os.Chmod only toggles readonly attribute. To achieve confidentiality equivalent to 0600,
-		// remove inheritance and grant (R,W) exclusively to the current user via icacls.
+		// remove inheritance and grant Full Control (F) exclusively to current user and SYSTEM via icacls.
 		user := os.Getenv("USERNAME")
 		if user != "" {
-			cmd := exec.Command("icacls", filePath, "/inheritance:r", "/grant:r", fmt.Sprintf("%s:(R,W)", user))
+			cmd := exec.Command("icacls", filePath, "/inheritance:r", "/grant:r", fmt.Sprintf("%s:(F)", user), "/grant:r", "SYSTEM:(F)")
 			_ = cmd.Run()
 		}
 		return nil

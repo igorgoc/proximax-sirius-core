@@ -1313,8 +1313,12 @@ func (s *Server) handleSystemBrowseDirs(w http.ResponseWriter, r *http.Request) 
 					}
 					fullMPath := filepath.Join(mountBase, name)
 					if fi, errFi := os.Stat(fullMPath); errFi == nil && fi.IsDir() {
+						displayName := fmt.Sprintf("Mounted Storage (%s): %s", mountBase, name)
+						if mountBase == "/mnt" && len(name) == 1 {
+							displayName = fmt.Sprintf("Drive %s: (WSL %s)", strings.ToUpper(name), fullMPath)
+						}
 						presets = append(presets, DirItem{
-							Name:  fmt.Sprintf("Mounted Storage (%s): %s", mountBase, name),
+							Name:  displayName,
 							Path:  filepath.Join(fullMPath, "Sirius_data"),
 							IsDir: true,
 						})
@@ -1394,7 +1398,24 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 			err = e
 		}
 	case "linux":
-		if _, e := exec.LookPath("zenity"); e == nil {
+		// WSL detection: if running under WSL, powershell.exe opens native Windows FolderBrowserDialog
+		if _, e := exec.LookPath("powershell.exe"); e == nil {
+			const staticPsScript = `& { param($dlgTitle, $dlgMode) Add-Type -AssemblyName System.Windows.Forms; if ($dlgMode -eq 'file') { $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Title = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName } } else { $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath } } } $args[0] $args[1]`
+			cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", staticPsScript, prompt, mode)
+			out, e := cmd.Output()
+			if e == nil {
+				winPath := strings.TrimSpace(string(out))
+				if winPath != "" {
+					if wslOut, wErr := exec.Command("wslpath", "-u", winPath).Output(); wErr == nil {
+						selectedPath = strings.TrimSpace(string(wslOut))
+					} else {
+						selectedPath = winPath
+					}
+				}
+			} else {
+				err = e
+			}
+		} else if _, e := exec.LookPath("zenity"); e == nil {
 			args := []string{"--file-selection", "--title", prompt}
 			if mode != "file" {
 				args = append(args, "--directory")
