@@ -102,3 +102,24 @@ func TestCheckUpdate_Live(t *testing.T) {
 	}
 }
 
+func TestCheckConfigsDiff_Live(t *testing.T) {
+	repoRoot, err := filepath.Abs("../../../chainconfig/resources")
+	if err != nil {
+		t.Skip("Cannot locate chainconfig/resources")
+	}
+	um := NewUpdateManager(repoRoot, nil)
+	report, err := um.CheckConfigsDiff()
+	if err != nil {
+		t.Skipf("Skipping live diff check due to network: %v", err)
+	}
+	if report.TotalFiles != 5 {
+		t.Errorf("Expected 5 total files in diff report, got %d", report.TotalFiles)
+	}
+	if len(report.Files) != 5 {
+		t.Errorf("Expected 5 file entries, got %d", len(report.Files))
+	}
+	t.Logf("Diff Report: Total: %d, Diff: %d, Identical: %d, Missing: %d, HasDiff: %v",
+		report.TotalFiles, report.DifferentCount, report.IdenticalCount, report.MissingCount, report.HasDifferences)
+}
+
+

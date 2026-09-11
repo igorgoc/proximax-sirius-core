@@ -198,8 +198,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/snapshot/mock/", s.handleSnapshotMock)
 	mux.HandleFunc("/api/system/updates/check", s.handleUpdatesCheck)
 	mux.HandleFunc("/api/system/updates/apply", s.handleUpdatesApply)
+	mux.HandleFunc("/api/system/updates/diff", s.handleConfigsDiff)
 	mux.HandleFunc("/api/maintenance/update/check", s.handleUpdatesCheck)
 	mux.HandleFunc("/api/maintenance/update/apply", s.handleUpdatesApply)
+	mux.HandleFunc("/api/maintenance/update/diff", s.handleConfigsDiff)
+	mux.HandleFunc("/api/maintenance/configs/diff", s.handleConfigsDiff)
 	mux.HandleFunc("/api/engine/status", s.handleEngineStatus)
 	mux.HandleFunc("/api/engine/manifest", s.handleEngineManifest)
 	mux.HandleFunc("/api/engine/check", s.handleEngineCheck)
@@ -1467,6 +1470,15 @@ func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"message": "Official node update process started in background.",
 	})
+}
+
+func (s *Server) handleConfigsDiff(w http.ResponseWriter, r *http.Request) {
+	diff, err := s.updateMgr.CheckConfigsDiff()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, diff)
 }
 
 func (s *Server) handleEngineStatus(w http.ResponseWriter, r *http.Request) {

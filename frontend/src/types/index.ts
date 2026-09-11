@@ -233,6 +233,29 @@ export interface UpdateInfo {
   officialFiles?: string[];
   isApplying?: boolean;
   updateMessage?: string;
+  rollbackOccurred?: boolean;
+  backupPath?: string;
+}
+
+export interface ConfigFileDiff {
+  name: string;
+  purpose: string;
+  category: string;
+  localHash: string;
+  remoteHash: string;
+  status: 'identical' | 'different' | 'missing' | string;
+  localFound: boolean;
+  remoteFound: boolean;
+}
+
+export interface ConfigDiffReport {
+  files: ConfigFileDiff[];
+  hasDifferences: boolean;
+  identicalCount: number;
+  differentCount: number;
+  missingCount: number;
+  checkedAt: string;
+  remoteUrl: string;
 }
 
 export interface EngineUpdateStatus {
