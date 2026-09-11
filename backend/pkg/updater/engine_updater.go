@@ -736,6 +736,11 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 		return &u.status, err
 	}
 	req.Header.Set("User-Agent", "ProximaX-Sirius-Engine-Updater")
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else if token := os.Getenv("GH_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := u.client.Do(req)
 	if err != nil {
@@ -767,6 +772,8 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 				u.status.HasUpdate = false
 			}
 		}
+	} else if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return &u.status, fmt.Errorf("GitHub API rate limit reached (HTTP %d)", resp.StatusCode)
 	}
 
 	return &u.status, nil

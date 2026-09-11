@@ -109,6 +109,9 @@ func TestCheckConfigsDiff_Live(t *testing.T) {
 	if err != nil {
 		t.Skip("Cannot locate chainconfig/resources")
 	}
+	if _, err := os.Stat(repoRoot); err != nil {
+		t.Skipf("Skipping: chainconfig/resources directory not found at %s", repoRoot)
+	}
 	um := NewUpdateManager(repoRoot, nil)
 	report, err := um.CheckConfigsDiff()
 	if err != nil {

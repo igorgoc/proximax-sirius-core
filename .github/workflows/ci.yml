@@ -41,11 +41,15 @@ jobs:
       - name: Run Go Tests (POSIX)
         if: runner.os != 'Windows'
         working-directory: backend
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: go test -v -race ./pkg/...
 
       - name: Run Go Tests (Windows)
         if: runner.os == 'Windows'
         working-directory: backend
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: go test -v ./pkg/...
 
       - name: Compile Backend Binary (POSIX)

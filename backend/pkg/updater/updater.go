@@ -132,6 +132,11 @@ func (um *UpdateManager) CheckUpdate() (*UpdateInfo, error) {
 		return &um.lastInfo, err
 	}
 	req.Header.Set("User-Agent", "ProximaX-Sirius-Core-Manager")
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else if token := os.Getenv("GH_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := um.httpClient.Do(req)
 	if err != nil {
@@ -167,6 +172,9 @@ func (um *UpdateManager) CheckUpdate() (*UpdateInfo, error) {
 			// Check if latest version is strictly newer using semver
 			um.lastInfo.HasUpdate = IsNewerVersion(ghRelease.TagName, CurrentVersion)
 		}
+	} else if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		um.lastInfo.LastChecked = time.Now()
+		return &um.lastInfo, fmt.Errorf("GitHub API rate limit reached (HTTP %d)", resp.StatusCode)
 	} else {
 		um.lastInfo.LastChecked = time.Now()
 	}
