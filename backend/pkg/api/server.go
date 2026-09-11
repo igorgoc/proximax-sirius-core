@@ -1357,10 +1357,12 @@ func (s *Server) handleSystemBrowseDirs(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-const winPickerScript = `& {
-	param([string]$dlgTitle, [string]$dlgMode)
+const winPickerScript = `param(
+	[string]$dlgTitle = "Select Sirius Blockchain Data Directory",
+	[string]$dlgMode = "dir"
+)
 
-	Add-Type -TypeDefinition @"
+Add-Type -TypeDefinition @"
 using System;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
@@ -1407,7 +1409,7 @@ public class Win32Picker {
         void Compare();
     }
 
-    public static string PickFolder(string title) {
+    public static string PickFolder(string title, IntPtr hwnd) {
         var dialog = (IFileOpenDialog)new FileOpenDialogRc();
         uint options;
         dialog.GetOptions(out options);
@@ -1415,8 +1417,10 @@ public class Win32Picker {
         if (!string.IsNullOrEmpty(title)) {
             dialog.SetTitle(title);
         }
-        IntPtr hwnd = GetForegroundWindow();
         int hr = dialog.Show(hwnd);
+        if (hr != 0 && hwnd != IntPtr.Zero) {
+            hr = dialog.Show(IntPtr.Zero);
+        }
         if (hr == 0) {
             IntPtr ppsi;
             dialog.GetResult(out ppsi);
@@ -1429,7 +1433,7 @@ public class Win32Picker {
         return null;
     }
 
-    public static string PickFile(string title) {
+    public static string PickFile(string title, IntPtr hwnd) {
         var dialog = (IFileOpenDialog)new FileOpenDialogRc();
         uint options;
         dialog.GetOptions(out options);
@@ -1437,8 +1441,10 @@ public class Win32Picker {
         if (!string.IsNullOrEmpty(title)) {
             dialog.SetTitle(title);
         }
-        IntPtr hwnd = GetForegroundWindow();
         int hr = dialog.Show(hwnd);
+        if (hr != 0 && hwnd != IntPtr.Zero) {
+            hr = dialog.Show(IntPtr.Zero);
+        }
         if (hr == 0) {
             IntPtr ppsi;
             dialog.GetResult(out ppsi);
@@ -1453,40 +1459,41 @@ public class Win32Picker {
 }
 "@ -ReferencedAssemblies "System.Windows.Forms" -ErrorAction SilentlyContinue
 
-	try {
-		if ($dlgMode -eq 'file') {
-			$res = [Win32Picker]::PickFile($dlgTitle)
-		} else {
-			$res = [Win32Picker]::PickFolder($dlgTitle)
-		}
-		if ($res) {
-			[Console]::Out.Write($res)
-			exit 0
-		}
-	} catch {
-		Add-Type -AssemblyName System.Windows.Forms
-		$owner = New-Object System.Windows.Forms.Form
-		$owner.TopMost = $true
-		$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-		$owner.ShowInTaskbar = $false
-		$owner.Opacity = 0
-		$owner.Show()
-		if ($dlgMode -eq 'file') {
-			$f = New-Object System.Windows.Forms.OpenFileDialog
-			$f.Title = $dlgTitle
-			if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
-				[Console]::Out.Write($f.FileName)
-			}
-		} else {
-			$f = New-Object System.Windows.Forms.FolderBrowserDialog
-			$f.Description = $dlgTitle
-			$f.RootFolder = [System.Environment+SpecialFolder]::MyComputer
-			if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
-				[Console]::Out.Write($f.SelectedPath)
-			}
-		}
-		$owner.Dispose()
+Add-Type -AssemblyName System.Windows.Forms
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+$owner.ShowInTaskbar = $false
+$owner.Opacity = 0
+$owner.Show()
+
+try {
+	if ($dlgMode -eq 'file') {
+		$res = [Win32Picker]::PickFile($dlgTitle, $owner.Handle)
+	} else {
+		$res = [Win32Picker]::PickFolder($dlgTitle, $owner.Handle)
 	}
+	if ($res) {
+		[Console]::Out.Write($res)
+		exit 0
+	}
+} catch {
+	if ($dlgMode -eq 'file') {
+		$f = New-Object System.Windows.Forms.OpenFileDialog
+		$f.Title = $dlgTitle
+		if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+			[Console]::Out.Write($f.FileName)
+		}
+	} else {
+		$f = New-Object System.Windows.Forms.FolderBrowserDialog
+		$f.Description = $dlgTitle
+		$f.RootFolder = [System.Environment+SpecialFolder]::MyComputer
+		if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+			[Console]::Out.Write($f.SelectedPath)
+		}
+	}
+} finally {
+	$owner.Dispose()
 }
 `
 
@@ -1530,7 +1537,18 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 			err = e
 		}
 	case "windows":
-		cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-Command", winPickerScript, prompt, mode)
+		chainConfigDir := filepath.Dir(s.configMgr.GetResourcesPath())
+		scriptPath := filepath.Join(chainConfigDir, "..", "scripts", "packaging", "windows", "pick-directory.ps1")
+		if _, eStat := os.Stat(scriptPath); eStat != nil {
+			if execPath, e2 := os.Executable(); e2 == nil {
+				scriptPath = filepath.Join(filepath.Dir(execPath), "scripts", "packaging", "windows", "pick-directory.ps1")
+			}
+			if _, e3 := os.Stat(scriptPath); e3 != nil {
+				scriptPath = filepath.Join(os.TempDir(), "sirius-pick-directory.ps1")
+				_ = os.WriteFile(scriptPath, []byte(winPickerScript), 0644)
+			}
+		}
+		cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-File", scriptPath, prompt, mode)
 		out, e := cmd.Output()
 		if e == nil {
 			selectedPath = strings.TrimSpace(string(out))
@@ -1540,7 +1558,13 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 	case "linux":
 		// WSL detection: if running under WSL, powershell.exe opens native Windows Explorer dialog
 		if _, e := exec.LookPath("powershell.exe"); e == nil {
-			cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-Command", winPickerScript, prompt, mode)
+			chainConfigDir := filepath.Dir(s.configMgr.GetResourcesPath())
+			scriptPath := filepath.Join(chainConfigDir, "..", "scripts", "packaging", "windows", "pick-directory.ps1")
+			winScriptPath := scriptPath
+			if wslOut, wErr := exec.Command("wslpath", "-w", scriptPath).Output(); wErr == nil {
+				winScriptPath = strings.TrimSpace(string(wslOut))
+			}
+			cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-File", winScriptPath, prompt, mode)
 			out, e := cmd.Output()
 			if e == nil {
 				winPath := strings.TrimSpace(string(out))
