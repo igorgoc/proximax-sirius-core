@@ -9,7 +9,12 @@ echo "  ProximaX Sirius Standalone Native Node Launcher"
 echo "  Architecture: $(uname -s) $(uname -m) (Standalone Native Engine)"
 echo "========================================================="
 
-# 1. Raise file descriptor limit for RocksDB multi-cache
+# 1. Clear macOS Gatekeeper quarantine if downloaded from web browser
+if [ "$(uname)" = "Darwin" ]; then
+    xattr -cr "$DIR" 2>/dev/null || true
+fi
+
+# 2. Raise file descriptor limit for RocksDB multi-cache
 ulimit -n 65536 2>/dev/null || true
 echo "-> File descriptor limit set to: $(ulimit -n)"
 

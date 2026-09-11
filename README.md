@@ -42,9 +42,27 @@ Built as a lightweight native management engine (Go backend + React/TypeScript f
 - **Go**: v1.22+
 - **Disk Space**: At least 50 GB free disk space (external high-speed SSD recommended)
 
+## Pre-Compiled Standalone Releases
+
+Pre-compiled standalone packages with the React web cockpit embedded inside are available under [GitHub Releases](https://github.com/igorgoc/proximax-sirius-core/releases).
+
+### macOS (Apple Silicon ARM64 & Intel)
+
+#### Option 1: One-Line Terminal Setup (Bypasses Browser Quarantine)
+```bash
+curl -sL https://github.com/igorgoc/proximax-sirius-core/releases/download/v1.9.8/proximax-sirius-darwin-arm64-1.9.8.tar.gz | tar -xz
+cd proximax-sirius-core && ./start.command
+```
+*(Files downloaded via `curl` do not receive browser quarantine attributes and launch immediately with zero Gatekeeper prompts).*
+
+#### Option 2: If Downloaded Via Web Browser (Safari / Chrome)
+1. Extract the downloaded `proximax-sirius-darwin-arm64-1.9.8.tar.gz`.
+2. In the extracted folder, double-click **`start.command`** (or in Terminal run `xattr -cr . && ./start.command`).
+3. If macOS Gatekeeper flags the open-source binary as unverified, right-click `start.command` → **Open** → **Open**, or navigate to **System Settings > Privacy & Security** and click **Open Anyway**.
+
 ---
 
-## Quick Start
+## Quick Start (Build from Source)
 
 ### 1. Launch the Node & GUI
 In your terminal, navigate to the repository directory and run:
