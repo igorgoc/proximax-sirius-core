@@ -19,17 +19,25 @@ export interface DirectoryDropdownProps {
   defaultPresetsOpen?: boolean;
 }
 
-const DEFAULT_DIR_PRESETS: DirectoryItem[] = [
-  { name: 'Default Project Data (./chainconfig/data)', path: './chainconfig/data', isDir: true },
-  { name: 'External Drive / Volume: /Volumes/SSD/Sirius_data', path: '/Volumes/SSD/Sirius_data', isDir: true },
-  { name: 'Browse /Volumes Directory', path: '/Volumes', isDir: true },
-];
+const isWin = typeof navigator !== 'undefined' && (/win/i.test(navigator.userAgent || '') || /win/i.test(navigator.platform || ''));
+
+const DEFAULT_DIR_PRESETS: DirectoryItem[] = isWin
+  ? [
+      { name: 'Default Project Data (./chainconfig/data)', path: './chainconfig/data', isDir: true },
+      { name: 'Drive C: Root (C:\\)', path: 'C:\\', isDir: true },
+      { name: 'Drive C: (C:\\Sirius_data)', path: 'C:\\Sirius_data', isDir: true },
+    ]
+  : [
+      { name: 'Default Project Data (./chainconfig/data)', path: './chainconfig/data', isDir: true },
+      { name: 'External Drive / Volume: /Volumes/SSD/Sirius_data', path: '/Volumes/SSD/Sirius_data', isDir: true },
+      { name: 'Browse /Volumes Directory', path: '/Volumes', isDir: true },
+    ];
 
 export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
   value,
   onChange,
   label,
-  placeholder = './chainconfig/data',
+  placeholder = isWin ? 'C:\\Sirius_data or ./chainconfig/data' : './chainconfig/data',
   mode = 'dir',
   prompt,
   presets: customPresets,

@@ -492,7 +492,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
                 label="Blockchain Data Location"
                 value={formData.dataPath}
                 onChange={(val) => handleFieldChange('dataPath', val)}
-                placeholder="/Volumes/SSD/Sirius_data or ./chainconfig/data"
+                placeholder={typeof navigator !== 'undefined' && /win/i.test(navigator.userAgent || '') ? 'C:\\Sirius_data or ./chainconfig/data' : '/Volumes/SSD/Sirius_data or ./chainconfig/data'}
                 prompt="Select Sirius Blockchain Data Directory"
               />
               <p className="text-[11px] text-slate-500">

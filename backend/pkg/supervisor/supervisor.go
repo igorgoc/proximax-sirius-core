@@ -625,6 +625,19 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 	resourcesDir := filepath.Join(dc.chainConfigPath, "resources")
 	userProps := filepath.Join(resourcesDir, "config-user.properties")
 
+	targetDataPath := dataPath
+	targetBinPath := dc.binPath
+	targetCertDir := certDir
+	if runtime.GOOS == "windows" {
+		targetDataPath = ToWSLPath(dataPath)
+		targetBinPath = ToWSLPath(dc.binPath)
+		targetCertDir = ToWSLPath(certDir)
+	} else {
+		targetDataPath = filepath.ToSlash(targetDataPath)
+		targetBinPath = filepath.ToSlash(targetBinPath)
+		targetCertDir = filepath.ToSlash(targetCertDir)
+	}
+
 	if content, err := os.ReadFile(userProps); err == nil {
 		lines := strings.Split(string(content), "\n")
 		var newLines []string
@@ -635,13 +648,13 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 		for _, line := range lines {
 			t := strings.TrimSpace(line)
 			if strings.HasPrefix(t, "dataDirectory") {
-				newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", filepath.ToSlash(dataPath)))
+				newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", targetDataPath))
 				hasDataDir = true
 			} else if strings.HasPrefix(t, "pluginsDirectory") {
-				newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", filepath.ToSlash(dc.binPath)))
+				newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", targetBinPath))
 				hasPluginsDir = true
 			} else if strings.HasPrefix(t, "certificateDirectory") {
-				newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", filepath.ToSlash(certDir)))
+				newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", targetCertDir))
 				hasCertDir = true
 			} else {
 				newLines = append(newLines, line)
@@ -649,19 +662,26 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 		}
 
 		if !hasDataDir {
-			newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", filepath.ToSlash(dataPath)))
+			newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", targetDataPath))
 		}
 		if !hasPluginsDir {
-			newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", filepath.ToSlash(dc.binPath)))
+			newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", targetBinPath))
 		}
 		if !hasCertDir {
-			newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", filepath.ToSlash(certDir)))
+			newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", targetCertDir))
 		}
 
 		_ = os.WriteFile(userProps, []byte(strings.Join(newLines, "\n")), 0644)
 	}
 
 	logsDir := filepath.Join(dc.chainConfigPath, "logs")
+	targetLogsDir := logsDir
+	if runtime.GOOS == "windows" {
+		targetLogsDir = ToWSLPath(logsDir)
+	} else {
+		targetLogsDir = filepath.ToSlash(targetLogsDir)
+	}
+
 	logConfigs := []string{
 		filepath.Join(resourcesDir, "config-logging-server.properties"),
 		filepath.Join(resourcesDir, "config-logging-recovery.properties"),
@@ -673,13 +693,13 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 			for _, line := range lines {
 				t := strings.TrimSpace(line)
 				if strings.HasPrefix(t, "directory =") {
-					newLines = append(newLines, fmt.Sprintf("directory = %s", filepath.ToSlash(logsDir)))
+					newLines = append(newLines, fmt.Sprintf("directory = %s", targetLogsDir))
 				} else if strings.HasPrefix(t, "filePattern =") {
 					patternName := "server_%4N.log"
 					if strings.Contains(lcfg, "recovery") {
 						patternName = "recovery_%4N.log"
 					}
-					newLines = append(newLines, fmt.Sprintf("filePattern = %s", filepath.ToSlash(filepath.Join(logsDir, patternName))))
+					newLines = append(newLines, fmt.Sprintf("filePattern = %s/%s", targetLogsDir, patternName))
 				} else {
 					newLines = append(newLines, line)
 				}

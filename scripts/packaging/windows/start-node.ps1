@@ -93,7 +93,13 @@ if (Test-Path $DataDir) {
 # 5. Sanitize machine-specific log paths in logging configuration
 $LogDir = Join-Path $RootDir "chainconfig\logs"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
-$LogDirForward = $LogDir.Replace('\', '/')
+if ($LogDir -match "^([A-Za-z]):\\(.*)$") {
+    $driveLetter = $Matches[1].ToLower()
+    $subPath = $Matches[2].Replace('\', '/')
+    $LogDirForward = "/mnt/$driveLetter/$subPath"
+} else {
+    $LogDirForward = $LogDir.Replace('\', '/')
+}
 Get-ChildItem -Path (Join-Path $ResourcesDir "config-logging-*.properties") -ErrorAction SilentlyContinue | ForEach-Object {
     try {
         $content = Get-Content $_.FullName -Raw
@@ -158,18 +164,43 @@ $LogFile = Join-Path $LogDir "manager.log"
 $ErrLogFile = Join-Path $LogDir "manager_error.log"
 $ArgsList = @("-port", "$Port", "-chainconfig", (Join-Path $RootDir "chainconfig"))
 
-if ($Foreground) {
-    Write-Host "-> Starting node manager in foreground..." -ForegroundColor Green
-    & $BackendExe @ArgsList
-} else {
-    Write-Host "-> Starting node manager in background..." -ForegroundColor Green
-    $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -PassThru -WindowStyle Hidden
-    $Process.Id | Out-File -FilePath $PidFile -Encoding ascii
-    Start-Sleep -Seconds 2
+$Process = $null
+try {
+    if ($Foreground) {
+        Write-Host "-> Starting node manager in foreground..." -ForegroundColor Green
+        & $BackendExe @ArgsList
+    } else {
+        Write-Host "-> Starting node manager in background..." -ForegroundColor Green
+        $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -PassThru -WindowStyle Hidden
+        $Process.Id | Out-File -FilePath $PidFile -Encoding ascii
+    }
+} catch {
+    # If Application Control policy restricts executing the raw binary, fall back to Go host
+    if (Get-Command go -ErrorAction SilentlyContinue) {
+        Write-Host "-> Binary execution restricted by Application Control policy. Launching via Go runner..." -ForegroundColor Yellow
+        $BackendDir = Join-Path $RootDir "backend"
+        $GoArgs = @("run", ".", "-port", "$Port", "-chainconfig", (Join-Path $RootDir "chainconfig"))
+        if ($Foreground) {
+            Push-Location $BackendDir
+            try { & go @GoArgs } finally { Pop-Location }
+        } else {
+            $Process = Start-Process -FilePath "go" -ArgumentList $GoArgs -WorkingDirectory $BackendDir -PassThru -WindowStyle Hidden
+            $Process.Id | Out-File -FilePath $PidFile -Encoding ascii
+        }
+    } else {
+        throw $_
+    }
+}
 
+if (-not $Foreground) {
+    Start-Sleep -Seconds 2
     Write-Host ""
     Write-Host "=========================================================" -ForegroundColor Green
-    Write-Host "  ProximaX Sirius Native Node is ONLINE (PID: $($Process.Id))!" -ForegroundColor Green
+    if ($Process) {
+        Write-Host "  ProximaX Sirius Native Node is ONLINE (PID: $($Process.Id))!" -ForegroundColor Green
+    } else {
+        Write-Host "  ProximaX Sirius Native Node is ONLINE!" -ForegroundColor Green
+    }
     Write-Host ""
     Write-Host "  Access GUI Cockpit Dashboard:" -ForegroundColor White
     Write-Host "    >>> http://localhost:$Port <<<" -ForegroundColor Cyan

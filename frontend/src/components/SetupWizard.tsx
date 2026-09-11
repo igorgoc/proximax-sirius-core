@@ -342,7 +342,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                     label="Blockchain Data Directory (data.path)"
                     value={dataPath}
                     onChange={setDataPath}
-                    placeholder="./chainconfig/data or /Volumes/ExternalSSD/sirius_data"
+                    placeholder={typeof navigator !== 'undefined' && /win/i.test(navigator.userAgent || '') ? './chainconfig/data or D:\\Sirius_data' : './chainconfig/data or /Volumes/ExternalSSD/sirius_data'}
                     prompt="Select Sirius Blockchain Data Directory"
                   />
                   <p className="text-[11px] text-slate-400">

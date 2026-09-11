@@ -67,8 +67,19 @@ func (dc *ProcessSupervisor) writeCache(cache wslCache) {
 	}
 }
 
-// ToWSLPath converts a Windows host path (e.g. C:\Project\chainconfig) into a WSL path (/mnt/c/Project/chainconfig)
+// ToWSLPath converts a Windows host path (e.g. C:\Project\chainconfig or .\chainconfig\data) into a WSL path (/mnt/c/Project/chainconfig)
 func ToWSLPath(winPath string) string {
+	if winPath == "" {
+		return ""
+	}
+	// Already a WSL / Unix path
+	if strings.HasPrefix(winPath, "/mnt/") || (strings.HasPrefix(winPath, "/") && !strings.Contains(winPath, ":")) {
+		return winPath
+	}
+	absPath, err := filepath.Abs(winPath)
+	if err == nil {
+		winPath = absPath
+	}
 	clean := filepath.Clean(winPath)
 	vol := filepath.VolumeName(clean)
 	rest := clean[len(vol):]

@@ -32,3 +32,8 @@ func (dc *ProcessSupervisor) stopWSL() error {
 func (dc *ProcessSupervisor) SetupPortProxy() error {
 	return nil
 }
+
+// ToWSLPath is a no-op on non-Windows platforms.
+func ToWSLPath(path string) string {
+	return path
+}

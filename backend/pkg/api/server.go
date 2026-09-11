@@ -1336,7 +1336,12 @@ func (s *Server) handleSystemBrowseDirs(w http.ResponseWriter, r *http.Request) 
 			driveRoot := fmt.Sprintf("%c:\\", r)
 			if _, errD := os.Stat(driveRoot); errD == nil {
 				presets = append(presets, DirItem{
-					Name:  fmt.Sprintf("Drive %c: (%s)", r, driveRoot),
+					Name:  fmt.Sprintf("Drive %c: Root (%s)", r, driveRoot),
+					Path:  driveRoot,
+					IsDir: true,
+				})
+				presets = append(presets, DirItem{
+					Name:  fmt.Sprintf("Drive %c: (%sSirius_data)", r, driveRoot),
 					Path:  filepath.Join(driveRoot, "Sirius_data"),
 					IsDir: true,
 				})
@@ -1351,6 +1356,139 @@ func (s *Server) handleSystemBrowseDirs(w http.ResponseWriter, r *http.Request) 
 		"presets":     presets,
 	})
 }
+
+const winPickerScript = `& {
+	param([string]$dlgTitle, [string]$dlgMode)
+
+	Add-Type -TypeDefinition @"
+using System;
+using System.Windows.Forms;
+using System.Runtime.InteropServices;
+
+public class Win32Picker {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")]
+    [ClassInterface(ClassInterfaceType.None)]
+    private class FileOpenDialogRc {}
+
+    [ComImport, Guid("d57c7288-d4ad-4768-be02-9d969532d960"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IFileOpenDialog {
+        [PreserveSig] int Show(IntPtr parent);
+        void SetFileTypes();
+        void SetFileTypeIndex();
+        void GetFileTypeIndex();
+        void Advise();
+        void Unadvise();
+        void SetOptions(uint fos);
+        void GetOptions(out uint fos);
+        void SetDefaultFolder();
+        void SetFolder(IntPtr psi);
+        void GetFolder();
+        void GetCurrentSelection();
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetFileName();
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+        void GetResult(out IntPtr ppsi);
+    }
+
+    [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellItem {
+        void BindToHandler();
+        void GetParent();
+        void GetDisplayName(uint sigdnName, [MarshalAs(UnmanagedType.LPWStr)] out string ppszName);
+        void GetAttributes();
+        void Compare();
+    }
+
+    public static string PickFolder(string title) {
+        var dialog = (IFileOpenDialog)new FileOpenDialogRc();
+        uint options;
+        dialog.GetOptions(out options);
+        dialog.SetOptions(options | 0x00000020 | 0x00000040);
+        if (!string.IsNullOrEmpty(title)) {
+            dialog.SetTitle(title);
+        }
+        IntPtr hwnd = GetForegroundWindow();
+        int hr = dialog.Show(hwnd);
+        if (hr == 0) {
+            IntPtr ppsi;
+            dialog.GetResult(out ppsi);
+            var item = (IShellItem)Marshal.GetObjectForIUnknown(ppsi);
+            string path;
+            item.GetDisplayName(0x80028000, out path);
+            Marshal.Release(ppsi);
+            return path;
+        }
+        return null;
+    }
+
+    public static string PickFile(string title) {
+        var dialog = (IFileOpenDialog)new FileOpenDialogRc();
+        uint options;
+        dialog.GetOptions(out options);
+        dialog.SetOptions(options | 0x00000040 | 0x00001000);
+        if (!string.IsNullOrEmpty(title)) {
+            dialog.SetTitle(title);
+        }
+        IntPtr hwnd = GetForegroundWindow();
+        int hr = dialog.Show(hwnd);
+        if (hr == 0) {
+            IntPtr ppsi;
+            dialog.GetResult(out ppsi);
+            var item = (IShellItem)Marshal.GetObjectForIUnknown(ppsi);
+            string path;
+            item.GetDisplayName(0x80028000, out path);
+            Marshal.Release(ppsi);
+            return path;
+        }
+        return null;
+    }
+}
+"@ -ReferencedAssemblies "System.Windows.Forms" -ErrorAction SilentlyContinue
+
+	try {
+		if ($dlgMode -eq 'file') {
+			$res = [Win32Picker]::PickFile($dlgTitle)
+		} else {
+			$res = [Win32Picker]::PickFolder($dlgTitle)
+		}
+		if ($res) {
+			[Console]::Out.Write($res)
+			exit 0
+		}
+	} catch {
+		Add-Type -AssemblyName System.Windows.Forms
+		$owner = New-Object System.Windows.Forms.Form
+		$owner.TopMost = $true
+		$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+		$owner.ShowInTaskbar = $false
+		$owner.Opacity = 0
+		$owner.Show()
+		if ($dlgMode -eq 'file') {
+			$f = New-Object System.Windows.Forms.OpenFileDialog
+			$f.Title = $dlgTitle
+			if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+				[Console]::Out.Write($f.FileName)
+			}
+		} else {
+			$f = New-Object System.Windows.Forms.FolderBrowserDialog
+			$f.Description = $dlgTitle
+			$f.RootFolder = [System.Environment+SpecialFolder]::MyComputer
+			if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+				[Console]::Out.Write($f.SelectedPath)
+			}
+		}
+		$owner.Dispose()
+	}
+}
+`
 
 func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 	var selectedPath string
@@ -1392,9 +1530,7 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 			err = e
 		}
 	case "windows":
-		// Security: 100% static script block with prompt & mode passed strictly as isolated argv arguments
-		const staticPsScript = `& { param($dlgTitle, $dlgMode) Add-Type -AssemblyName System.Windows.Forms; if ($dlgMode -eq 'file') { $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Title = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName } } else { $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath } } } $args[0] $args[1]`
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", staticPsScript, prompt, mode)
+		cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-Command", winPickerScript, prompt, mode)
 		out, e := cmd.Output()
 		if e == nil {
 			selectedPath = strings.TrimSpace(string(out))
@@ -1402,10 +1538,9 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 			err = e
 		}
 	case "linux":
-		// WSL detection: if running under WSL, powershell.exe opens native Windows FolderBrowserDialog
+		// WSL detection: if running under WSL, powershell.exe opens native Windows Explorer dialog
 		if _, e := exec.LookPath("powershell.exe"); e == nil {
-			const staticPsScript = `& { param($dlgTitle, $dlgMode) Add-Type -AssemblyName System.Windows.Forms; if ($dlgMode -eq 'file') { $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Title = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName } } else { $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = $dlgTitle; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath } } } $args[0] $args[1]`
-			cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", staticPsScript, prompt, mode)
+			cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-Command", winPickerScript, prompt, mode)
 			out, e := cmd.Output()
 			if e == nil {
 				winPath := strings.TrimSpace(string(out))
