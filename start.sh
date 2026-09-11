@@ -9,7 +9,19 @@ if [ "$(uname)" = "Darwin" ]; then
     xattr -cr "$DIR" 2>/dev/null || true
 fi
 
-# 2. Ensure binaries and scripts are executable
+# 2. Free port 8080 if already held by an existing instance
+OLD_PID=$(lsof -ti :8080 2>/dev/null || true)
+if [ -n "$OLD_PID" ]; then
+    echo "-> Stopping existing instance on port 8080 (PID $OLD_PID)..."
+    kill -INT "$OLD_PID" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        kill -9 "$OLD_PID" 2>/dev/null || true
+        sleep 1
+    fi
+fi
+
+# 3. Ensure binaries and scripts are executable
 chmod +x "$DIR/sirius-core" "$DIR"/*.sh 2>/dev/null || true
 [ -f "$DIR/start.command" ] && chmod +x "$DIR/start.command" 2>/dev/null || true
 [ -f "$DIR/bin/sirius.bc" ] && chmod +x "$DIR/bin/sirius.bc" 2>/dev/null || true

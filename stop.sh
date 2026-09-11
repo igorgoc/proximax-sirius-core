@@ -36,6 +36,14 @@ if pgrep -f "sirius.bc" >/dev/null 2>&1; then
     pkill -KILL -f "sirius.bc" 2>/dev/null || true
 fi
 pkill -INT -f "sirius-core.*-chainconfig" 2>/dev/null || true
+pkill -INT -f "sirius-core" 2>/dev/null || true
+
+for p in 8080 3080; do
+    PID=$(lsof -ti :$p 2>/dev/null || true)
+    if [ -n "$PID" ]; then
+        kill -9 $PID 2>/dev/null || true
+    fi
+done
 
 # 3. Detect data directory and clean all stale lock files
 DATA_DIR="$DIR/chainconfig/data"

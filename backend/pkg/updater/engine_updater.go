@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,13 +62,14 @@ type NodeLifecycleController interface {
 }
 
 type EngineUpdater struct {
-	mu           sync.RWMutex
-	binDir       string
-	manifestPath string
-	controller   NodeLifecycleController
-	client       *http.Client
-	status       EngineUpdateStatus
-	auditLogger  func(action, details string)
+	mu             sync.RWMutex
+	binDir         string
+	manifestPath   string
+	controller     NodeLifecycleController
+	client         *http.Client
+	downloadClient *http.Client
+	status         EngineUpdateStatus
+	auditLogger    func(action, details string)
 }
 
 func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleController, auditLogger func(action, details string)) *EngineUpdater {
@@ -107,6 +109,19 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 		hasUpdate = IsNewerVersion(targetVer, currentVer)
 	}
 
+	downloadTransport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}
+
 	return &EngineUpdater{
 		binDir:       binDir,
 		manifestPath: manifestPath,
@@ -114,6 +129,10 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 		auditLogger:  auditLogger,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+		},
+		downloadClient: &http.Client{
+			Transport: downloadTransport,
+			Timeout:   15 * time.Minute,
 		},
 		status: EngineUpdateStatus{
 			CurrentVersion: currentVer,
@@ -914,8 +933,12 @@ func (u *EngineUpdater) DownloadAndApplyUpdate(targetVersion, dataPath string) e
 	}
 	u.mu.Unlock()
 
-	// Download package
-	pkgResp, err := u.client.Get(assetUrl)
+	// Download package with 15-minute streaming timeout
+	dClient := u.downloadClient
+	if dClient == nil {
+		dClient = u.client
+	}
+	pkgResp, err := dClient.Get(assetUrl)
 	if err != nil {
 		u.recordFailure("Failed downloading engine package (check internet connection)", err)
 		return err
