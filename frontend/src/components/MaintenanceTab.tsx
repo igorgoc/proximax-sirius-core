@@ -582,15 +582,15 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
             message: `New release ${data.latestVersion} available upstream (current: ${data.currentVersion || 'v1.9.8'}).`,
             time: timeStr,
             isError: false,
-            repo: 'proximax-storage/cpp-xpx-chain',
+            repo: 'igorgoc/cpp-xpx-chain',
             version: data.latestVersion,
           });
         } else {
           setCheckFeedback({
-            message: `Configurations and protocol are up to date with official upstream (${data.currentVersion || 'v1.9.8'}).`,
+            message: `Node is active and on the newest version (${data.currentVersion || 'v1.9.8'}).`,
             time: timeStr,
             isError: false,
-            repo: 'proximax-storage/cpp-xpx-chain',
+            repo: 'igorgoc/cpp-xpx-chain',
             version: data.currentVersion || 'v1.9.8',
           });
         }
@@ -599,13 +599,15 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
           message: data?.error || 'Failed to check GitHub releases',
           time: new Date().toLocaleTimeString(),
           isError: true,
+          repo: 'igorgoc/cpp-xpx-chain',
         });
       }
     } catch (e: any) {
       setCheckFeedback({
-        message: e?.message || 'Network error while querying GitHub API',
+        message: e.message || 'Network error while contacting GitHub',
         time: new Date().toLocaleTimeString(),
         isError: true,
+        repo: 'igorgoc/cpp-xpx-chain',
       });
     } finally {
       setCheckingUpdate(false);
@@ -1520,7 +1522,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                   <span className={updateInfo?.hasUpdate ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
                     {updateInfo?.hasUpdate
                       ? `Update ${updateInfo.latestVersion} Available`
-                      : `Up to Date (${updateInfo?.currentVersion || 'v1.9.8'})`}
+                      : `Active & Up to Date (${updateInfo?.currentVersion || 'v1.9.8'})`}
                   </span>
                 </div>
 

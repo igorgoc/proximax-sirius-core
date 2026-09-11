@@ -102,6 +102,11 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 		}
 	}
 
+	hasUpdate := !isInstalled
+	if isInstalled {
+		hasUpdate = IsNewerVersion(targetVer, currentVer)
+	}
+
 	return &EngineUpdater{
 		binDir:       binDir,
 		manifestPath: manifestPath,
@@ -116,7 +121,7 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 			State:          "idle",
 			IsInstalled:    isInstalled,
 			IsInitialSetup: !isInstalled,
-			HasUpdate:      !isInstalled,
+			HasUpdate:      hasUpdate,
 		},
 	}
 }
@@ -154,33 +159,27 @@ func (u *EngineUpdater) LoadManifest() (*CompatibilityManifest, error) {
 	return &manifest, nil
 }
 
-// IsVersionCompatible checks if a version tag satisfies [min, max]
-func IsVersionCompatible(version, minVer, maxVer string) bool {
-	vClean := strings.TrimPrefix(strings.TrimPrefix(version, "release-"), "v")
-	minClean := strings.TrimPrefix(strings.TrimPrefix(minVer, "release-"), "v")
-	maxClean := strings.TrimPrefix(strings.TrimPrefix(maxVer, "release-"), "v")
-
-	// Compare semver components
-	vParts := parseSemver(vClean)
-	minParts := parseSemver(minClean)
-	maxParts := parseSemver(maxClean)
-
-	if compareSemver(vParts, minParts) < 0 {
-		return false
-	}
-	if compareSemver(vParts, maxParts) > 0 {
-		return false
-	}
-	return true
+// CleanVersion normalizes a version string by trimming whitespace, "release-", and "v" prefixes.
+func CleanVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "release-")
+	v = strings.TrimPrefix(v, "v")
+	return v
 }
 
-func parseSemver(s string) [3]int {
+// ParseSemver extracts [major, minor, patch] from a version string (e.g. "v1.9.8", "1.9.8", "release-v1.9.8").
+func ParseSemver(s string) [3]int {
+	clean := CleanVersion(s)
+	if idx := strings.IndexAny(clean, "-+"); idx != -1 {
+		clean = clean[:idx]
+	}
 	var parts [3]int
-	fmt.Sscanf(s, "%d.%d.%d", &parts[0], &parts[1], &parts[2])
+	fmt.Sscanf(clean, "%d.%d.%d", &parts[0], &parts[1], &parts[2])
 	return parts
 }
 
-func compareSemver(a, b [3]int) int {
+// CompareSemver returns -1 if a < b, 0 if a == b, 1 if a > b.
+func CompareSemver(a, b [3]int) int {
 	for i := 0; i < 3; i++ {
 		if a[i] < b[i] {
 			return -1
@@ -190,6 +189,44 @@ func compareSemver(a, b [3]int) int {
 		}
 	}
 	return 0
+}
+
+// IsNewerVersion returns true ONLY if remoteVer is strictly newer than currentVer according to semver.
+func IsNewerVersion(remoteVer, currentVer string) bool {
+	cleanRemote := CleanVersion(remoteVer)
+	cleanCurrent := CleanVersion(currentVer)
+	if cleanRemote == "" {
+		return false
+	}
+	if cleanCurrent == "" || cleanCurrent == "none" {
+		return true
+	}
+	rParts := ParseSemver(cleanRemote)
+	cParts := ParseSemver(cleanCurrent)
+	return CompareSemver(rParts, cParts) > 0
+}
+
+func parseSemver(s string) [3]int {
+	return ParseSemver(s)
+}
+
+func compareSemver(a, b [3]int) int {
+	return CompareSemver(a, b)
+}
+
+// IsVersionCompatible checks if a version tag satisfies [min, max]
+func IsVersionCompatible(version, minVer, maxVer string) bool {
+	vParts := ParseSemver(version)
+	minParts := ParseSemver(minVer)
+	maxParts := ParseSemver(maxVer)
+
+	if CompareSemver(vParts, minParts) < 0 {
+		return false
+	}
+	if CompareSemver(vParts, maxParts) > 0 {
+		return false
+	}
+	return true
 }
 
 // PlatformAssetDescriptor returns the expected binary and package name for current platform
@@ -717,20 +754,15 @@ func (u *EngineUpdater) CheckUpdate(simulateVersion string) (*EngineUpdateStatus
 			HtmlUrl string `json:"html_url"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&ghRelease); err == nil {
-			cleanTag := strings.TrimPrefix(ghRelease.TagName, "release-")
-			cleanCurrent := strings.TrimPrefix(u.status.CurrentVersion, "release-")
+			isNewer := !isInstalled || IsNewerVersion(ghRelease.TagName, u.status.CurrentVersion)
+			isCompat := IsVersionCompatible(ghRelease.TagName, manifest.EngineMinCompatible, manifest.EngineMaxCompatible)
 
-			isNewer := !isInstalled || compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) > 0
-			if !isNewer && cleanTag != cleanCurrent && (strings.Contains(cleanCurrent, "local") || (compareSemver(parseSemver(cleanTag), parseSemver(cleanCurrent)) == 0 && cleanTag != cleanCurrent)) {
-				isNewer = true
-			}
-			isCompat := IsVersionCompatible(cleanTag, manifest.EngineMinCompatible, manifest.EngineMaxCompatible)
+			u.status.TargetVersion = ghRelease.TagName
+			u.status.ReleaseNotes = ghRelease.Body
+			u.status.ReleaseUrl = ghRelease.HtmlUrl
 
-			if (isNewer || !isInstalled) && isCompat {
+			if isNewer && isCompat {
 				u.status.HasUpdate = true
-				u.status.TargetVersion = ghRelease.TagName
-				u.status.ReleaseNotes = ghRelease.Body
-				u.status.ReleaseUrl = ghRelease.HtmlUrl
 			} else {
 				u.status.HasUpdate = false
 			}

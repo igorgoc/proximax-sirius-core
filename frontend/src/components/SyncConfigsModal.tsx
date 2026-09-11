@@ -233,7 +233,7 @@ export const SyncConfigsModal: React.FC<SyncConfigsModalProps> = ({
                       <span className="font-mono text-[10px] uppercase opacity-75">{getStepStatus(0)}</span>
                     </div>
                     <p className="text-[11px] opacity-80 mt-0.5">
-                      Streams raw config files from <code className="text-slate-300">proximax-storage/cpp-xpx-chain/master/resources</code>.
+                      Streams raw config files from <code className="text-slate-300">igorgoc/cpp-xpx-chain/master/resources</code>.
                     </p>
                   </div>
                 </div>

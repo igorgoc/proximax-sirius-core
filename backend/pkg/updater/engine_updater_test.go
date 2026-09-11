@@ -535,3 +535,37 @@ func TestEngineUpdater_InitialSetup_WhenNoBinary(t *testing.T) {
 	}
 }
 
+func TestEngineUpdater_CheckUpdate_Live(t *testing.T) {
+	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	_ = os.MkdirAll(binDir, 0755)
+
+	_, binaryName := PlatformAssetDescriptor()
+	_ = os.WriteFile(filepath.Join(binDir, binaryName), []byte("#!/bin/sh\nexit 0\n"), 0755)
+	_ = os.WriteFile(filepath.Join(binDir, "version.txt"), []byte("v1.9.8\n"), 0644)
+
+	manifestPath := filepath.Join(tmpDir, "engine.compat.json")
+	manifestContent := `{
+		"engineRepository": "igorgoc/cpp-xpx-chain",
+		"engineMinCompatible": "v1.9.0",
+		"engineMaxCompatible": "v1.9.99",
+		"recommendedVersion": "v1.9.8",
+		"releasePublicKeyHex": "538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
+	}`
+	_ = os.WriteFile(manifestPath, []byte(manifestContent), 0644)
+
+	eu := NewEngineUpdater(binDir, manifestPath, &MockLifecycleController{}, nil)
+	status, err := eu.CheckUpdate("")
+	if err != nil {
+		t.Skipf("Skipping live check due to network: %v", err)
+	}
+
+	if status.HasUpdate {
+		t.Errorf("Expected HasUpdate=false when running on v1.9.8 against igorgoc/cpp-xpx-chain latest, got true (target: %s, current: %s)", status.TargetVersion, status.CurrentVersion)
+	}
+	if status.CurrentVersion != "v1.9.8" {
+		t.Errorf("Expected CurrentVersion=v1.9.8, got %s", status.CurrentVersion)
+	}
+}
+
+

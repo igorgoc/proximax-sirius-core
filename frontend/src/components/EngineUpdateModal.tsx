@@ -70,6 +70,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
   if (!isOpen) return null;
 
   const isInitial = localStatus?.isInstalled === false || localStatus?.isInitialSetup;
+  const hasUpdate = localStatus?.hasUpdate || false;
   const currentVer = isInitial ? 'Not Installed' : (localStatus?.currentVersion || 'v1.9.8');
   const targetVer = localStatus?.targetVersion || 'v1.9.8';
   const isApplying = localStatus?.isApplying || false;
@@ -118,7 +119,6 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
       if (stepIndex === 2) return 'failed';
     }
     if (isFailed && stepIndex === 0) return 'failed';
-
     if (state === 'verifying') {
       if (stepIndex === 0) return 'active';
       return 'pending';
@@ -151,7 +151,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="text-base font-semibold text-zinc-100">
-                  {isInitial ? 'Sirius Engine Initial Setup' : 'Sirius Core Engine Updater'}
+                  {isInitial ? 'Sirius Engine Initial Setup' : 'Sirius Core Engine Manager'}
                 </h3>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">
                   cpp-xpx-chain
@@ -160,7 +160,9 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
               <p className="text-xs text-zinc-400 mt-0.5">
                 {isInitial 
                   ? 'Cryptographically verified download and installation of native Sirius consensus engine' 
-                  : 'Atomic, signed, zero-downtime C++ blockchain engine updates with automated rollback'}
+                  : hasUpdate
+                  ? 'Atomic, signed, zero-downtime C++ blockchain engine updates with automated rollback'
+                  : 'Sirius consensus engine is active and up to date with official release'}
               </p>
             </div>
           </div>
@@ -187,25 +189,45 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
                 <span className={`text-xs px-2 py-0.5 rounded border ${
                   isInitial 
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' 
+                    : !hasUpdate
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium'
                     : 'bg-zinc-700/50 text-zinc-300 border-zinc-600/50'
                 }`}>
-                  {isInitial ? 'Setup Required' : 'Installed'}
+                  {isInitial ? 'Setup Required' : !hasUpdate ? 'Active & Up to Date' : 'Update Available'}
                 </span>
               </div>
             </div>
 
             <div>
               <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider block mb-1">
-                Target Release
+                {hasUpdate ? 'Target Release' : 'Latest Release'}
               </span>
               <div className="flex items-center space-x-2">
                 <span className="font-mono text-lg font-bold text-indigo-400">{targetVer}</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
-                  Verified Compatible
+                <span className={`text-xs px-2 py-0.5 rounded font-medium border ${
+                  hasUpdate
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-zinc-700/50 text-zinc-300 border-zinc-600/50'
+                }`}>
+                  {hasUpdate ? 'Verified Compatible' : 'Current Release'}
                 </span>
               </div>
             </div>
           </div>
+
+          {/* Up to date Confirmation Notice */}
+          {!isInitial && !hasUpdate && !isApplying && !isCompleted && !isRolledBack && !isFailed && (
+            <div className="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 flex items-start space-x-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="font-semibold text-xs text-white">Sirius Engine is Up to Date</div>
+                <div className="text-[11px] text-emerald-400/90 mt-0.5 leading-relaxed">
+                  Your node is currently running the latest verified binary ({currentVer}) from{' '}
+                  <span className="font-mono text-white">igorgoc/cpp-xpx-chain</span>. No update is required.
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Release Notes */}
           {localStatus?.releaseNotes && (
@@ -460,16 +482,34 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
               ? (isInitial ? 'Setup failed — check connection' : 'Update failed')
               : isCompleted 
               ? (isInitial ? 'Engine ready for node launch' : 'Engine ready') 
+              : !hasUpdate && !isInitial
+              ? 'Engine binary is up to date'
               : 'Safe to proceed'}
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* Reinstall / Force Verify option if already up to date */}
+            {!isInitial && !hasUpdate && !isApplying && !isCompleted && !isRolledBack && !isFailed && (
+              <button
+                type="button"
+                onClick={() => handleApply('normal')}
+                disabled={isApplying}
+                className="text-xs text-zinc-400 hover:text-zinc-200 underline mr-2 transition-colors disabled:opacity-40"
+              >
+                Reinstall / Force Verify ({targetVer})
+              </button>
+            )}
+
             <button
               onClick={onClose}
               disabled={isApplying}
-              className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors disabled:opacity-40"
+              className={`px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 ${
+                !hasUpdate && !isInitial && !isCompleted && !isRolledBack && !isFailed
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-md shadow-indigo-600/20'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+              }`}
             >
-              {isCompleted || isRolledBack ? (isInitial ? 'Enter Cockpit' : 'Close') : 'Cancel'}
+              {isCompleted || isRolledBack ? (isInitial ? 'Enter Cockpit' : 'Close') : (!hasUpdate && !isInitial ? 'Close' : 'Cancel')}
             </button>
 
             {isFailed && (
@@ -483,7 +523,7 @@ export const EngineUpdateModal: React.FC<EngineUpdateModalProps> = ({
               </button>
             )}
 
-            {!isCompleted && !isRolledBack && !isFailed && (
+            {(isInitial || hasUpdate) && !isCompleted && !isRolledBack && !isFailed && (
               <button
                 onClick={() => handleApply('normal')}
                 disabled={isApplying}

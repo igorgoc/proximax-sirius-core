@@ -19,8 +19,8 @@ import (
 
 const (
 	CurrentVersion = "v1.9.8"
-	GitHubRepo     = "proximax-storage/cpp-xpx-chain"
-	OfficialBase   = "https://raw.githubusercontent.com/proximax-storage/cpp-xpx-chain/master/resources"
+	GitHubRepo     = "igorgoc/cpp-xpx-chain"
+	OfficialBase   = "https://raw.githubusercontent.com/igorgoc/cpp-xpx-chain/master/resources"
 )
 
 type UpdateInfo struct {
@@ -43,6 +43,23 @@ type UpdateManager struct {
 	resourcesDir string
 	supervisor   *supervisor.ProcessSupervisor
 	httpClient   *http.Client
+}
+
+func (um *UpdateManager) getRepo() string {
+	compatPath := filepath.Join(filepath.Dir(um.resourcesDir), "engine.compat.json")
+	if compatBytes, err := os.ReadFile(compatPath); err == nil {
+		var m struct {
+			EngineRepository string `json:"engineRepository"`
+		}
+		if json.Unmarshal(compatBytes, &m) == nil && m.EngineRepository != "" {
+			return m.EngineRepository
+		}
+	}
+	return GitHubRepo
+}
+
+func (um *UpdateManager) getOfficialBase() string {
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/master/resources", um.getRepo())
 }
 
 func NewUpdateManager(resourcesDir string, supervisor *supervisor.ProcessSupervisor) *UpdateManager {
@@ -72,7 +89,8 @@ func (um *UpdateManager) CheckUpdate() (*UpdateInfo, error) {
 	um.mu.Lock()
 	defer um.mu.Unlock()
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", GitHubRepo), nil)
+	repo := um.getRepo()
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo), nil)
 	if err != nil {
 		return &um.lastInfo, err
 	}
@@ -95,23 +113,22 @@ func (um *UpdateManager) CheckUpdate() (*UpdateInfo, error) {
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&ghRelease); err == nil {
-			cleanTag := strings.TrimPrefix(ghRelease.TagName, "release-")
-			cleanCurrent := strings.TrimPrefix(CurrentVersion, "release-")
+			cleanTag := CleanVersion(ghRelease.TagName)
+			tagDisplay := ghRelease.TagName
+			if !strings.HasPrefix(tagDisplay, "v") && cleanTag != "" {
+				tagDisplay = "v" + cleanTag
+			}
 
-			um.lastInfo.LatestVersion = cleanTag
-			um.lastInfo.CurrentVersion = cleanCurrent
+			um.lastInfo.LatestVersion = tagDisplay
+			um.lastInfo.CurrentVersion = CurrentVersion
 			um.lastInfo.ReleaseTitle = ghRelease.Name
 			um.lastInfo.ReleaseNotes = ghRelease.Body
 			um.lastInfo.ReleaseUrl = ghRelease.HtmlUrl
 			um.lastInfo.PublishedAt = ghRelease.PublishedAt
 			um.lastInfo.LastChecked = time.Now()
 
-			// Check if latest version is newer
-			if cleanTag != "" && cleanTag != cleanCurrent && !strings.Contains(cleanCurrent, cleanTag) {
-				um.lastInfo.HasUpdate = true
-			} else {
-				um.lastInfo.HasUpdate = false
-			}
+			// Check if latest version is strictly newer using semver
+			um.lastInfo.HasUpdate = IsNewerVersion(ghRelease.TagName, CurrentVersion)
 		}
 	} else {
 		um.lastInfo.LastChecked = time.Now()
@@ -172,7 +189,7 @@ func (um *UpdateManager) ApplyOfficialUpdate(dataPath string) error {
 		um.lastInfo.UpdateMessage = fmt.Sprintf("Fetching & verifying %s (%d/%d)...", fileName, i+1, len(filesToUpdate))
 		um.mu.Unlock()
 
-		fileUrl := fmt.Sprintf("%s/%s", OfficialBase, fileName)
+		fileUrl := fmt.Sprintf("%s/%s", um.getOfficialBase(), fileName)
 		resp, err := um.httpClient.Get(fileUrl)
 		if err != nil || resp.StatusCode != http.StatusOK {
 			if resp != nil {

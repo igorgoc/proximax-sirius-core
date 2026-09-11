@@ -59,3 +59,46 @@ func TestValidationLogic(t *testing.T) {
 		t.Fatalf("Expected 0600 permissions, got: %v", info.Mode().Perm())
 	}
 }
+
+func TestVersionComparisonLogic(t *testing.T) {
+	tests := []struct {
+		remote   string
+		current  string
+		expected bool
+	}{
+		{"v1.9.8", "v1.9.8", false},
+		{"1.9.8", "v1.9.8", false},
+		{"v1.9.8", "1.9.8", false},
+		{"v1.9.7", "v1.9.8", false},
+		{"1.9.7", "1.9.8", false},
+		{"v1.9.9", "v1.9.8", true},
+		{"v1.10.0", "v1.9.8", true},
+		{"v2.0.0", "v1.9.8", true},
+		{"release-v1.9.8", "v1.9.8", false},
+		{"v1.9.8", "none", true},
+		{"v1.9.8", "", true},
+		{"", "v1.9.8", false},
+	}
+
+	for _, tc := range tests {
+		result := IsNewerVersion(tc.remote, tc.current)
+		if result != tc.expected {
+			t.Errorf("IsNewerVersion(%q, %q) = %v; want %v", tc.remote, tc.current, result, tc.expected)
+		}
+	}
+}
+
+func TestCheckUpdate_Live(t *testing.T) {
+	um := NewUpdateManager(t.TempDir(), nil)
+	info, err := um.CheckUpdate()
+	if err != nil {
+		t.Skipf("Skipping live GitHub check due to network: %v", err)
+	}
+	if info.HasUpdate {
+		t.Errorf("Expected HasUpdate=false when running on v1.9.8 against igorgoc/cpp-xpx-chain latest, got true (latest: %s, current: %s)", info.LatestVersion, info.CurrentVersion)
+	}
+	if info.LatestVersion != "v1.9.8" {
+		t.Errorf("Expected LatestVersion to be v1.9.8, got %s", info.LatestVersion)
+	}
+}
+
