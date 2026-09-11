@@ -187,49 +187,49 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath 
             <span>Default Compression Format</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-lg">
             <button
               type="button"
               onClick={() => handleUpdate('defaultCompressionFormat', 'tar.zst')}
-              className={`p-3 rounded-lg border text-left transition-all ${
+              className={`py-2 px-3 rounded-lg border text-left transition-all ${
                 prefs.defaultCompressionFormat === 'tar.zst'
                   ? 'bg-emerald-950/20 border-emerald-500/50 text-white'
                   : 'bg-[#181B20] border-[#262B34] text-slate-400 hover:text-white'
               }`}
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-mono font-bold">.tar.zst (Zstandard)</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Archive className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="text-xs font-mono font-bold">.tar.zst</span>
+                </div>
                 {prefs.defaultCompressionFormat === 'tar.zst' && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
                     Active Default
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Multi-threaded Zstandard compression. 5x faster backup and decompression with high ratio.
-              </p>
             </button>
 
             <button
               type="button"
               onClick={() => handleUpdate('defaultCompressionFormat', 'tar.gz')}
-              className={`p-3 rounded-lg border text-left transition-all ${
+              className={`py-2 px-3 rounded-lg border text-left transition-all ${
                 prefs.defaultCompressionFormat === 'tar.gz'
                   ? 'bg-emerald-950/20 border-emerald-500/50 text-white'
                   : 'bg-[#181B20] border-[#262B34] text-slate-400 hover:text-white'
               }`}
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-mono font-bold">.tar.gz (Gzip)</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Archive className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="text-xs font-mono font-bold">.tar.gz</span>
+                </div>
                 {prefs.defaultCompressionFormat === 'tar.gz' && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/40">
                     Active Default
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Universal standard gzip format. Broad compatibility with legacy archive extractors.
-              </p>
             </button>
           </div>
         </div>
@@ -260,20 +260,13 @@ export const SnapshotSubTab: React.FC<SnapshotSubTabProps> = ({ currentDataPath 
               </span>
             </div>
 
-            <div className="p-3 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-xs">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-7 h-7 rounded bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-                  <ShieldCheck className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="font-medium text-slate-200">Cryptographic Signature Verification</div>
-                  <div className="text-[11px] text-slate-400">
-                    Release manifests and snapshot archives are cryptographically verified in the background using official Ed25519 signatures and SHA-256 before extraction.
-                  </div>
-                </div>
+            <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-xs">
+              <div className="flex items-center space-x-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-medium text-slate-200">Signature verified</span>
               </div>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 shrink-0 ml-3">
-                Fail-Closed Enforced
+                Signed
               </span>
             </div>
           </div>

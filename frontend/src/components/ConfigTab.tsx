@@ -786,14 +786,20 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
           </section>
 
           <section className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 space-y-4">
-            <h3 className="text-xs font-semibold tracking-wider uppercase text-slate-400">
-              Transport Identity (Boot Key)
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold tracking-wider uppercase text-slate-400 flex items-center space-x-2">
+                <Key className="w-3.5 h-3.5 text-blue-400" />
+                <span>Node boot private key</span>
+              </h3>
+              <span className="text-[11px] text-slate-500">
+                Stored in `config-user.properties`
+              </span>
+            </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs text-slate-300 font-medium">
-                  Node Boot Private Key (P2P Mesh Identity)
+                  Node boot private key
                 </label>
                 <button
                   type="button"

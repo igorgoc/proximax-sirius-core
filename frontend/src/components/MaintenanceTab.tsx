@@ -1119,13 +1119,16 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                           setBackupFormat('zst');
                         }}
                         disabled={isBackupRunning}
-                        className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-between ${
+                        className={`py-1.5 px-2.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-between ${
                           backupFormat === 'zst'
                             ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/50'
                             : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
                         }`}
                       >
-                        <span>.tar.zst (Zstandard)</span>
+                        <div className="flex items-center space-x-1.5">
+                          <Archive className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>.tar.zst</span>
+                        </div>
                         {prefs.defaultCompressionFormat === 'tar.zst' && (
                           <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-sans">
                             default
@@ -1139,13 +1142,16 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                           setBackupFormat('gz');
                         }}
                         disabled={isBackupRunning}
-                        className={`py-1.5 px-2 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-between ${
+                        className={`py-1.5 px-2.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-between ${
                           backupFormat === 'gz'
                             ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/50'
                             : 'bg-[#181B20] text-slate-400 hover:text-white border border-[#262B34]'
                         }`}
                       >
-                        <span>.tar.gz (Gzip)</span>
+                        <div className="flex items-center space-x-1.5">
+                          <Archive className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>.tar.gz</span>
+                        </div>
                         {prefs.defaultCompressionFormat === 'tar.gz' && (
                           <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-sans">
                             default
@@ -1285,22 +1291,15 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                   </div>
 
                   {/* Cryptographic Authenticity Invariant */}
-                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px]">
+                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-2.5 min-w-0">
-                      <div className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                      <div className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                         <ShieldCheck className="w-3.5 h-3.5" />
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center space-x-1.5 text-slate-400 text-[10.5px]">
-                          <span>Authenticity Verification</span>
-                        </div>
-                        <div className="text-slate-200 text-xs truncate">
-                          Verified with official signature before saving.
-                        </div>
-                      </div>
+                      <span className="text-slate-200 font-medium truncate">Signature verified</span>
                     </div>
-                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 flex-shrink-0 ml-2">
-                      Fail-Closed
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 shrink-0 ml-2">
+                      Signed
                     </span>
                   </div>
 
