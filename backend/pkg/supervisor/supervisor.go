@@ -234,10 +234,18 @@ func NewProcessSupervisor(chainConfigPath string) *ProcessSupervisor {
 	absChainConfig, _ := filepath.Abs(chainConfigPath)
 	binDir := filepath.Join(filepath.Dir(absChainConfig), "bin")
 	if _, err := os.Stat(filepath.Join(binDir, "sirius.bc")); err != nil {
-		if stat, err2 := os.Stat("./bin/sirius.bc"); err2 == nil && !stat.IsDir() {
-			binDir, _ = filepath.Abs("./bin")
-		} else if stat3, err3 := os.Stat("../bin/sirius.bc"); err3 == nil && !stat3.IsDir() {
-			binDir, _ = filepath.Abs("../bin")
+		if execPath, err := os.Executable(); err == nil {
+			execBin := filepath.Join(filepath.Dir(execPath), "bin")
+			if stat, err := os.Stat(filepath.Join(execBin, "sirius.bc")); err == nil && !stat.IsDir() {
+				binDir = execBin
+			}
+		}
+		if _, err := os.Stat(filepath.Join(binDir, "sirius.bc")); err != nil {
+			if stat, err2 := os.Stat("./bin/sirius.bc"); err2 == nil && !stat.IsDir() {
+				binDir, _ = filepath.Abs("./bin")
+			} else if stat3, err3 := os.Stat("../bin/sirius.bc"); err3 == nil && !stat3.IsDir() {
+				binDir, _ = filepath.Abs("../bin")
+			}
 		}
 	}
 
