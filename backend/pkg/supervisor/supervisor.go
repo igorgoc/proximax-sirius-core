@@ -193,6 +193,8 @@ type ProcessSupervisor struct {
 	wslCacheMu      sync.RWMutex
 	wslCachedStatus WSLStatus
 	wslCacheTime    time.Time
+
+	currentDataDir string
 }
 
 type LogStats struct {
@@ -378,6 +380,7 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 	} else if !filepath.IsAbs(localDataDir) {
 		localDataDir = filepath.Join(dc.chainConfigPath, "..", localDataDir)
 	}
+	dc.currentDataDir = localDataDir
 
 	// 1. Pre-flight Validation: Check if the configured data directory or its mount volume exists
 	if _, err := os.Stat(localDataDir); os.IsNotExist(err) {
@@ -452,15 +455,27 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 				dc.broadcastLog(fmt.Sprintf("[Supervisor] Note: PortProxy setup: %v", err))
 			}
 		}()
-		return dc.executeWSL(ctx, siriusBin, dc.chainConfigPath, libEnvList)
+		return dc.executeWSL(ctx, siriusBin, dc.chainConfigPath, localDataDir, libEnvList)
 	}
 
-	if _, e := os.Stat(recoveryBin); e == nil {
-		dc.broadcastLog("[Supervisor] Running native catapult.recovery pre-flight check...")
-		recCmd := exec.Command(recoveryBin, dc.chainConfigPath)
-		recCmd.Env = append(os.Environ(), libEnvList...)
-		_ = recCmd.Run()
-		dc.clearLocks(localDataDir)
+	// Only run catapult.recovery if we have existing chain data beyond the nemesis block (height > 1)
+	shouldRunRecovery := false
+	if indexPath := filepath.Join(localDataDir, "index.dat"); isPathExists(indexPath) {
+		if data, err := os.ReadFile(indexPath); err == nil && len(data) >= 8 {
+			if binary.LittleEndian.Uint64(data[:8]) > 1 {
+				shouldRunRecovery = true
+			}
+		}
+	}
+
+	if shouldRunRecovery {
+		if _, e := os.Stat(recoveryBin); e == nil {
+			dc.broadcastLog("[Supervisor] Running native catapult.recovery pre-flight check...")
+			recCmd := exec.Command(recoveryBin, dc.chainConfigPath)
+			recCmd.Env = append(os.Environ(), libEnvList...)
+			_ = recCmd.Run()
+			dc.clearLocks(localDataDir)
+		}
 	}
 
 	dc.broadcastLog(fmt.Sprintf("[Supervisor] Starting native Sirius Core process from %s...", siriusBin))
@@ -782,6 +797,9 @@ func (dc *ProcessSupervisor) StopNode() error {
 	if dc.cmdCancel != nil {
 		dc.cmdCancel()
 	}
+	if dc.currentDataDir != "" {
+		dc.clearLocks(dc.currentDataDir)
+	}
 	dc.isRunning = false
 	dc.cmd = nil
 	dc.lastError = ""
@@ -851,8 +869,14 @@ func (dc *ProcessSupervisor) GetStatus() (ContainerStatus, error) {
 		return StatusStarting, nil
 	}
 	if dc.isRunning && dc.cmd != nil && dc.cmd.Process != nil {
-		if err := dc.cmd.Process.Signal(syscall.Signal(0)); err == nil {
-			return StatusRunning, nil
+		if runtime.GOOS == "windows" {
+			if dc.cmd.ProcessState == nil {
+				return StatusRunning, nil
+			}
+		} else {
+			if err := dc.cmd.Process.Signal(syscall.Signal(0)); err == nil {
+				return StatusRunning, nil
+			}
 		}
 	}
 	if !dc.userIntendedRunning {
@@ -929,28 +953,53 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 			}
 		}
 
-		psCmd := exec.Command("ps", "-o", "%cpu,rss", "-p", strconv.Itoa(runningPid))
-		if out, err := psCmd.Output(); err == nil {
-			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-			if len(lines) >= 2 {
-				fields := strings.Fields(lines[1])
-				if len(fields) >= 2 {
-					metrics.CpuPercent = fields[0] + "%"
-					if rssKB, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
-						metrics.MemoryUsage = formatBytes(rssKB * 1024)
+		if runtime.GOOS == "windows" {
+			status := dc.ProbeWSLStatus()
+			distro := status.DistroName
+			if distro == "" {
+				distro = "Ubuntu-22.04"
+			}
+			if out, err := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "ps", "-o", "%cpu,rss", "-C", "sirius.bc").Output(); err == nil {
+				lines := strings.Split(strings.TrimSpace(cleanWSLOutput(out)), "\n")
+				if len(lines) >= 2 {
+					fields := strings.Fields(lines[1])
+					if len(fields) >= 2 {
+						metrics.CpuPercent = fields[0] + "%"
+						if rssKB, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+							metrics.MemoryUsage = formatBytes(rssKB * 1024)
+						}
 					}
 				}
 			}
-		}
-
-		// Fast thread count
-		if runtime.GOOS == "linux" {
-			if tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", runningPid)); err == nil && len(tasks) > 0 {
-				metrics.ThreadsCount = len(tasks)
+			if thOut, thErr := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "sh", "-c", "ps -o nlwp -C sirius.bc 2>/dev/null | tail -n +2").Output(); thErr == nil {
+				if count, err := strconv.Atoi(strings.TrimSpace(cleanWSLOutput(thOut))); err == nil && count > 0 {
+					metrics.ThreadsCount = count
+				}
 			}
-		} else if thOut, thErr := exec.Command("sh", "-c", fmt.Sprintf("ps -M -p %d 2>/dev/null | tail -n +2 | wc -l", runningPid)).Output(); thErr == nil {
-			if count, err := strconv.Atoi(strings.TrimSpace(string(thOut))); err == nil && count > 0 {
-				metrics.ThreadsCount = count
+		} else {
+			psCmd := exec.Command("ps", "-o", "%cpu,rss", "-p", strconv.Itoa(runningPid))
+			if out, err := psCmd.Output(); err == nil {
+				lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+				if len(lines) >= 2 {
+					fields := strings.Fields(lines[1])
+					if len(fields) >= 2 {
+						metrics.CpuPercent = fields[0] + "%"
+						if rssKB, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+							metrics.MemoryUsage = formatBytes(rssKB * 1024)
+						}
+					}
+				}
+			}
+
+			// Fast thread count
+			if runtime.GOOS == "linux" {
+				if tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", runningPid)); err == nil && len(tasks) > 0 {
+					metrics.ThreadsCount = len(tasks)
+				}
+			} else if thOut, thErr := exec.Command("sh", "-c", fmt.Sprintf("ps -M -p %d 2>/dev/null | tail -n +2 | wc -l", runningPid)).Output(); thErr == nil {
+				if count, err := strconv.Atoi(strings.TrimSpace(string(thOut))); err == nil && count > 0 {
+					metrics.ThreadsCount = count
+				}
 			}
 		}
 

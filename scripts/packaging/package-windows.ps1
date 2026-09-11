@@ -83,6 +83,9 @@ New-Item -ItemType Directory -Path $TargetLogs -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetBin -Force | Out-Null
 if (Test-Path (Join-Path $RootDir "bin")) {
     Get-ChildItem -Path (Join-Path $RootDir "bin\*") -Exclude "*.so*" | Copy-Item -Destination $TargetBin -Force -ErrorAction SilentlyContinue
+    if (Test-Path (Join-Path $RootDir "bin\libatomic.so.1")) {
+        Copy-Item (Join-Path $RootDir "bin\libatomic.so.1") (Join-Path $TargetBin "libatomic.so.1") -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Copy engine & manager compatibility manifests

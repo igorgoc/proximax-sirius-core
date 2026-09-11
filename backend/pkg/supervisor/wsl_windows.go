@@ -5,6 +5,7 @@ package supervisor
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -89,6 +90,21 @@ func ToWSLPath(winPath string) string {
 		return fmt.Sprintf("/mnt/%s%s", driveLetter, rest)
 	}
 	return filepath.ToSlash(clean)
+}
+
+// FromWSLPath converts a WSL path (/mnt/c/Sirius_data) into a Windows host path (C:\Sirius_data)
+func FromWSLPath(wslPath string) string {
+	if wslPath == "" {
+		return ""
+	}
+	clean := filepath.ToSlash(strings.TrimSpace(wslPath))
+	if strings.HasPrefix(clean, "/mnt/") && len(clean) >= 7 && (len(clean) == 7 || clean[6] == '/') {
+		driveLetter := strings.ToUpper(string(clean[5]))
+		rest := clean[6:]
+		rest = strings.ReplaceAll(rest, "/", "\\")
+		return fmt.Sprintf("%s:%s", driveLetter, rest)
+	}
+	return filepath.FromSlash(wslPath)
 }
 
 func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
@@ -286,7 +302,7 @@ func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
 }
 
 // executeWSL executes the Sirius Catapult engine inside WSL2, streaming logs and orchestrating processes
-func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, chainConfigPath string, libEnvList []string) error {
+func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, chainConfigPath string, localDataDir string, libEnvList []string) error {
 	status := dc.ProbeWSLStatus()
 	if status.State != WSL2Ready {
 		return fmt.Errorf("cannot start Sirius engine: WSL2 subsystem is not ready (%s: %s)", status.State, status.ErrorMessage)
@@ -297,19 +313,56 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 		distro = "Ubuntu-22.04"
 	}
 
+	// 1. Silent pre-flight self-healing: Ensure essential dynamic runtime dependencies are installed inside WSL (e.g. libatomic1)
+	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+		"sh", "-c", "dpkg -s libatomic1 >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq libatomic1 >/dev/null 2>&1)").Run()
+
 	wslBinDir := ToWSLPath(dc.binPath)
 	wslSiriusBin := ToWSLPath(siriusBin)
 	wslChainConfig := ToWSLPath(chainConfigPath)
 	wslWorkDir := ToWSLPath(filepath.Dir(chainConfigPath))
+	wslDataDir := ToWSLPath(localDataDir)
 
-	// Pre-flight recovery execution inside WSL
+	// Clear any stale locks before starting
+	dc.clearLocks(localDataDir)
+	if wslDataDir != "" {
+		_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+			"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
+	}
+
+	// 2. Pre-flight recovery execution inside WSL - only run if existing chain data has synced beyond nemesis (height > 1)
 	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
-	if _, e := os.Stat(recoveryBin); e == nil {
+	shouldRunRecovery := false
+	if indexPath := filepath.Join(localDataDir, "index.dat"); isPathExists(indexPath) {
+		if data, err := os.ReadFile(indexPath); err == nil && len(data) >= 8 {
+			if binary.LittleEndian.Uint64(data[:8]) > 1 {
+				shouldRunRecovery = true
+			}
+		}
+	}
+
+	// If block height is <= 1, clean incomplete/corrupted statedb leftover from any previous aborted boots
+	// so NemesisBlockLoader can calculate initial state cleanly
+	if !shouldRunRecovery {
+		stateDbDir := filepath.Join(localDataDir, "statedb")
+		if _, sErr := os.Stat(stateDbDir); sErr == nil {
+			_ = os.RemoveAll(stateDbDir)
+		}
+		if wslDataDir != "" {
+			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+				"sh", "-c", fmt.Sprintf("rm -rf '%s'/statedb >/dev/null 2>&1", wslDataDir)).Run()
+		}
+	} else if _, e := os.Stat(recoveryBin); e == nil {
 		wslRecoveryBin := ToWSLPath(recoveryBin)
 		dc.broadcastLog("[Supervisor] Running catapult.recovery pre-flight check inside WSL2...")
 		recCmd := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--cd", wslWorkDir, "--",
 			"env", fmt.Sprintf("LD_LIBRARY_PATH=%s", wslBinDir), wslRecoveryBin, wslChainConfig)
 		_ = recCmd.Run()
+		dc.clearLocks(localDataDir)
+		if wslDataDir != "" {
+			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+				"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
+		}
 	}
 
 	dc.broadcastLog(fmt.Sprintf("[Supervisor] Starting Sirius Core engine in WSL2 (%s) from %s...", distro, wslSiriusBin))
@@ -346,7 +399,11 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 		dc.mu.Lock()
 		dc.isRunning = false
 		dc.cmd = nil
-		dc.clearLocks(filepath.Join(dc.chainConfigPath, "data"))
+		dc.clearLocks(localDataDir)
+		if wslDataDir != "" {
+			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+				"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
+		}
 		userStopped := !dc.userIntendedRunning
 		if waitErr != nil && !userStopped {
 			dc.lastError = fmt.Sprintf("Sirius Core process exited with error: %v", waitErr)

@@ -116,13 +116,29 @@ func (cm *ConfigManager) GetResourcesPath() string {
 	return filepath.Join(cm.basePath, "resources")
 }
 
+func normalizeHostPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if runtime.GOOS == "windows" {
+		clean := filepath.ToSlash(strings.TrimSpace(p))
+		if strings.HasPrefix(clean, "/mnt/") && len(clean) >= 7 && (len(clean) == 7 || clean[6] == '/') {
+			driveLetter := strings.ToUpper(string(clean[5]))
+			rest := strings.ReplaceAll(clean[6:], "/", "\\")
+			return fmt.Sprintf("%s:%s", driveLetter, rest)
+		}
+	}
+	return p
+}
+
 func (cm *ConfigManager) GetDataPath() string {
 	cfg, err := cm.LoadNodeConfig()
 	if err == nil && cfg.DataPath != "" {
-		if filepath.IsAbs(cfg.DataPath) {
-			return cfg.DataPath
+		dp := normalizeHostPath(cfg.DataPath)
+		if filepath.IsAbs(dp) {
+			return dp
 		}
-		return filepath.Join(cm.basePath, "..", cfg.DataPath)
+		return filepath.Join(cm.basePath, "..", dp)
 	}
 	return filepath.Join(cm.basePath, "data")
 }
@@ -158,9 +174,9 @@ func (cm *ConfigManager) LoadNodeConfig() (*NodeConfig, error) {
 		}
 
 		if val, ok := props["data.path"]; ok && val != "" {
-			cfg.DataPath = val
+			cfg.DataPath = normalizeHostPath(val)
 		} else if val, ok := props["dataPath"]; ok && val != "" {
-			cfg.DataPath = val
+			cfg.DataPath = normalizeHostPath(val)
 		}
 	}
 
@@ -197,9 +213,9 @@ func (cm *ConfigManager) LoadNodeConfig() (*NodeConfig, error) {
 		}
 		if cfg.DataPath == defaultDataPath || cfg.DataPath == "" {
 			if val, ok := props["data.path"]; ok && val != "" {
-				cfg.DataPath = val
+				cfg.DataPath = normalizeHostPath(val)
 			} else if val, ok := props["dataDirectory"]; ok && val != "" && val != "/data" {
-				cfg.DataPath = val
+				cfg.DataPath = normalizeHostPath(val)
 			}
 		}
 	}

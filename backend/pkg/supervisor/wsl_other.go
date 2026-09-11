@@ -21,7 +21,7 @@ func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
 	return nil
 }
 
-func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, chainConfigPath string, libEnvList []string) error {
+func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, chainConfigPath string, localDataDir string, libEnvList []string) error {
 	return nil
 }
 
@@ -35,5 +35,10 @@ func (dc *ProcessSupervisor) SetupPortProxy() error {
 
 // ToWSLPath is a no-op on non-Windows platforms.
 func ToWSLPath(path string) string {
+	return path
+}
+
+// FromWSLPath is a no-op on non-Windows platforms.
+func FromWSLPath(path string) string {
 	return path
 }

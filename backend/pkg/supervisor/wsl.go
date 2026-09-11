@@ -1,5 +1,12 @@
 package supervisor
 
+import "os"
+
+func isPathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 type WSLState string
 
 const (
