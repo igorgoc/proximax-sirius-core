@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	CurrentVersion = "v1.9.8"
-	GitHubRepo     = "igorgoc/cpp-xpx-chain"
-	OfficialBase   = "https://raw.githubusercontent.com/igorgoc/cpp-xpx-chain/master/resources"
+	CurrentVersion     = "v1.9.8"
+	GitHubRepo         = "igorgoc/cpp-xpx-chain"
+	OfficialConfigBase = "https://raw.githubusercontent.com/igorgoc/proximax-sirius-core/main/chainconfig/resources"
 )
 
 type ConfigFileDiff struct {
+	Name        string `json:"name"`
 	FileName    string `json:"fileName"`
 	Category    string `json:"category"`
 	Purpose     string `json:"purpose"`
@@ -33,6 +34,7 @@ type ConfigFileDiff struct {
 	RemoteHash  string `json:"remoteHash,omitempty"`
 	LocalBytes  int64  `json:"localBytes,omitempty"`
 	RemoteBytes int64  `json:"remoteBytes,omitempty"`
+	DiffSnippet string `json:"diffSnippet,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
 
@@ -87,7 +89,16 @@ func (um *UpdateManager) getRepo() string {
 }
 
 func (um *UpdateManager) getOfficialBase() string {
-	return fmt.Sprintf("https://raw.githubusercontent.com/%s/master/resources", um.getRepo())
+	compatPath := filepath.Join(filepath.Dir(um.resourcesDir), "engine.compat.json")
+	if compatBytes, err := os.ReadFile(compatPath); err == nil {
+		var m struct {
+			ConfigBase string `json:"configBase"`
+		}
+		if json.Unmarshal(compatBytes, &m) == nil && m.ConfigBase != "" {
+			return m.ConfigBase
+		}
+	}
+	return OfficialConfigBase
 }
 
 func NewUpdateManager(resourcesDir string, supervisor *supervisor.ProcessSupervisor) *UpdateManager {
@@ -226,6 +237,7 @@ func (um *UpdateManager) CheckConfigsDiff() (*ConfigDiffReport, error) {
 	for _, item := range filesToDiff {
 		go func(f struct{ name, category, purpose string }) {
 			d := ConfigFileDiff{
+				Name:     f.name,
 				FileName: f.name,
 				Category: f.category,
 				Purpose:  f.purpose,
@@ -299,6 +311,7 @@ func (um *UpdateManager) CheckConfigsDiff() (*ConfigDiffReport, error) {
 				d.Status = "identical"
 			} else {
 				d.Status = "different"
+				d.DiffSnippet = generateDiffSnippet(localData, remoteData)
 			}
 
 			resChan <- result{diff: d, err: nil}
@@ -534,4 +547,33 @@ func (um *UpdateManager) ApplyOfficialUpdate(dataPath string) error {
 	um.mu.Unlock()
 
 	return nil
+}
+
+func generateDiffSnippet(localData, remoteData []byte) string {
+	localLines := strings.Split(string(localData), "\n")
+	remoteLines := strings.Split(string(remoteData), "\n")
+
+	localMap := make(map[string]bool)
+	for _, l := range localLines {
+		t := strings.TrimSpace(l)
+		if t != "" && !strings.HasPrefix(t, "#") {
+			localMap[t] = true
+		}
+	}
+
+	var changes []string
+	for _, r := range remoteLines {
+		t := strings.TrimSpace(r)
+		if t != "" && !strings.HasPrefix(t, "#") && !localMap[t] {
+			changes = append(changes, "+ "+t)
+			if len(changes) >= 10 {
+				changes = append(changes, "... (additional changes omitted)")
+				break
+			}
+		}
+	}
+	if len(changes) == 0 {
+		return "Differences in whitespace, formatting, or line endings."
+	}
+	return strings.Join(changes, "\n")
 }

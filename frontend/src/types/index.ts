@@ -239,13 +239,15 @@ export interface UpdateInfo {
 
 export interface ConfigFileDiff {
   name: string;
+  fileName?: string;
   purpose: string;
   category: string;
   localHash: string;
   remoteHash: string;
   status: 'identical' | 'different' | 'missing' | string;
-  localFound: boolean;
-  remoteFound: boolean;
+  localFound?: boolean;
+  remoteFound?: boolean;
+  diffSnippet?: string;
 }
 
 export interface ConfigDiffReport {

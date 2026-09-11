@@ -11,7 +11,9 @@ import {
   AlertTriangle,
   AlertCircle,
   RotateCcw,
-  HardDrive
+  HardDrive,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { ConfigDiffReport } from '../types';
 
@@ -66,6 +68,7 @@ export const SyncConfigsModal: React.FC<SyncConfigsModalProps> = ({
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [diffReport, setDiffReport] = useState<ConfigDiffReport | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [expandedFile, setExpandedFile] = useState<string | null>(null);
 
   const fetchDiff = useCallback(async () => {
     setIsLoadingDiff(true);
@@ -347,78 +350,112 @@ export const SyncConfigsModal: React.FC<SyncConfigsModalProps> = ({
 
             <div className="border border-[#262B34] rounded-lg overflow-hidden divide-y divide-[#262B34]">
               {displayFiles.map((f: any, idx) => {
+                const fileName = f.name || f.fileName;
                 const isDiff = f.status === 'different';
                 const isMissing = f.status === 'missing';
                 const isIdentical = f.status === 'identical';
+                const isExpanded = expandedFile === fileName;
 
                 return (
-                  <div 
-                    key={idx} 
-                    className={`p-3 transition-colors flex items-center justify-between ${
-                      isDiff 
-                        ? 'bg-amber-950/10 hover:bg-amber-950/20' 
-                        : isMissing 
-                        ? 'bg-rose-950/10 hover:bg-rose-950/20' 
-                        : 'bg-[#13171F] hover:bg-[#181B20]'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-3 min-w-0">
-                      <FileCode className={`w-4 h-4 flex-shrink-0 ${
-                        isDiff ? 'text-amber-400' : isMissing ? 'text-rose-400' : 'text-blue-400'
-                      }`} />
-                      <div className="min-w-0">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono font-medium text-white text-xs">{f.name}</span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#0F1115] text-slate-400 border border-[#262B34]">
-                            {f.category}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5 truncate">{f.purpose}</p>
+                  <div key={idx} className="flex flex-col">
+                    <div 
+                      className={`p-3 transition-colors flex items-center justify-between ${
+                        isDiff 
+                          ? 'bg-amber-950/10 hover:bg-amber-950/20 cursor-pointer' 
+                          : isMissing 
+                          ? 'bg-rose-950/10 hover:bg-rose-950/20' 
+                          : 'bg-[#13171F] hover:bg-[#181B20]'
+                      }`}
+                      onClick={() => {
+                        if (isDiff && f.diffSnippet) {
+                          setExpandedFile(isExpanded ? null : fileName);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <FileCode className={`w-4 h-4 flex-shrink-0 ${
+                          isDiff ? 'text-amber-400' : isMissing ? 'text-rose-400' : 'text-blue-400'
+                        }`} />
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-mono font-medium text-white text-xs">{fileName}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#0F1115] text-slate-400 border border-[#262B34]">
+                              {f.category}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5 truncate">{f.purpose}</p>
 
-                        {/* Hash comparison info */}
-                        {f.localHash && f.remoteHash && (
-                          <div className="mt-1 flex items-center space-x-2 text-[10px] font-mono text-slate-500">
-                            <span>Local: <code className="text-slate-400">{f.localHash.slice(0, 8)}…</code></span>
-                            <span>•</span>
-                            <span>Upstream: <code className="text-slate-400">{f.remoteHash.slice(0, 8)}…</code></span>
+                          {/* Hash comparison info */}
+                          {f.localHash && f.remoteHash && (
+                            <div className="mt-1 flex items-center space-x-2 text-[10px] font-mono text-slate-500">
+                              <span>Local: <code className="text-slate-400">{f.localHash.slice(0, 8)}…</code></span>
+                              <span>•</span>
+                              <span>Upstream: <code className="text-slate-400">{f.remoteHash.slice(0, 8)}…</code></span>
+                            </div>
+                          )}
+                          {isMissing && f.remoteHash && (
+                            <div className="mt-1 text-[10px] font-mono text-rose-400/90">
+                              <span>Not present on local disk • Upstream: <code className="text-slate-400">{f.remoteHash.slice(0, 8)}…</code></span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Status Badge & Expand toggle */}
+                      <div className="flex items-center space-x-2 flex-shrink-0 ml-3">
+                        {isLoadingDiff ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono border border-blue-500/20 flex items-center space-x-1">
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                            <span>Checking</span>
+                          </span>
+                        ) : isIdentical ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono border border-emerald-500/20 flex items-center space-x-1">
+                            <Check className="w-2.5 h-2.5" />
+                            <span>In Sync</span>
+                          </span>
+                        ) : isDiff ? (
+                          <div className="flex items-center space-x-1.5">
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono border border-amber-500/30 flex items-center space-x-1">
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              <span>Different</span>
+                            </span>
+                            {f.diffSnippet && (
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedFile(isExpanded ? null : fileName);
+                                }}
+                                className="p-1 hover:bg-[#262B34] text-slate-400 hover:text-slate-200 rounded"
+                              >
+                                {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                              </button>
+                            )}
                           </div>
-                        )}
-                        {isMissing && f.remoteHash && (
-                          <div className="mt-1 text-[10px] font-mono text-rose-400/90">
-                            <span>Not present on local disk • Upstream: <code className="text-slate-400">{f.remoteHash.slice(0, 8)}…</code></span>
-                          </div>
+                        ) : isMissing ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 font-mono border border-rose-500/30 flex items-center space-x-1">
+                            <AlertCircle className="w-2.5 h-2.5" />
+                            <span>Missing</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#0F1115] text-slate-400 font-mono border border-[#262B34]">
+                            Pending Check
+                          </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Status Badge */}
-                    <div className="flex-shrink-0 ml-3">
-                      {isLoadingDiff ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono border border-blue-500/20 flex items-center space-x-1">
-                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                          <span>Checking</span>
-                        </span>
-                      ) : isIdentical ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono border border-emerald-500/20 flex items-center space-x-1">
-                          <Check className="w-2.5 h-2.5" />
-                          <span>In Sync</span>
-                        </span>
-                      ) : isDiff ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono border border-amber-500/30 flex items-center space-x-1">
-                          <AlertTriangle className="w-2.5 h-2.5" />
-                          <span>Different</span>
-                        </span>
-                      ) : isMissing ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 font-mono border border-rose-500/30 flex items-center space-x-1">
-                          <AlertCircle className="w-2.5 h-2.5" />
-                          <span>Missing</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-[#0F1115] text-slate-400 font-mono border border-[#262B34]">
-                          Pending Check
-                        </span>
-                      )}
-                    </div>
+                    {/* Expandable diff snippet */}
+                    {isExpanded && f.diffSnippet && (
+                      <div className="px-3 pb-3 pt-1.5 bg-[#0F1115] border-t border-[#262B34]/60">
+                        <div className="text-[10px] text-amber-300 font-mono mb-1 flex items-center justify-between">
+                          <span>Detected Changes (+ Upstream):</span>
+                          <span className="text-[9px] text-slate-500">Lines in upstream repository</span>
+                        </div>
+                        <pre className="text-[10px] font-mono text-slate-300 bg-[#0A0C10] p-2 rounded border border-[#262B34] overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                          {f.diffSnippet}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 );
               })}
