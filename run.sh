@@ -14,6 +14,19 @@ elif [ "$OS_NAME" = "Linux" ] && [ "$ARCH_NAME" = "x86_64" ]; then
     PLATFORM_DESC="Linux x86_64"
 fi
 
+# If running inside a pre-built release package (no frontend/backend source directories),
+# seamlessly delegate to start.sh
+if [ ! -d "$DIR/frontend" ] || [ ! -d "$DIR/backend" ]; then
+    if [ -f "$DIR/start.sh" ]; then
+        exec "$DIR/start.sh" "$@"
+    elif [ -f "$DIR/sirius-core" ]; then
+        exec "$DIR/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig" "$@"
+    else
+        echo "Error: Neither source directories nor standalone binary found!" >&2
+        exit 1
+    fi
+fi
+
 echo "========================================================="
 echo "  ProximaX Sirius Mainnet Peer Node (Standalone Native)"
 echo "  Architecture: $PLATFORM_DESC (Zero Docker)"
@@ -58,17 +71,19 @@ if [ -f "$DIR/.sirius-core.pid" ]; then
     rm -f "$DIR/.sirius-core.pid"
 fi
 
-# Also ensure port 3080 is free
-OLD_PID=$(lsof -ti :3080 2>/dev/null || true)
+PORT="${PORT:-8080}"
+
+# Also ensure port is free
+OLD_PID=$(lsof -ti :$PORT 2>/dev/null || true)
 if [ -n "$OLD_PID" ]; then
-    echo "Freeing port 3080 (killing PID $OLD_PID)..."
+    echo "Freeing port $PORT (killing PID $OLD_PID)..."
     kill -9 $OLD_PID 2>/dev/null || true
     sleep 1
 fi
 
 # 5. Start native manager in background
-echo "Starting Sirius Core Native Manager on port 3080..."
-DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 3080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
+echo "Starting Sirius Core Native Manager on port $PORT..."
+DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port "$PORT" -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$DIR/.sirius-core.pid"
 
@@ -76,7 +91,7 @@ echo "$NEW_PID" > "$DIR/.sirius-core.pid"
 echo "Waiting for Web Dashboard to become ready..."
 READY=false
 for i in {1..20}; do
-    if curl -s -f -o /dev/null "http://127.0.0.1:3080/"; then
+    if curl -s -f -o /dev/null "http://127.0.0.1:$PORT/"; then
         READY=true
         break
     fi
@@ -89,7 +104,7 @@ if [ "$READY" = true ]; then
     echo "  ProximaX Sirius Native Node is ONLINE (PID: $NEW_PID)!"
     echo ""
     echo "  Access the GUI Dashboard in your browser:"
-    echo "    >>> http://localhost:3080 <<<"
+    echo "    >>> http://localhost:$PORT <<<"
     echo ""
     echo "  Logs:   tail -f chainconfig/logs/manager.log"
     echo "  Stop:   ./stop.sh"
