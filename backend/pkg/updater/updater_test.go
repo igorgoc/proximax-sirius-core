@@ -4,10 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -120,6 +122,116 @@ func TestCheckConfigsDiff_Live(t *testing.T) {
 	}
 	t.Logf("Diff Report: Total: %d, Diff: %d, Identical: %d, Missing: %d, HasDiff: %v",
 		report.TotalFiles, report.DifferentCount, report.IdenticalCount, report.MissingCount, report.HasDifferences)
+}
+
+type MockConfigLifecycleController struct {
+	sync.Mutex
+	running     bool
+	stopCalls   int
+	startCalls  int
+	failOnStart bool
+}
+
+func (m *MockConfigLifecycleController) StopNode() error {
+	m.Lock()
+	defer m.Unlock()
+	m.running = false
+	m.stopCalls++
+	return nil
+}
+
+func (m *MockConfigLifecycleController) StartNode(dataPath string) error {
+	m.Lock()
+	defer m.Unlock()
+	m.startCalls++
+	if m.failOnStart && m.startCalls == 1 {
+		// First start attempt with modified configs crashes
+		m.running = false
+		return errors.New("simulated engine crash on boot after config swap")
+	}
+	m.running = true
+	return nil
+}
+
+func (m *MockConfigLifecycleController) IsRunning() bool {
+	m.Lock()
+	defer m.Unlock()
+	return m.running
+}
+
+func TestApplyOfficialUpdate_HealthcheckFailure_TriggersAutoRollback(t *testing.T) {
+	tmpDir := t.TempDir()
+	resourcesDir := filepath.Join(tmpDir, "resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	originalNetworkConfig := "[network]\nidentifier = mainnet\noriginal_key = 12345\n"
+	originalPeersP2P := `{"peers": ["original-peer-node"]}`
+	originalPeersAPI := `{"peers": ["original-api-node"]}`
+	originalReplicators := `{"replicators": ["original-replicator"]}`
+	originalSupportedEntities := `{"entities": ["original-entity"]}`
+
+	_ = os.WriteFile(filepath.Join(resourcesDir, "config-network.properties"), []byte(originalNetworkConfig), 0600)
+	_ = os.WriteFile(filepath.Join(resourcesDir, "peers-p2p.json"), []byte(originalPeersP2P), 0600)
+	_ = os.WriteFile(filepath.Join(resourcesDir, "peers-api.json"), []byte(originalPeersAPI), 0600)
+	_ = os.WriteFile(filepath.Join(resourcesDir, "replicators.json"), []byte(originalReplicators), 0600)
+	_ = os.WriteFile(filepath.Join(resourcesDir, "supported-entities.json"), []byte(originalSupportedEntities), 0600)
+
+	mockSupervisor := &MockConfigLifecycleController{
+		running:     true, // Node was actively running
+		failOnStart: true, // Will fail on post-update restart
+	}
+
+	um := NewUpdateManager(resourcesDir, mockSupervisor)
+
+	dataPath := filepath.Join(tmpDir, "data")
+	_ = os.MkdirAll(dataPath, 0755)
+
+	// Run update which will download upstream configs, attempt restart, crash, and rollback
+	err := um.ApplyOfficialUpdate(dataPath)
+	if err == nil {
+		t.Fatalf("Expected ApplyOfficialUpdate to return error due to crash-loop, got nil")
+	}
+
+	// 1. Verify RollbackOccurred flag was set
+	if !um.lastInfo.RollbackOccurred {
+		t.Errorf("Expected RollbackOccurred=true, got false")
+	}
+
+	// 2. Verify all 5 files were restored to their exact original contents
+	restoredNet, _ := os.ReadFile(filepath.Join(resourcesDir, "config-network.properties"))
+	if string(restoredNet) != originalNetworkConfig {
+		t.Errorf("config-network.properties was NOT rolled back correctly! got:\n%s", string(restoredNet))
+	}
+
+	restoredP2P, _ := os.ReadFile(filepath.Join(resourcesDir, "peers-p2p.json"))
+	if string(restoredP2P) != originalPeersP2P {
+		t.Errorf("peers-p2p.json was NOT rolled back correctly! got:\n%s", string(restoredP2P))
+	}
+
+	restoredAPI, _ := os.ReadFile(filepath.Join(resourcesDir, "peers-api.json"))
+	if string(restoredAPI) != originalPeersAPI {
+		t.Errorf("peers-api.json was NOT rolled back correctly! got:\n%s", string(restoredAPI))
+	}
+
+	restoredRepl, _ := os.ReadFile(filepath.Join(resourcesDir, "replicators.json"))
+	if string(restoredRepl) != originalReplicators {
+		t.Errorf("replicators.json was NOT rolled back correctly! got:\n%s", string(restoredRepl))
+	}
+
+	restoredEnt, _ := os.ReadFile(filepath.Join(resourcesDir, "supported-entities.json"))
+	if string(restoredEnt) != originalSupportedEntities {
+		t.Errorf("supported-entities.json was NOT rolled back correctly! got:\n%s", string(restoredEnt))
+	}
+
+	// 3. Verify node was revived after rollback
+	if !mockSupervisor.IsRunning() {
+		t.Errorf("Expected node to be revived and running after rollback")
+	}
+	if mockSupervisor.startCalls < 2 {
+		t.Errorf("Expected at least 2 start calls (1 failed post-update, 1 revival after rollback), got %d", mockSupervisor.startCalls)
+	}
+
+	t.Logf("SUCCESS: Adversarial crash-loop triggered instant auto-rollback. All 5 files restored byte-for-byte and node revived.")
 }
 
 

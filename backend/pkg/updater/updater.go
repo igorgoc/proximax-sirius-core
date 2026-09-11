@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"proximax-sirius-core/pkg/supervisor"
 )
 
 const (
@@ -71,7 +69,7 @@ type UpdateManager struct {
 	mu           sync.RWMutex
 	lastInfo     UpdateInfo
 	resourcesDir string
-	supervisor   *supervisor.ProcessSupervisor
+	supervisor   NodeLifecycleController
 	httpClient   *http.Client
 }
 
@@ -101,7 +99,7 @@ func (um *UpdateManager) getOfficialBase() string {
 	return OfficialConfigBase
 }
 
-func NewUpdateManager(resourcesDir string, supervisor *supervisor.ProcessSupervisor) *UpdateManager {
+func NewUpdateManager(resourcesDir string, supervisor NodeLifecycleController) *UpdateManager {
 	return &UpdateManager{
 		resourcesDir: resourcesDir,
 		supervisor:   supervisor,

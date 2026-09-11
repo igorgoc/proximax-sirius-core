@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -566,6 +567,70 @@ func TestEngineUpdater_CheckUpdate_Live(t *testing.T) {
 	if status.CurrentVersion != "v1.9.8" {
 		t.Errorf("Expected CurrentVersion=v1.9.8, got %s", status.CurrentVersion)
 	}
+}
+
+func TestLiveRelease_FetchAndSignatureVerify(t *testing.T) {
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/igorgoc/cpp-xpx-chain/releases/tags/v1.9.8", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("User-Agent", "ProximaX-Sirius-Engine-Updater")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Skipf("Skipping live test due to network: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var releaseInfo struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadUrl string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&releaseInfo); err != nil {
+		t.Fatalf("Failed to decode release json: %v", err)
+	}
+
+	var checksumsUrl, sigUrl string
+	for _, a := range releaseInfo.Assets {
+		if a.Name == "SHA256SUMS.txt" {
+			checksumsUrl = a.BrowserDownloadUrl
+		} else if a.Name == "SHA256SUMS.txt.sig" {
+			sigUrl = a.BrowserDownloadUrl
+		}
+	}
+
+	if checksumsUrl == "" || sigUrl == "" {
+		t.Fatalf("Release v1.9.8 missing required assets: sums=%v, sig=%v", checksumsUrl != "", sigUrl != "")
+	}
+
+	cResp, err := client.Get(checksumsUrl)
+	if err != nil {
+		t.Fatalf("Failed to fetch SHA256SUMS.txt: %v", err)
+	}
+	defer cResp.Body.Close()
+	checksumsData, _ := io.ReadAll(cResp.Body)
+
+	sResp, err := client.Get(sigUrl)
+	if err != nil {
+		t.Fatalf("Failed to fetch SHA256SUMS.txt.sig: %v", err)
+	}
+	defer sResp.Body.Close()
+	sigData, _ := io.ReadAll(sResp.Body)
+
+	pubKeyHex := "538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
+	if err := VerifySignature(pubKeyHex, checksumsData, sigData); err != nil {
+		t.Fatalf("CRITICAL: Ed25519 signature verification FAILED for live v1.9.8 release: %v", err)
+	}
+
+	t.Logf("SUCCESS: Live GitHub release v1.9.8 Ed25519 signature verified OK against public key %s", pubKeyHex)
 }
 
 
