@@ -19,6 +19,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   metrics,
+  config,
   onStart,
   onStop,
   onRestart,
@@ -27,6 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isRunning = metrics?.status === 'running';
   const isStarting = metrics?.status === 'starting';
+  const hasHarvestKey = Boolean(config?.hasHarvestKey);
   const isElectron = typeof window !== 'undefined' && (
     navigator.userAgent.includes('Electron') ||
     Boolean((window as any).process?.versions?.electron)
@@ -53,8 +55,9 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center space-x-3 app-no-drag">
           {!isRunning ? (
             <button
-              disabled={loading || isStarting}
+              disabled={loading || isStarting || !hasHarvestKey}
               onClick={onStart}
+              title={!hasHarvestKey ? 'A valid harvest key is mandatory before starting the node' : undefined}
               className="flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-medium transition-colors"
             >
               <Play className="w-3.5 h-3.5 fill-current" />

@@ -293,4 +293,44 @@ func TestProcessSupervisor_CleanLogsAndStats(t *testing.T) {
 	}
 }
 
+func TestProcessSupervisor_ValidateHarvestKeyPreflight(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "chainconfig")
+	resourcesDir := filepath.Join(configDir, "resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	s := NewProcessSupervisor(configDir)
+
+	// Case 1: Missing config-harvesting.properties
+	if err := s.validateHarvestKeyPreflight(); err == nil {
+		t.Errorf("expected error when config-harvesting.properties is missing, got nil")
+	}
+
+	// Case 2: Placeholder REMOTE_ACCOUNT_PRIVATE_KEY
+	harvestProps := filepath.Join(resourcesDir, "config-harvesting.properties")
+	_ = os.WriteFile(harvestProps, []byte("[harvesting]\nharvestKey = REMOTE_ACCOUNT_PRIVATE_KEY\n"), 0644)
+	if err := s.validateHarvestKeyPreflight(); err == nil {
+		t.Errorf("expected error when harvestKey is REMOTE_ACCOUNT_PRIVATE_KEY, got nil")
+	}
+
+	// Case 3: Invalid length / hex
+	_ = os.WriteFile(harvestProps, []byte("[harvesting]\nharvestKey = 1234abcd\n"), 0644)
+	if err := s.validateHarvestKeyPreflight(); err == nil {
+		t.Errorf("expected error when harvestKey is too short, got nil")
+	}
+
+	_ = os.WriteFile(harvestProps, []byte("[harvesting]\nharvestKey = zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n"), 0644)
+	if err := s.validateHarvestKeyPreflight(); err == nil {
+		t.Errorf("expected error when harvestKey has invalid hex characters, got nil")
+	}
+
+	// Case 4: Valid 64-hex key
+	validKey := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	_ = os.WriteFile(harvestProps, []byte("[harvesting]\nharvestKey = "+validKey+"\n"), 0644)
+	if err := s.validateHarvestKeyPreflight(); err != nil {
+		t.Errorf("expected valid harvestKey to pass preflight, got error: %v", err)
+	}
+}
+
+
 

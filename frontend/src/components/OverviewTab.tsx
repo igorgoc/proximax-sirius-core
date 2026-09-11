@@ -153,25 +153,42 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
       {/* 1. Offline Banner State (When Node is Stopped) */}
       {!isRunning && (
-        <div className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 flex items-center justify-between">
+        <div className={`rounded-lg p-5 flex items-center justify-between border ${
+          !config?.hasHarvestKey 
+            ? 'bg-amber-950/20 border-amber-800/40' 
+            : 'bg-[#181B20] border-[#262B34]'
+        }`}>
           <div className="flex items-center space-x-3.5">
-            <AlertCircle className="w-5 h-5 text-slate-400" />
+            <AlertCircle className={`w-5 h-5 ${!config?.hasHarvestKey ? 'text-amber-400' : 'text-slate-400'}`} />
             <div>
-              <h3 className="text-sm font-medium text-slate-200">Sirius Node is Offline</h3>
+              <h3 className="text-sm font-medium text-slate-200">
+                {!config?.hasHarvestKey ? 'Harvest Key Required to Start Node' : 'Sirius Node is Offline'}
+              </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Start the node to participate in consensus and begin harvesting blocks.
+                {!config?.hasHarvestKey
+                  ? 'A valid harvest key is mandatory before starting the Sirius node. Configure your harvest key in Settings or run the Setup Wizard.'
+                  : 'Start the node to participate in consensus and begin harvesting blocks.'}
               </p>
             </div>
           </div>
-          <button
-            onClick={onStart}
-            disabled={loading || isStarting || isEngineMissing}
-            title={isEngineMissing ? 'Sirius Engine binary required' : undefined}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>{isStarting ? 'Starting...' : 'Start Node'}</span>
-          </button>
+          {!config?.hasHarvestKey ? (
+            <button
+              onClick={() => setActiveTab('config')}
+              className="flex items-center space-x-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-xs font-semibold transition-colors"
+            >
+              <span>Configure Harvest Key</span>
+            </button>
+          ) : (
+            <button
+              onClick={onStart}
+              disabled={loading || isStarting || isEngineMissing}
+              title={isEngineMissing ? 'Sirius Engine binary required' : undefined}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>{isStarting ? 'Starting...' : 'Start Node'}</span>
+            </button>
+          )}
         </div>
       )}
 

@@ -722,16 +722,35 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs text-slate-300 font-medium">
-                  Harvester Private Key
+                  Harvester Private Key (Mandatory)
                 </label>
-                <button
-                  type="button"
-                  onClick={handleOpenLinkModal}
-                  className="text-xs text-blue-400 hover:text-blue-300 font-semibold flex items-center space-x-1 transition-colors"
-                >
-                  <Zap className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Create Delegated Harvester Account</span>
-                </button>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch('/api/keys/generate', { method: 'POST' });
+                        const data = await res.json();
+                        if (data && data.privateKey) {
+                          handleFieldChange('harvestKey', data.privateKey);
+                        }
+                      } catch (err) {
+                        console.error('Failed to generate key', err);
+                      }
+                    }}
+                    className="text-xs text-slate-400 hover:text-white font-medium flex items-center space-x-1 transition-colors"
+                  >
+                    <span>+ Generate Key</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenLinkModal}
+                    className="text-xs text-blue-400 hover:text-blue-300 font-semibold flex items-center space-x-1 transition-colors"
+                  >
+                    <Zap className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Create Delegated Harvester Account</span>
+                  </button>
+                </div>
               </div>
               <div className="relative flex items-center">
                 <input

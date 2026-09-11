@@ -240,7 +240,7 @@ func (cm *ConfigManager) LoadNodeConfig() (*NodeConfig, error) {
 	isBootKeyValid := cfg.BootKey != "" && cfg.BootKey != "BOOTKEY_PRIVATE_KEY" && len(cfg.BootKey) == 64
 	cfg.HasBootKey = isBootKeyValid
 	cfg.HasHarvestKey = cfg.HarvestKey != "" && cfg.HarvestKey != "REMOTE_ACCOUNT_PRIVATE_KEY" && len(cfg.HarvestKey) == 64
-	cfg.IsConfigured = isBootKeyValid && cfg.FriendlyName != ""
+	cfg.IsConfigured = isBootKeyValid && cfg.HasHarvestKey && cfg.FriendlyName != ""
 
 	return cfg, nil
 }

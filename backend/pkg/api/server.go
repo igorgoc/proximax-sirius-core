@@ -531,6 +531,17 @@ func (s *Server) handleNodeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg, err := s.configMgr.LoadNodeConfig()
+	if err != nil {
+		jsonError(w, fmt.Sprintf("Failed to load node configuration: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if !cfg.HasHarvestKey {
+		jsonError(w, "Cannot start node: a valid 64-hex harvest key is mandatory before starting the node", http.StatusBadRequest)
+		return
+	}
+
 	if err := s.supervisor.StartNode(s.configMgr.GetDataPath()); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -556,6 +567,17 @@ func (s *Server) handleNodeStop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNodeRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cfg, err := s.configMgr.LoadNodeConfig()
+	if err != nil {
+		jsonError(w, fmt.Sprintf("Failed to load node configuration: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if !cfg.HasHarvestKey {
+		jsonError(w, "Cannot restart node: a valid 64-hex harvest key is mandatory before starting the node", http.StatusBadRequest)
 		return
 	}
 

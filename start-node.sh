@@ -70,10 +70,27 @@ fi
 export DYLD_LIBRARY_PATH="$DYLD_PATH"
 export LD_LIBRARY_PATH="$DYLD_PATH"
 
-# 7. Start Sirius Core native binary
+# 7. Validate mandatory harvestKey
+HARVEST_PROPS="$DIR/chainconfig/resources/config-harvesting.properties"
+if [ ! -f "$HARVEST_PROPS" ]; then
+    echo "ERROR: $HARVEST_PROPS not found!" >&2
+    echo "A valid 64-character hexadecimal harvest key is mandatory before starting the node." >&2
+    exit 1
+fi
+
+HARVEST_KEY=$(grep -E "^[[:space:]]*harvestKey[[:space:]]*=" "$HARVEST_PROPS" | cut -d'=' -f2- | tr -d "[:space:]\"'")
+if [ -z "$HARVEST_KEY" ] || [ "$HARVEST_KEY" = "REMOTE_ACCOUNT_PRIVATE_KEY" ] || [ ${#HARVEST_KEY} -ne 64 ]; then
+    echo "ERROR: Invalid or missing harvestKey in $HARVEST_PROPS!" >&2
+    echo "A valid 64-character hexadecimal harvest key is mandatory before starting the node." >&2
+    echo "Please configure your harvest key via the Web Manager (http://localhost:8080) before starting." >&2
+    exit 1
+fi
+
+# 8. Start Sirius Core native binary
 echo "========================================================="
 echo "  Starting sirius.bc engine..."
 echo "  Press Ctrl+C to gracefully stop the node at any time."
 echo "========================================================="
 
 exec "$DIR/bin/sirius.bc" "$DIR/chainconfig"
+

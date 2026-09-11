@@ -146,7 +146,7 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
           metrics={metrics}
           onRefresh={onRefresh || (() => {})}
           loading={loading}
-          onStartNode={onStartNode}
+          onStartNode={hasHarvestKey ? onStartNode : undefined}
         />
       ) : (
         <>
@@ -156,9 +156,9 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
           <div className="flex items-center space-x-3.5">
             <AlertCircle className="w-5 h-5 text-amber-400" />
             <div>
-              <h3 className="text-sm font-medium text-slate-200">Harvesting Key Not Configured</h3>
+              <h3 className="text-sm font-medium text-amber-200">Harvesting Key Not Configured</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Set up your validator private key to start participating in POS+ block harvesting.
+                A valid 64-character harvest key is mandatory to participate in POS+ consensus and start the node.
               </p>
             </div>
           </div>

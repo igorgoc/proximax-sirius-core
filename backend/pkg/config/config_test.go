@@ -114,3 +114,52 @@ func TestConfigManager_DataMigration(t *testing.T) {
 		t.Errorf("expected index.dat in destination: %v", err)
 	}
 }
+
+func TestConfigManager_IsConfigured_RequiresHarvestKey(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sirius_isconfigured_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	resourcesDir := filepath.Join(tempDir, "resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	bootKey := "3333333333333333333333333333333333333333333333333333333333333333"
+	nodeContent := "[node]\nfriendlyName = test-node\nhost = 127.0.0.1\n"
+	_ = os.WriteFile(filepath.Join(resourcesDir, "config-node.properties"), []byte(nodeContent), 0644)
+	userContent := "[account]\nbootKey = " + bootKey + "\n"
+	_ = os.WriteFile(filepath.Join(resourcesDir, "config-user.properties"), []byte(userContent), 0644)
+
+	// Case 1: harvestKey is placeholder REMOTE_ACCOUNT_PRIVATE_KEY
+	placeholderHarvest := "[harvesting]\nharvestKey = REMOTE_ACCOUNT_PRIVATE_KEY\n"
+	_ = os.WriteFile(filepath.Join(resourcesDir, "config-harvesting.properties"), []byte(placeholderHarvest), 0644)
+
+	cm := NewConfigManager(tempDir)
+	cfg, err := cm.LoadNodeConfig()
+	if err != nil {
+		t.Fatalf("LoadNodeConfig failed: %v", err)
+	}
+	if cfg.HasHarvestKey {
+		t.Errorf("expected HasHarvestKey=false for placeholder harvest key")
+	}
+	if cfg.IsConfigured {
+		t.Errorf("expected IsConfigured=false when harvestKey is missing/placeholder")
+	}
+
+	// Case 2: valid 64-hex harvestKey
+	validHarvest := "[harvesting]\nharvestKey = 1111111111111111111111111111111111111111111111111111111111111111\n"
+	_ = os.WriteFile(filepath.Join(resourcesDir, "config-harvesting.properties"), []byte(validHarvest), 0644)
+
+	cfg, err = cm.LoadNodeConfig()
+	if err != nil {
+		t.Fatalf("LoadNodeConfig failed: %v", err)
+	}
+	if !cfg.HasHarvestKey {
+		t.Errorf("expected HasHarvestKey=true for valid 64-hex key")
+	}
+	if !cfg.IsConfigured {
+		t.Errorf("expected IsConfigured=true when all keys are valid and friendlyName is set")
+	}
+}
+

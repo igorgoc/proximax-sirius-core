@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -296,6 +297,43 @@ func (dc *ProcessSupervisor) locateBinaries() (siriusBin string, recoveryBin str
 	return siriusBin, recoveryBin, nil
 }
 
+// validateHarvestKeyPreflight ensures config-harvesting.properties has a valid 64-hex harvestKey before node engine start
+func (dc *ProcessSupervisor) validateHarvestKeyPreflight() error {
+	harvestPropPath := filepath.Join(dc.chainConfigPath, "resources", "config-harvesting.properties")
+	content, err := os.ReadFile(harvestPropPath)
+	if err != nil {
+		return fmt.Errorf("harvest key validation failed: unable to read %s: %w", harvestPropPath, err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var harvestKey string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) == "harvestKey" {
+			harvestKey = strings.TrimSpace(parts[1])
+			break
+		}
+	}
+
+	if harvestKey == "" || harvestKey == "REMOTE_ACCOUNT_PRIVATE_KEY" {
+		return fmt.Errorf("node cannot start: a valid 64-character hexadecimal harvest key is mandatory, but none is configured in %s", harvestPropPath)
+	}
+
+	if len(harvestKey) != 64 {
+		return fmt.Errorf("node cannot start: harvestKey must be exactly 64 hexadecimal characters, got %d", len(harvestKey))
+	}
+
+	if _, err := hex.DecodeString(harvestKey); err != nil {
+		return fmt.Errorf("node cannot start: harvestKey contains invalid hexadecimal characters: %w", err)
+	}
+
+	return nil
+}
+
 func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 	dc.mu.Lock()
 	defer dc.mu.Unlock()
@@ -311,6 +349,13 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 	siriusBin, recoveryBin, err := dc.locateBinaries()
 	if err != nil {
 		dc.lastError = err.Error()
+		return err
+	}
+
+	// 0. Pre-flight Validation: Mandatory Harvest Key check
+	if err := dc.validateHarvestKeyPreflight(); err != nil {
+		dc.lastError = err.Error()
+		dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Startup pre-flight check failed: %s", err.Error()))
 		return err
 	}
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Zap, CheckCircle2, ChevronRight, ChevronLeft, AlertCircle, Play, Copy, Check, ExternalLink, Loader2 } from 'lucide-react';
+import { Key, Zap, CheckCircle2, ChevronRight, ChevronLeft, AlertCircle, Play, Copy, Check, ExternalLink, Loader2, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { NodeConfig, KeyPairInfo, AccountLinkResult } from '../types';
 import { getExplorerAddressUrl, getExplorerPublicKeyUrl, getExplorerTxUrl } from '../utils/explorer';
 import { DirectoryDropdown } from './DirectoryDropdown';
@@ -30,10 +30,12 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   const [generatingBootKey, setGeneratingBootKey] = useState(false);
 
   // Step 3: Harvesting
-  const [harvestOption, setHarvestOption] = useState<'generate' | 'existing' | 'skip'>('generate');
+  const [harvestOption, setHarvestOption] = useState<'generate' | 'existing'>('generate');
   const [accountPrivKey, setAccountPrivKey] = useState('');
   const [apiNode, setApiNode] = useState('http://aldebaran.xpxsirius.io:3000');
   const [existingHarvestKey, setExistingHarvestKey] = useState(config?.harvestKey && config.harvestKey !== 'REMOTE_ACCOUNT_PRIVATE_KEY' ? config.harvestKey : '');
+  const [showHarvestKey, setShowHarvestKey] = useState(false);
+  const [generatingHarvestKey, setGeneratingHarvestKey] = useState(false);
   const [linking, setLinking] = useState(false);
   const [linkResult, setLinkResult] = useState<AccountLinkResult | null>(null);
   const [harvestError, setHarvestError] = useState<string | null>(null);
@@ -139,12 +141,31 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     }
   };
 
+  const generateHarvestKey = async () => {
+    setGeneratingHarvestKey(true);
+    try {
+      const res = await fetch('/api/keys/generate', { method: 'POST' });
+      const data = await res.json();
+      if (data && data.privateKey) {
+        setExistingHarvestKey(data.privateKey);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setGeneratingHarvestKey(false);
+    }
+  };
+
   const handleFinish = async (startImmediately: boolean) => {
     setSaving(true);
     try {
-      const harvestKeyVal = harvestOption === 'skip'
-        ? 'REMOTE_ACCOUNT_PRIVATE_KEY'
-        : (existingHarvestKey || (linkResult ? linkResult.remotePrivateKey : 'REMOTE_ACCOUNT_PRIVATE_KEY'));
+      const harvestKeyVal = (existingHarvestKey.trim() || linkResult?.remotePrivateKey || '').trim();
+      if (!harvestKeyVal || harvestKeyVal === 'REMOTE_ACCOUNT_PRIVATE_KEY' || harvestKeyVal.length !== 64) {
+        setHarvestError('A valid 64-character hexadecimal harvest key is mandatory.');
+        setStep(3);
+        setSaving(false);
+        return;
+      }
 
       let finalBootKey = bootKey.trim();
       if (!finalBootKey || finalBootKey === harvestKeyVal) {
@@ -442,31 +463,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                   />
                   <div>
                     <div className="font-semibold text-white">
-                      I already have a Delegate Private Key
+                      Enter or Generate Delegate Harvesting Key
                     </div>
                     <div className="text-slate-400 text-[11px] mt-0.5">
-                      Directly fill your remote private key into <code>config-harvesting.properties</code>.
-                    </div>
-                  </div>
-                </label>
-
-                <label className={`flex items-start space-x-3 p-3.5 rounded-lg border cursor-pointer transition-all ${
-                  harvestOption === 'skip' ? 'bg-blue-600/15 border-blue-500/40 text-white' : 'bg-[#0F1115] border-[#262B34] text-slate-300'
-                }`}>
-                  <input
-                    type="radio"
-                    name="harvestOption"
-                    value="skip"
-                    checked={harvestOption === 'skip'}
-                    onChange={() => setHarvestOption('skip')}
-                    className="mt-0.5"
-                  />
-                  <div>
-                    <div className="font-semibold text-white">
-                      Skip for now (Standard Peer Node)
-                    </div>
-                    <div className="text-slate-400 text-[11px] mt-0.5">
-                      You can always configure delegated harvesting later from the Node Configuration tab.
+                      Enter your 64-hex remote key or generate a key pair for <code>config-harvesting.properties</code>.
                     </div>
                   </div>
                 </label>
@@ -581,17 +581,54 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
               )}
 
               {harvestOption === 'existing' && (
-                <div className="p-3.5 bg-[#0F1115] rounded-lg border border-[#262B34] space-y-2">
-                  <label className="block font-semibold text-slate-300 mb-1">
-                    Existing Remote Harvesting Private Key
-                  </label>
-                  <input
-                    type="text"
-                    value={existingHarvestKey}
-                    onChange={(e) => setExistingHarvestKey(e.target.value)}
-                    placeholder="64-character remote private key..."
-                    className="w-full px-3 py-2 bg-[#181B20] border border-[#262B34] rounded-md focus:outline-hidden focus:border-blue-500 font-mono text-xs text-slate-100 placeholder-slate-500"
-                  />
+                <div className="p-3.5 bg-[#0F1115] rounded-lg border border-[#262B34] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block font-semibold text-slate-300">
+                        Remote Harvesting Private Key
+                      </label>
+                      <p className="text-[11px] text-slate-400">
+                        Enter an existing 64-hex key or generate a new random key pair.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={generatingHarvestKey}
+                      onClick={generateHarvestKey}
+                      className="px-2.5 py-1 bg-[#181B20] hover:bg-[#262B34] border border-[#262B34] text-blue-400 hover:text-blue-300 rounded text-xs font-semibold transition-colors flex items-center space-x-1"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${generatingHarvestKey ? 'animate-spin' : ''}`} />
+                      <span>{generatingHarvestKey ? 'Generating...' : 'Generate New'}</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showHarvestKey ? 'text' : 'password'}
+                      value={existingHarvestKey}
+                      onChange={(e) => setExistingHarvestKey(e.target.value.trim())}
+                      placeholder="64-character remote private key..."
+                      className="w-full pr-10 px-3 py-2 bg-[#181B20] border border-[#262B34] rounded-md focus:outline-hidden focus:border-blue-500 font-mono text-xs text-slate-100 placeholder-slate-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowHarvestKey(!showHarvestKey)}
+                      className="absolute right-2 top-2 p-1 text-slate-400 hover:text-white"
+                      title={showHarvestKey ? 'Hide key' : 'Show key'}
+                    >
+                      {showHarvestKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  {existingHarvestKey.length > 0 && existingHarvestKey.length !== 64 && (
+                    <p className="text-[11px] text-amber-400">
+                      Must be exactly 64 hexadecimal characters ({existingHarvestKey.length}/64).
+                    </p>
+                  )}
+                  {existingHarvestKey.length === 64 && /^[0-9a-fA-F]{64}$/.test(existingHarvestKey) && (
+                    <p className="text-[11px] text-emerald-400 flex items-center space-x-1">
+                      <Check className="w-3 h-3" />
+                      <span>Valid 64-hex harvest key configured</span>
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -631,7 +668,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                 <div className="flex justify-between py-1">
                   <span className="text-slate-400">Harvesting Mode:</span>
                   <span className="font-semibold text-emerald-400">
-                    {harvestOption === 'skip' ? 'Standard Peer' : 'Delegated Harvesting Enabled'}
+                    Delegated Harvesting Enabled
                   </span>
                 </div>
               </div>
@@ -658,7 +695,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
             {step < 4 ? (
               <button
                 type="button"
-                disabled={loadingConfig || (step === 1 && !friendlyName) || (step === 2 && !bootKey)}
+                disabled={
+                  loadingConfig ||
+                  (step === 1 && !friendlyName) ||
+                  (step === 2 && !bootKey) ||
+                  (step === 3 && !(
+                    (harvestOption === 'generate' && !!linkResult?.remotePrivateKey && linkResult.remotePrivateKey.length === 64) ||
+                    (harvestOption === 'existing' && existingHarvestKey.trim().length === 64 && /^[0-9a-fA-F]{64}$/.test(existingHarvestKey.trim()))
+                  ))
+                }
                 onClick={() => setStep(step + 1)}
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold shadow-xs transition-colors flex items-center space-x-1"
               >
