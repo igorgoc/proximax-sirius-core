@@ -50,9 +50,10 @@
 
 ## 3. Windows Prerequisites
 
-1. **Microsoft Visual C++ Redistributable (x64)**:
-   - Required for the native C++ engine (`sirius.exe`).
-   - Download from Microsoft: [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe) (Visual C++ 2015–2022).
+1. **WSL2 (Windows Subsystem for Linux 2) & Virtualization**:
+   - Required for the C++ Sirius Catapult engine (`bin/sirius.bc` running Ubuntu-22.04).
+   - CPU Virtualization (Intel VT-x / AMD-V) enabled in BIOS/UEFI.
+   - *Note*: If WSL2 is not yet enabled, the built-in Cockpit onboarding wizard (`WSLSetupModal`) will automatically detect it and offer a 1-click elevated install (`wsl --install --no-distribution`) with automatic reboot-resume tracking.
 2. **PowerShell Execution Policy** (if running `.ps1` directly from terminal):
    ```powershell
    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -85,7 +86,7 @@ Execute the following checklist on your Windows machine:
   ```cmd
   run.bat
   ```
-  - Verify `sirius-core.exe` compiles cleanly.
+  - Verify `sirius-core.exe` compiles cleanly (pure Go, zero-CGO).
   - Verify browser opens to `http://localhost:8080`.
 
 ---
@@ -105,21 +106,22 @@ Execute the following checklist on your Windows machine:
     =========================================================
     ```
   - Verify default web browser opens `http://localhost:8080`.
-- [ ] **Verify Web Cockpit UI**:
+- [ ] **Verify Web Cockpit UI & WSL2 Subsystem**:
   - Open `http://localhost:8080`.
+  - Check **WSL Status**: If WSL is missing or requires distro setup, verify the **WSL Setup Modal** pops up with the correct status (`WSL_NOT_INSTALLED`, `WSL_V1_ONLY`, or `WSL2_NO_DISTRO`) and handles the elevation/retry flow gracefully.
   - Check **Overview**: verify status cards (Node State, Peer Connectivity, Height, Storage Available).
   - Check **Validator** tab: ensure Setup Wizard or Key configurations display properly.
   - Check **Settings -> Snapshots**: confirm defaults (data directory, backup folder, compression formats).
   - Check **Maintenance**: check sub-tabs "Snapshots & Sync" and "System & Health", and persistent "Danger Zone".
 - [ ] **Mandatory Harvest Key Enforcement**:
   - Ensure the engine does not start if `harvestKey` is not configured.
-  - Configure a valid 64-hex harvest key in Validator Settings and verify the node engine starts successfully.
+  - Configure a valid 64-hex harvest key in Validator Settings and verify the node engine starts successfully in WSL2.
 - [ ] **Stop & Restart**:
-  - Run `stop.bat` (or `.\stop-node.ps1`): verify manager and engine stop cleanly and `.sirius-core.pid` is removed.
+  - Run `stop.bat` (or `.\stop-node.ps1`): verify manager and WSL engine processes stop cleanly and `.sirius-core.pid` is removed.
   - Run `restart.bat` (or `.\restart-node.ps1`): verify clean shutdown followed by fresh boot.
 - [ ] **External Storage / Drive Mount**:
   - Set custom `data.path` in Settings (e.g. `D:/sirius-data` or `E:/sirius-data`).
-  - Verify data directory is created and permissioned correctly.
+  - Verify data directory is created and mapped to WSL path (`/mnt/d/sirius-data`) correctly.
 
 ---
 
@@ -129,10 +131,10 @@ Copy and paste the following prompt into your AI agent or assistant on the Windo
 
 ```text
 Please read WINDOWS_HANDOVER.md and GEMINI.md in the repository root. Follow the Windows Verification Checklist in WINDOWS_HANDOVER.md step-by-step:
-1. Verify prerequisites (Visual C++ 2015-2022 x64 Redistributable, Go 1.22+, Node 18+ if building frontend).
+1. Verify prerequisites (WSL2 status with Ubuntu-22.04, Go 1.22+, Node 18+ if rebuilding frontend).
 2. Run backend tests using `cd backend; go test ./pkg/...` to ensure all pure-Go tests pass on Windows.
 3. Build or launch the node manager using `run.bat` (or `start.bat` if testing pre-built package).
-4. Verify the web cockpit loads on http://localhost:8080.
-5. Verify harvest key validation, stop-node (stop.bat), and restart-node (restart.bat) operations.
+4. Verify the web cockpit loads on http://localhost:8080 and verify WSL2 state detection / onboarding modal.
+5. Verify mandatory harvest key enforcement, stop-node (stop.bat), and restart-node (restart.bat) operations.
 6. Report findings and any Windows-specific edge cases encountered.
 ```
