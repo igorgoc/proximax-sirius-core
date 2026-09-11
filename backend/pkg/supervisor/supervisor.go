@@ -1779,11 +1779,17 @@ func (dc *ProcessSupervisor) GetDiskSpace(targetPath string) DiskSpaceInfo {
 	}
 	free, total, used, err := getDiskSpaceBytes(p)
 	if err != nil || total == 0 {
+		free, total, used, _ = getDiskSpaceBytes(dc.chainConfigPath)
+	}
+	if total == 0 {
+		free, total, used, _ = getDiskSpaceBytes(".")
+	}
+	if total == 0 {
 		return DiskSpaceInfo{
 			Path:  p,
-			Free:  "Unknown",
-			Total: "Unknown",
-			Used:  "Unknown",
+			Free:  "0 B",
+			Total: "0 B",
+			Used:  "0 B",
 		}
 	}
 	return DiskSpaceInfo{

@@ -41,10 +41,11 @@ import { SyncConfigsModal } from './SyncConfigsModal';
 import { loadSnapshotPreferences, SnapshotPreferences, DEFAULT_SNAPSHOT_PREFS } from './SnapshotSubTab';
 
 interface MaintenanceTabProps {
+  metrics?: NodeMetrics | null;
   onOpenSettings?: (subtab?: string) => void;
 }
 
-export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }) => {
+export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMetrics, onOpenSettings }) => {
   // Sub-Tab Navigation State: 'snapshots' | 'system'
   const [activeSubTab, setActiveSubTab] = useState<'snapshots' | 'system'>('snapshots');
 
@@ -841,8 +842,14 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
     networkHeight > 0 ? Math.min(100, Math.max(0, (blockHeight / networkHeight) * 100)) : 0;
   const isSynced = networkHeight > 0 && Math.abs(networkHeight - blockHeight) <= 10;
 
-  // Free disk readout helper
-  const availableDiskFree = diskSpaceData?.free || metrics?.diskFree || 'Checking...';
+  // Free disk readout helper - exactly synchronized with node footer status bar when running
+  const activeMetrics = propMetrics || metrics;
+  const availableDiskFree = 
+    activeMetrics?.diskFree && activeMetrics.diskFree !== '0 B' && activeMetrics.diskFree !== 'Unknown'
+      ? activeMetrics.diskFree
+      : diskSpaceData?.free && diskSpaceData.free !== 'Unknown' && diskSpaceData.free !== '0 B'
+      ? diskSpaceData.free
+      : activeMetrics?.diskFree || 'Checking...';
 
   // Format toggle helper
   const isFormatDefault =
@@ -1148,20 +1155,14 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                     </div>
                   </div>
 
-                  {/* "Last backup" readout and Disk space readout */}
-                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] space-y-1 text-[11px] font-mono">
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>Free Disk Space:</span>
-                      <span className="text-slate-200 font-bold">{availableDiskFree}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>Last Backup:</span>
-                      <span className="text-slate-200 font-bold truncate max-w-[180px]">
-                        {dataBackupStatus?.lastBackupTime
-                          ? `${dataBackupStatus.lastBackupTime} (${dataBackupStatus.lastBackupSize || ''})`
-                          : 'No backups recorded'}
-                      </span>
-                    </div>
+                  {/* "Last backup" readout */}
+                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px] font-mono text-slate-400">
+                    <span>Last Backup:</span>
+                    <span className="text-slate-200 font-bold truncate max-w-[220px]">
+                      {dataBackupStatus?.lastBackupTime
+                        ? `${dataBackupStatus.lastBackupTime} (${dataBackupStatus.lastBackupSize || ''})`
+                        : 'No backups recorded'}
+                    </span>
                   </div>
 
                   {/* Live Progress Bar */}
@@ -1303,11 +1304,6 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                     </span>
                   </div>
 
-                  {/* Target Disk Space Readout */}
-                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px] font-mono text-slate-400">
-                    <span>Target Free Space:</span>
-                    <span className="text-slate-200 font-bold">{availableDiskFree}</span>
-                  </div>
 
                   {/* Live Progress Bar */}
                   {isRemoteSyncRunning && (
@@ -1430,11 +1426,6 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ onOpenSettings }
                     />
                   </div>
 
-                  {/* Target Disk Space Readout */}
-                  <div className="p-2.5 bg-[#0F1115] rounded-lg border border-[#262B34] flex items-center justify-between text-[11px] font-mono text-slate-400">
-                    <span>Target Free Space:</span>
-                    <span className="text-slate-200 font-bold">{availableDiskFree}</span>
-                  </div>
 
                   {/* Live Progress Bar */}
                   {isLocalRestoreRunning && (

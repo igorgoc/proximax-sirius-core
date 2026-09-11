@@ -441,6 +441,7 @@ export function App() {
 
         {activeTab === 'maintenance' && (
           <MaintenanceTab
+            metrics={metrics}
             onOpenSettings={(subtab = 'snapshots') => {
               window.location.hash = `#${subtab}`;
               setActiveTab('config');
