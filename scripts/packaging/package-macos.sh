@@ -70,8 +70,7 @@ if [ -f "chainconfig/data/00000/00001.dat" ]; then
 fi
 
 # Include launcher helper scripts
-cp start-node.sh stop.sh restart.sh start.command "$BUILD_DIR/"
-cp stop.sh "$BUILD_DIR/stop-node.sh"
+cp start.sh start.command stop.sh restart.sh start-node.sh "$BUILD_DIR/"
 chmod +x "$BUILD_DIR"/*.sh "$BUILD_DIR"/*.command "$BUILD_DIR/sirius-core"
 
 # Set strict permissions on properties

@@ -4,4 +4,11 @@ cd "$DIR"
 
 "$DIR/stop.sh"
 sleep 1
-"$DIR/run.sh"
+
+if [ -f "$DIR/start.sh" ]; then
+    exec "$DIR/start.sh"
+elif [ -f "$DIR/run.sh" ]; then
+    exec "$DIR/run.sh"
+else
+    exec "$DIR/sirius-core"
+fi

@@ -82,8 +82,7 @@ elif [ -f "chainconfig/data/00000/00001.dat" ]; then
 fi
 
 # Include launcher helper scripts
-cp start-node.sh stop.sh restart.sh "$TARGET_OPT/"
-cp stop.sh "$TARGET_OPT/stop-node.sh"
+cp start.sh stop.sh restart.sh start-node.sh "$TARGET_OPT/"
 [ -f "run.sh" ] && cp run.sh "$TARGET_OPT/"
 [ -f "scripts/reset_to_genesis.sh" ] && cp scripts/reset_to_genesis.sh "$TARGET_OPT/"
 chmod +x "$TARGET_OPT"/*.sh "$TARGET_OPT/sirius-core"
