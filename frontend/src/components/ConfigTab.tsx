@@ -496,7 +496,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
                 prompt="Select Sirius Blockchain Data Directory"
               />
               <p className="text-[11px] text-slate-500">
-                Stores blockchain binary block containers (`blocks.dat`, `blocks.idx`, `statements.dat`) on your fast external SSD.
+                Stores blockchain binary block containers (`blocks.dat`, `blocks.idx`, `statements.dat`).
               </p>
             </div>
 
