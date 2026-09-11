@@ -458,24 +458,12 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 		return dc.executeWSL(ctx, siriusBin, dc.chainConfigPath, localDataDir, libEnvList)
 	}
 
-	// Only run catapult.recovery if we have existing chain data beyond the nemesis block (height > 1)
-	shouldRunRecovery := false
-	if indexPath := filepath.Join(localDataDir, "index.dat"); isPathExists(indexPath) {
-		if data, err := os.ReadFile(indexPath); err == nil && len(data) >= 8 {
-			if binary.LittleEndian.Uint64(data[:8]) > 1 {
-				shouldRunRecovery = true
-			}
-		}
-	}
-
-	if shouldRunRecovery {
-		if _, e := os.Stat(recoveryBin); e == nil {
-			dc.broadcastLog("[Supervisor] Running native catapult.recovery pre-flight check...")
-			recCmd := exec.Command(recoveryBin, dc.chainConfigPath)
-			recCmd.Env = append(os.Environ(), libEnvList...)
-			_ = recCmd.Run()
-			dc.clearLocks(localDataDir)
-		}
+	if _, e := os.Stat(recoveryBin); e == nil {
+		dc.broadcastLog("[Supervisor] Running native catapult.recovery pre-flight check...")
+		recCmd := exec.Command(recoveryBin, dc.chainConfigPath)
+		recCmd.Env = append(os.Environ(), libEnvList...)
+		_ = recCmd.Run()
+		dc.clearLocks(localDataDir)
 	}
 
 	dc.broadcastLog(fmt.Sprintf("[Supervisor] Starting native Sirius Core process from %s...", siriusBin))

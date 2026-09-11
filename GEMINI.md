@@ -29,3 +29,19 @@ always_on: true
 - Isolate background polling state (`/api/status` interval) from user form state so uncommitted form inputs are never overwritten.
 - Go backend + embedded React/TypeScript UI served on port 3080.
 - Connects to Sirius P2P on port 7900 and public REST APIs on port 3000.
+
+## 5. Windows Native & WSL2 Architecture Guidelines
+- **Windows Host Supervisor**: Compiled as native Windows x64 binary (`sirius-core.exe`), serving web UI on port 8080 (cockpit) or port 3080.
+- **Engine Execution via WSL2**: C++ Sirius Catapult engine (`sirius.bc` + RocksDB + plugins) runs as ELF Linux x86_64 inside WSL2 (Ubuntu-22.04) for native ext4 performance and POSIX signal compliance.
+- **Cross-Platform Isolation Rule**: All Windows-specific logic MUST be strictly isolated to `*_windows.go` (via `//go:build windows`) or guarded by `if runtime.GOOS == "windows"`. Native macOS and Linux paths must remain completely untouched.
+- **Runtime Dependency Invariant (`libatomic1`)**:
+  - `libextension.fastfinality.so` requires `libatomic.so.1` for GCC 64-bit/128-bit atomic intrinsics.
+  - Default Ubuntu 22.04 WSL2 images omit `libatomic1`.
+  - Enforce `bin/libatomic.so.1` in the distribution and automated self-healing pre-flight check in `executeWSL`:
+    `dpkg -s libatomic1 >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq libatomic1)`
+- **Windows Path & Lock Synchronization**:
+  - `ToWSLPath` converts `C:\Path` to `/mnt/c/Path` for WSL execution.
+  - `FromWSLPath` and `normalizeHostPath` convert `/mnt/c/Path` to `C:\Path` when loading configuration properties.
+  - Stale locks (`server.lock`, `recovery.lock`, `statedb/*/LOCK`) must be cleared both via host Go and inside WSL (`rm -f '<wslDataDir>'/*.lock`).
+  - In WSL2, `catapult.recovery` only runs when block height > 1. At height ≤ 1, dirty partial `statedb` from aborted boots is cleared so `NemesisBlockLoader` boots cleanly.
+  - Process liveness check in `GetStatus()` checks `dc.cmd.ProcessState == nil` on Windows (`proc.Signal(syscall.Signal(0))` is unsupported on Windows).

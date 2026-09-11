@@ -15,7 +15,7 @@
   - `7900`: P2P transport network
   - `7901`: Internal node communication
   - `7903`: Dual-chain dynamic broker
-- **Blockchain Engine**: Native Windows engine (`bin\sirius.exe` or `bin\sirius.bc.exe`) managed via supervisor.
+- **Blockchain Engine**: C++ Sirius Catapult engine (`bin/sirius.bc` + RocksDB + plugins) executed inside WSL2 (Ubuntu-22.04) supervised by the Windows native binary.
 - **Configuration Root**: `chainconfig\` containing `resources\` (Catapult properties) and `data\` (blockchain state).
 
 ---
@@ -25,19 +25,26 @@
 1. **Pure-Go Build (Zero-CGO)**:
    - Replaced indirect CGO dependency from `supranational/blst` with a pure-Go shim (`backend/internal/blst_compat`).
    - Standard `go build` works out of the box on Windows without installing MSYS2, MinGW-w64, or GCC.
-2. **NTFS ACL Security Hardening (POSIX 0600 Equivalent)**:
+2. **WSL2 Execution & Runtime Dependencies**:
+   - The C++ Catapult engine runs inside WSL2 (Ubuntu-22.04).
+   - `libextension.fastfinality.so` requires `libatomic.so.1` (`libatomic1` package).
+   - `bin/libatomic.so.1` is bundled in `bin/` and staged in `package-windows.ps1`.
+   - `executeWSL` runs a silent pre-flight check inside WSL: `dpkg -s libatomic1 >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq libatomic1)`.
+3. **NTFS ACL Security Hardening (POSIX 0600 Equivalent)**:
    - `start-node.ps1` runs `icacls` on `chainconfig\resources\config-harvesting.properties`, `config-user.properties`, and `.sirius-token`.
    - Strips inherited folder permissions and grants exclusive read/write access to the current Windows user and `SYSTEM`.
-3. **Cross-Platform Path Sanitization**:
-   - File paths written to `.properties` use forward slashes (`C:/proximax/...` via `filepath.ToSlash`), preventing Boost PropertyTree escape sequence parsing bugs (e.g. `\r` as carriage return).
-4. **Frictionless Batch & PowerShell Launchers**:
+4. **Path & Lock Synchronization**:
+   - `ToWSLPath` translates `C:\Sirius_data` -> `/mnt/c/Sirius_data`.
+   - `FromWSLPath` and `normalizeHostPath` translate `/mnt/c/Sirius_data` -> `C:\Sirius_data` when reading properties.
+   - Stale lock files (`server.lock`, `recovery.lock`, `statedb/*/LOCK`) are cleaned both via host Go and inside WSL (`rm -f <wslDataDir>/*.lock`).
+   - `catapult.recovery` in WSL only executes when chain height > 1. At height ≤ 1, dirty partial `statedb` from previous aborted boots is cleared so `NemesisBlockLoader` computes the hash cleanly.
+   - Process liveness in `GetStatus()` checks `dc.cmd.ProcessState == nil` on Windows (`syscall.Signal(0)` is unsupported on Windows).
+5. **Cross-Platform Isolation**:
+   - All Windows-specific logic is strictly isolated to `*_windows.go` or guarded by `if runtime.GOOS == "windows"`. Native macOS and Linux behaviors are preserved untouched.
+6. **Frictionless Batch & PowerShell Launchers**:
    - `start.bat`, `stop.bat`, `restart.bat` allow double-click launching or CMD execution without encountering PowerShell execution policy restrictions.
    - `start-node.ps1`, `stop-node.ps1`, `restart-node.ps1` provide full PowerShell scripting support.
    - `run.bat` provides end-to-end dev build + run workflow.
-5. **Lock File Auto-Cleanup**:
-   - Stale `*.lock` and `statedb\*\LOCK` files are cleaned automatically on startup and shutdown.
-6. **Dynamic Link Libraries (DLLs)**:
-   - `start-node.ps1` prepends `$RootDir\bin` to `$env:PATH` so Windows automatically resolves required DLLs when launching the engine.
 
 ---
 
