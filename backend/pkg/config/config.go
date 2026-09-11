@@ -299,10 +299,10 @@ func (cm *ConfigManager) SaveNodeConfig(cfg *NodeConfig) error {
 		userUpdates["bootKey"] = cfg.BootKey
 	}
 	if cfg.DataDirectory != "" {
-		userUpdates["dataDirectory"] = cfg.DataDirectory
+		userUpdates["dataDirectory"] = filepath.ToSlash(cfg.DataDirectory)
 	}
 	if cfg.DataPath != "" {
-		userUpdates["dataDirectory"] = cfg.DataPath
+		userUpdates["dataDirectory"] = filepath.ToSlash(cfg.DataPath)
 	}
 
 	userTemplate := "[account]\n\nbootKey = %s\n\n[storage]\n\ndataDirectory = %s\npluginsDirectory = \ncertificateDirectory = /certificate\n"

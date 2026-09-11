@@ -65,6 +65,9 @@ New-Item -ItemType Directory -Path $TargetResources -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetData -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetLogs -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetBin -Force | Out-Null
+if (Test-Path (Join-Path $RootDir "bin")) {
+    Copy-Item -Recurse (Join-Path $RootDir "bin\*") $TargetBin -Force -ErrorAction SilentlyContinue
+}
 
 # Copy engine & manager compatibility manifests
 Copy-Item (Join-Path $RootDir "chainconfig\engine.compat.json") (Join-Path $BuildDir "chainconfig\engine.compat.json")
@@ -91,10 +94,17 @@ if (Test-Path (Join-Path $RootDir "chainconfig\data\00000\00001.dat")) {
     Copy-Item (Join-Path $RootDir "chainconfig\data\00000\hashes.dat") $TargetData
 }
 
-# Copy PowerShell launcher scripts
+# Copy launchers and helper scripts
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\start-node.ps1") $BuildDir
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\stop-node.ps1") $BuildDir
+Copy-Item (Join-Path $RootDir "scripts\packaging\windows\restart-node.ps1") $BuildDir
+Copy-Item (Join-Path $RootDir "scripts\packaging\windows\start.bat") $BuildDir
+Copy-Item (Join-Path $RootDir "scripts\packaging\windows\stop.bat") $BuildDir
+Copy-Item (Join-Path $RootDir "scripts\packaging\windows\restart.bat") $BuildDir
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\WINDOWS_DEFENDER_NOTES.md") $BuildDir
+if (Test-Path (Join-Path $RootDir "WINDOWS_HANDOVER.md")) {
+    Copy-Item (Join-Path $RootDir "WINDOWS_HANDOVER.md") $BuildDir
+}
 
 # 4. Create ZIP distribution
 $ZipName = "proximax-sirius-windows-$Arch-$Version.zip"

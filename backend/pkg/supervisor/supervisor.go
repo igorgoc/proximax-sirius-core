@@ -622,13 +622,13 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 		for _, line := range lines {
 			t := strings.TrimSpace(line)
 			if strings.HasPrefix(t, "dataDirectory") {
-				newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", dataPath))
+				newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", filepath.ToSlash(dataPath)))
 				hasDataDir = true
 			} else if strings.HasPrefix(t, "pluginsDirectory") {
-				newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", dc.binPath))
+				newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", filepath.ToSlash(dc.binPath)))
 				hasPluginsDir = true
 			} else if strings.HasPrefix(t, "certificateDirectory") {
-				newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", certDir))
+				newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", filepath.ToSlash(certDir)))
 				hasCertDir = true
 			} else {
 				newLines = append(newLines, line)
@@ -636,13 +636,13 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 		}
 
 		if !hasDataDir {
-			newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", dataPath))
+			newLines = append(newLines, fmt.Sprintf("dataDirectory = %s", filepath.ToSlash(dataPath)))
 		}
 		if !hasPluginsDir {
-			newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", dc.binPath))
+			newLines = append(newLines, fmt.Sprintf("pluginsDirectory = %s", filepath.ToSlash(dc.binPath)))
 		}
 		if !hasCertDir {
-			newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", certDir))
+			newLines = append(newLines, fmt.Sprintf("certificateDirectory = %s", filepath.ToSlash(certDir)))
 		}
 
 		_ = os.WriteFile(userProps, []byte(strings.Join(newLines, "\n")), 0644)
@@ -660,13 +660,13 @@ func (dc *ProcessSupervisor) syncProperties(dataPath string, certDir string) {
 			for _, line := range lines {
 				t := strings.TrimSpace(line)
 				if strings.HasPrefix(t, "directory =") {
-					newLines = append(newLines, fmt.Sprintf("directory = %s", logsDir))
+					newLines = append(newLines, fmt.Sprintf("directory = %s", filepath.ToSlash(logsDir)))
 				} else if strings.HasPrefix(t, "filePattern =") {
 					patternName := "server_%4N.log"
 					if strings.Contains(lcfg, "recovery") {
 						patternName = "recovery_%4N.log"
 					}
-					newLines = append(newLines, fmt.Sprintf("filePattern = %s", filepath.Join(logsDir, patternName)))
+					newLines = append(newLines, fmt.Sprintf("filePattern = %s", filepath.ToSlash(filepath.Join(logsDir, patternName))))
 				} else {
 					newLines = append(newLines, line)
 				}
