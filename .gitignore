@@ -53,6 +53,8 @@ bin/*.dll*
 bin/stream-chunk-restore
 backend/sirius-core
 backend/proximax-sirius-core
+sirius-core
+/sirius-core
 .sirius-core.pid
 native-core/
 

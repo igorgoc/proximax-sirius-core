@@ -58,6 +58,15 @@ if [ -d "$DATA_DIR" ]; then
     rm -f "$DATA_DIR"/statedb/*/LOCK 2>/dev/null || true
 fi
 
+# 5b. Ensure machine-specific log paths in logging configuration
+LOGS_DIR="$DIR/chainconfig/logs"
+mkdir -p "$LOGS_DIR"
+for cfg in "$DIR/chainconfig/resources/config-logging-server.properties" "$DIR/chainconfig/resources/config-logging-recovery.properties" "$DIR/chainconfig/resources/config-logging-broker.properties"; do
+    if [ -f "$cfg" ]; then
+        sed -i "s|^directory = .*|directory = $LOGS_DIR|g" "$cfg" 2>/dev/null || true
+    fi
+done
+
 # 6. Configure DYLD dynamic library path
 BOOST_LIB="$HOME/boost-build-1.81.0/lib"
 DYLD_PATH="$DIR/bin"
