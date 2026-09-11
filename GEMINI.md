@@ -27,11 +27,11 @@ always_on: true
 - Fully containerized in Docker to ensure zero pollution of the host OS.
 - Always use `docker compose up -d --build` in `run.sh` so container images stay synchronized with code edits.
 - Isolate background polling state (`/api/status` interval) from user form state so uncommitted form inputs are never overwritten.
-- Go backend + embedded React/TypeScript UI served on port 3080.
+- Go backend + embedded React/TypeScript UI served on port 8080.
 - Connects to Sirius P2P on port 7900 and public REST APIs on port 3000.
 
 ## 5. Windows Native & WSL2 Architecture Guidelines
-- **Windows Host Supervisor**: Compiled as native Windows x64 binary (`sirius-core.exe`), serving web UI on port 8080 (cockpit) or port 3080.
+- **Windows Host Supervisor**: Compiled as native Windows x64 binary (`sirius-core.exe`), serving web UI on port 8080 (cockpit).
 - **Engine Execution via WSL2**: C++ Sirius Catapult engine (`sirius.bc` + RocksDB + plugins) runs as ELF Linux x86_64 inside WSL2 (Ubuntu-22.04) for native ext4 performance and POSIX signal compliance.
 - **Cross-Platform Isolation Rule**: All Windows-specific logic MUST be strictly isolated to `*_windows.go` (via `//go:build windows`) or guarded by `if runtime.GOOS == "windows"`. Native macOS and Linux paths must remain completely untouched.
 - **Runtime Dependency Invariant (`libatomic1`)**:

@@ -75,7 +75,7 @@ export const QuitConfirmModal: React.FC<QuitConfirmModalProps> = ({
                 <p className="text-xs text-slate-400 font-mono">
                   {shutdownStep === 1 && '1/3 Flushing state cache to disk...'}
                   {shutdownStep === 2 && '2/3 Terminating Catapult consensus engine...'}
-                  {shutdownStep === 3 && '3/3 Releasing port 3080 & supervisor...'}
+                  {shutdownStep === 3 && '3/3 Releasing port 8080 & supervisor...'}
                 </p>
               </div>
               <div className="w-64 bg-[#0F1115] border border-[#262B34] rounded-full h-1.5 overflow-hidden">
@@ -105,7 +105,7 @@ export const QuitConfirmModal: React.FC<QuitConfirmModalProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    Safely flushes the RocksDB blockchain database to disk, terminates the Catapult validator engine, and frees port <code className="text-slate-300 font-mono">3080</code>.
+                    Safely flushes the RocksDB blockchain database to disk, terminates the Catapult validator engine, and frees port <code className="text-slate-300 font-mono">8080</code>.
                   </p>
                 </div>
               </div>
@@ -128,7 +128,7 @@ export const QuitConfirmModal: React.FC<QuitConfirmModalProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    Closes the window while the node continues harvesting and syncing in the system tray / background daemon. The web console remains accessible at <code className="text-blue-400 font-mono">http://localhost:3080</code>.
+                    Closes the window while the node continues harvesting and syncing in the system tray / background daemon. The web console remains accessible at <code className="text-blue-400 font-mono">http://localhost:8080</code>.
                   </p>
                 </div>
               </div>

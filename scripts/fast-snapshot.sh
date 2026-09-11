@@ -40,5 +40,5 @@ docker compose start sirius-core || docker compose up -d
 echo ""
 echo "================================================================="
 echo "  Snapshot extraction complete! Blockchain data is ready."
-echo "  Open dashboard: http://localhost:3080"
+echo "  Open dashboard: http://localhost:8080"
 echo "================================================================="

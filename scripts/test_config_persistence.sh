@@ -23,7 +23,7 @@ cleanup() {
     kill -9 $(cat "$DIR/.sirius-core.pid") 2>/dev/null || true
   fi
   sleep 1
-  DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 3080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
+  DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
   echo $! > "$DIR/.sirius-core.pid"
   sleep 2
   echo "Original config restored and daemon restarted."
@@ -39,8 +39,8 @@ stop_daemon() {
     fi
     rm -f "$DIR/.sirius-core.pid"
   fi
-  # Free port 3080 if lingering
-  PORT_PID=$(lsof -ti :3080 2>/dev/null || true)
+  # Free port 8080 if lingering
+  PORT_PID=$(lsof -ti :8080 2>/dev/null || true)
   if [ -n "$PORT_PID" ]; then
     kill -9 $PORT_PID 2>/dev/null || true
   fi
@@ -49,13 +49,13 @@ stop_daemon() {
 
 start_daemon() {
   echo "  [Process] Starting daemon fresh..."
-  DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 3080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
+  DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
   NEW_PID=$!
   echo "$NEW_PID" > "$DIR/.sirius-core.pid"
   
   # Wait for HTTP ready
   for attempt in {1..30}; do
-    if curl -s -f "http://localhost:3080/api/config" >/dev/null 2>&1; then
+    if curl -s -f "http://localhost:8080/api/config" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -79,9 +79,9 @@ for i in $(seq 1 $NUM_ROUNDS); do
   TEST_PATH="/Volumes/SSD/Sirius_data_persisted_test_$i"
   TEST_NAME="validator-restart-stress-$i"
   
-  ENDPOINT="http://localhost:3080/api/config/save"
+  ENDPOINT="http://localhost:8080/api/config/save"
   if [ $((i % 2)) -eq 0 ]; then
-    ENDPOINT="http://localhost:3080/api/config"
+    ENDPOINT="http://localhost:8080/api/config"
   fi
   
   echo "  1. Sending POST to $ENDPOINT"
@@ -120,7 +120,7 @@ for i in $(seq 1 $NUM_ROUNDS); do
   start_daemon
   
   echo "  5. Querying GET /api/config to verify persisted values on startup..."
-  LOADED_CONFIG=$(curl -s "http://localhost:3080/api/config?_t=$(date +%s)")
+  LOADED_CONFIG=$(curl -s "http://localhost:8080/api/config?_t=$(date +%s)")
   LOADED_PATH=$(echo "$LOADED_CONFIG" | grep -o '"dataPath":"[^"]*' | cut -d'"' -f4)
   LOADED_NAME=$(echo "$LOADED_CONFIG" | grep -o '"friendlyName":"[^"]*' | cut -d'"' -f4)
   

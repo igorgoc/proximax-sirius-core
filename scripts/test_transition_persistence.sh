@@ -17,7 +17,7 @@ stop_daemon() {
     fi
     rm -f "$DIR/.sirius-core.pid"
   fi
-  PORT_PID=$(lsof -ti :3080 2>/dev/null || true)
+  PORT_PID=$(lsof -ti :8080 2>/dev/null || true)
   if [ -n "$PORT_PID" ]; then
     kill -9 $PORT_PID 2>/dev/null || true
   fi
@@ -26,12 +26,12 @@ stop_daemon() {
 
 start_daemon() {
   echo "  [Boot] Cold-starting daemon fresh..."
-  DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 3080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
+  DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
   NEW_PID=$!
   echo "$NEW_PID" > "$DIR/.sirius-core.pid"
   
   for attempt in {1..30}; do
-    if curl -s -f "http://localhost:3080/api/config" >/dev/null 2>&1; then
+    if curl -s -f "http://localhost:8080/api/config" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -52,7 +52,7 @@ test_step() {
   echo "----------------------------------------------------------"
 
   echo "  1. POST /api/config/save with dataPath: $TARGET_PATH"
-  HTTP_RES=$(curl -s -w "\n%{http_code}" -X POST -H 'Content-Type: application/json' -d "{\"dataPath\":\"$TARGET_PATH\"}" http://localhost:3080/api/config/save)
+  HTTP_RES=$(curl -s -w "\n%{http_code}" -X POST -H 'Content-Type: application/json' -d "{\"dataPath\":\"$TARGET_PATH\"}" http://localhost:8080/api/config/save)
   HTTP_BODY=$(echo "$HTTP_RES" | sed '$d')
   HTTP_CODE=$(echo "$HTTP_RES" | tail -n 1)
 
@@ -82,7 +82,7 @@ test_step() {
   start_daemon
 
   echo "  5. Querying GET /api/config to verify persisted value after cold boot..."
-  LOADED_CONFIG=$(curl -s "http://localhost:3080/api/config?_t=$(date +%s)")
+  LOADED_CONFIG=$(curl -s "http://localhost:8080/api/config?_t=$(date +%s)")
   LOADED_PATH=$(echo "$LOADED_CONFIG" | grep -o '"dataPath":"[^"]*' | cut -d'"' -f4)
 
   if [ "$LOADED_PATH" != "$TARGET_PATH" ]; then

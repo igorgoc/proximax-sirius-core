@@ -9,7 +9,7 @@ let tray = null;
 let isLoaded = false;
 let isQuitting = false;
 let backendProcess = null;
-const TARGET_URL = 'http://127.0.0.1:3080';
+const TARGET_URL = 'http://127.0.0.1:8080';
 
 // Ensure single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -106,7 +106,7 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function checkPort3080Ready(callback) {
+function checkPort8080Ready(callback) {
   const req = http.get(TARGET_URL, (res) => {
     res.resume();
     if (res.statusCode >= 200 && res.statusCode < 500) {
@@ -187,7 +187,7 @@ async function runBootSequence() {
   // Step 3: Launch Native Go Controller & Sirius Process
   sendBootUpdate('step-native-launch', 'running', 'Starting native Sirius Core process manager...', 'Launching backend...');
 
-  checkPort3080Ready((alreadyRunning) => {
+  checkPort8080Ready((alreadyRunning) => {
     if (alreadyRunning) {
       sendBootUpdate('step-native-launch', 'success', 'Native Sirius Core backend already active', '✓ Connected to existing service');
       step4_probeGui();
@@ -210,7 +210,7 @@ async function runBootSequence() {
       LD_LIBRARY_PATH: binDir
     };
 
-    backendProcess = spawn(executable, ['-port', '3080', '-chainconfig', chainConfigDir], {
+    backendProcess = spawn(executable, ['-port', '8080', '-chainconfig', chainConfigDir], {
       cwd: workDir,
       env,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -234,7 +234,7 @@ async function runBootSequence() {
       console.log('Backend exited with code:', code);
     });
 
-    sendBootUpdate('step-native-launch', 'success', 'Native Sirius Core manager active', '✓ sirius-core listening on :3080');
+    sendBootUpdate('step-native-launch', 'success', 'Native Sirius Core manager active', '✓ sirius-core listening on :8080');
     setTimeout(step4_probeGui, 800);
   });
 
@@ -246,7 +246,7 @@ async function runBootSequence() {
     const maxAttempts = 30;
     const poller = setInterval(() => {
       attempts++;
-      checkPort3080Ready((ready) => {
+      checkPort8080Ready((ready) => {
         if (ready) {
           clearInterval(poller);
           checkApiStatusReady(async () => {
@@ -257,9 +257,9 @@ async function runBootSequence() {
           });
         } else if (attempts >= maxAttempts) {
           clearInterval(poller);
-          sendBootUpdate('step-api-ready', 'error', 'Dashboard did not respond within timeout', 'Check if port 3080 is accessible');
+          sendBootUpdate('step-api-ready', 'error', 'Dashboard did not respond within timeout', 'Check if port 8080 is accessible');
         } else {
-          sendBootUpdate('step-api-ready', 'running', `Connecting to Dashboard (${attempts}/${maxAttempts})...`, `Waiting for HTTP response on port 3080...`);
+          sendBootUpdate('step-api-ready', 'running', `Connecting to Dashboard (${attempts}/${maxAttempts})...`, `Waiting for HTTP response on port 8080...`);
         }
       });
     }, 600);
@@ -506,7 +506,7 @@ function getBootVisualizerHTML() {
             <div class="step-icon">4</div>
             <div>
               <div class="step-name">Web Dashboard</div>
-              <div class="step-desc" id="desc-step-api-ready">Connecting to port 3080...</div>
+              <div class="step-desc" id="desc-step-api-ready">Connecting to port 8080...</div>
             </div>
           </div>
           <div class="step-badge" id="badge-step-api-ready">PENDING</div>
@@ -584,7 +584,7 @@ function createWindow() {
     }
   });
 
-  checkPort3080Ready((isReady) => {
+  checkPort8080Ready((isReady) => {
     if (isReady) {
       loadDashboardDirectly();
     } else {
@@ -660,7 +660,7 @@ function setupMenu() {
           click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload(); }
         },
         {
-          label: 'Open in Web Browser (localhost:3080)',
+          label: 'Open in Web Browser (localhost:8080)',
           click: () => { shell.openExternal(TARGET_URL); }
         },
         { type: 'separator' },
@@ -779,7 +779,7 @@ let trayPollInterval = null;
 function sendNodeAction(actionEndpoint) {
   const req = http.request({
     hostname: '127.0.0.1',
-    port: 3080,
+    port: 8080,
     path: actionEndpoint,
     method: 'POST',
     timeout: 4000
@@ -914,7 +914,7 @@ function updateTrayMenu() {
       }
     },
     {
-      label: '🌐 Open in Web Browser (localhost:3080)',
+      label: '🌐 Open in Web Browser (localhost:8080)',
       click: () => {
         shell.openExternal(TARGET_URL);
       }
@@ -1052,7 +1052,7 @@ function stopBackendAndExit() {
   // Gracefully tell Sirius Core API to shutdown node engine and server process
   const req = http.request({
     hostname: '127.0.0.1',
-    port: 3080,
+    port: 8080,
     path: '/api/system/shutdown',
     method: 'POST',
     timeout: 1500

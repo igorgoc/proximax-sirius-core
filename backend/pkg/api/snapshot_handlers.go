@@ -221,7 +221,7 @@ func (s *Server) handleSnapshotMock(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/snapshot/mock/")
 	host := r.Host
 	if host == "" {
-		host = "127.0.0.1:3080"
+		host = "127.0.0.1:8080"
 	}
 	scheme := "http"
 	if r.TLS != nil {

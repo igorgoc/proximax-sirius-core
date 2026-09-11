@@ -11,7 +11,7 @@ Built as a lightweight native management engine (Go backend + React/TypeScript f
 ```
                       +-----------------------------------+
                       |      Operator Browser / GUI       |
-                      |       http://localhost:3080       |
+                      |       http://localhost:8080       |
                       +-----------------+-----------------+
                                         | (HTTP / REST / SSE)
                       +-----------------v-----------------+
@@ -74,12 +74,12 @@ In your terminal, navigate to the repository directory and run:
 `run.sh` will:
 1. Automatically set optimal file descriptor limits (`ulimit -n 65536`) for RocksDB.
 2. Build the React frontend into static assets embedded within the Go binary.
-3. Compile and launch the native manager daemon on port **3080**.
+3. Compile and launch the native manager daemon on port **8080**.
 4. Perform readiness healthchecks and open the dashboard.
 
 ### 2. Access the Dashboard & Automatic Engine Setup
 Open your browser at:
-👉 **[http://localhost:3080](http://localhost:3080)**
+👉 **[http://localhost:8080](http://localhost:8080)**
 
 > **Automatic Initial Setup:** Download the Node Manager for your platform; it will automatically fetch and verify the matching Sirius Engine on first launch (requires internet access once). The application cryptographically validates the release manifest via Ed25519 signatures and SHA-256 integrity checks before extracting the native engine binary.
 
@@ -141,7 +141,7 @@ Node configuration is maintained in `chainconfig/resources/`:
 
 | Port | Protocol | Purpose |
 | :---: | :---: | :--- |
-| **3080** | TCP (HTTP) | Sirius Core Web Cockpit & Manager REST API |
+| **8080** | TCP (HTTP) | Sirius Core Web Cockpit & Manager REST API |
 | **7900** | TCP | Sirius Mainnet P2P Transport & Block Synchronization |
 | **7901** | TCP | Sirius Peer API Gateway |
 | **7902** | TCP | Sirius Broker / Messaging Queue |
