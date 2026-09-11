@@ -797,10 +797,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs text-slate-300 font-medium">
-                  Node boot private key
-                </label>
+              <div className="flex items-center justify-end mb-1.5">
                 <button
                   type="button"
                   onClick={handleGenerateBootKey}
