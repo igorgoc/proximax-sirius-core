@@ -14,7 +14,8 @@ import { AboutModal } from './components/AboutModal';
 import { QuitConfirmModal } from './components/QuitConfirmModal';
 import { EngineUpdateBanner } from './components/EngineUpdateBanner';
 import { EngineUpdateModal } from './components/EngineUpdateModal';
-import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats, EngineUpdateStatus } from './types';
+import { WSLSetupModal } from './components/WSLSetupModal';
+import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats, EngineUpdateStatus, WSLStatus } from './types';
 
 export function App() {
   const [activeTab, setActiveTab] = useState(() => {
@@ -148,6 +149,16 @@ export function App() {
     return () => window.removeEventListener('open-engine-updater', handler);
   }, []);
 
+  const [wslStatus, setWslStatus] = useState<WSLStatus | null>(null);
+  const [wslModalOpen, setWslModalOpen] = useState(false);
+
+  // Global event listener to open WSL setup modal
+  useEffect(() => {
+    const handler = () => setWslModalOpen(true);
+    window.addEventListener('open-wsl-setup', handler);
+    return () => window.removeEventListener('open-wsl-setup', handler);
+  }, []);
+
   const fetchStatus = async () => {
     try {
       const res = await fetch('/api/status');
@@ -172,6 +183,12 @@ export function App() {
           }
         }
         if (typeof data.autoRecovery === 'boolean') setAutoRecovery(data.autoRecovery);
+        if (data.wslStatus) {
+          setWslStatus(data.wslStatus);
+          if (data.wslStatus.isWindows && data.wslStatus.state !== 'WSL2_READY' && !sessionStorage.getItem('wsl_setup_dismissed')) {
+            setWslModalOpen(true);
+          }
+        }
 
         setConfig((prev) => {
           if (!prev || JSON.stringify(prev) !== JSON.stringify(data.config)) {
@@ -373,6 +390,24 @@ export function App() {
         onOpenModal={() => setEngineModalOpen(true)}
       />
 
+      {/* WSL2 Subsystem Configuration Banner (Windows only when not ready) */}
+      {wslStatus?.isWindows && wslStatus.state !== 'WSL2_READY' && (
+        <div className="bg-gradient-to-r from-amber-950/90 via-zinc-900 to-zinc-950 border-b border-amber-500/50 px-4 py-2.5 text-xs text-amber-200 flex flex-col sm:flex-row items-center justify-between gap-2 shadow-lg">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span>
+              <strong>Windows Blockchain Subsystem (WSL2) Setup Required:</strong> Virtualization subsystem is not yet configured to run Sirius consensus.
+            </span>
+          </div>
+          <button
+            onClick={() => setWslModalOpen(true)}
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg shadow text-xs transition-colors flex items-center space-x-1.5 flex-shrink-0"
+          >
+            <span>Configure Subsystem</span>
+          </button>
+        </div>
+      )}
+
       {/* Tabs navigation */}
       <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
 
@@ -491,6 +526,17 @@ export function App() {
           sessionStorage.setItem('engine_setup_dismissed', 'true');
         }}
         engineStatus={engineStatus}
+        onRefreshStatus={fetchStatus}
+      />
+
+      {/* WSL2 Subsystem Modal */}
+      <WSLSetupModal
+        isOpen={wslModalOpen}
+        onClose={() => {
+          setWslModalOpen(false);
+          sessionStorage.setItem('wsl_setup_dismissed', 'true');
+        }}
+        wslStatus={wslStatus}
         onRefreshStatus={fetchStatus}
       />
     </div>

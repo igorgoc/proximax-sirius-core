@@ -394,5 +394,15 @@ export interface LogStats {
   lastPurgeFreedMB?: number;
 }
 
+export type WSLState = 'WSL_NOT_INSTALLED' | 'WSL_V1_ONLY' | 'WSL2_NO_DISTRO' | 'WSL2_READY';
 
-
+export interface WSLStatus {
+  state: WSLState;
+  isWindows: boolean;
+  defaultVersion: number;
+  distroName: string;
+  wslInstallInitiated: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+  rawStatus?: string;
+}

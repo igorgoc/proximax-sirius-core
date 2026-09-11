@@ -188,6 +188,11 @@ type ProcessSupervisor struct {
 	logPurgeMu          sync.RWMutex
 	lastLogPurgeTime    string
 	lastLogPurgeFreedMB float64
+
+	// WSL state cache
+	wslCacheMu      sync.RWMutex
+	wslCachedStatus WSLStatus
+	wslCacheTime    time.Time
 }
 
 type LogStats struct {
@@ -440,6 +445,14 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 	}
 	if runtime.GOOS == "windows" {
 		libEnvList = append(libEnvList, fmt.Sprintf("PATH=%s;%s", dyldPath, os.Getenv("PATH")))
+		ctx, cancel := context.WithCancel(context.Background())
+		dc.cmdCancel = cancel
+		go func() {
+			if err := dc.SetupPortProxy(); err != nil {
+				dc.broadcastLog(fmt.Sprintf("[Supervisor] Note: PortProxy setup: %v", err))
+			}
+		}()
+		return dc.executeWSL(ctx, siriusBin, dc.chainConfigPath, libEnvList)
 	}
 
 	if _, e := os.Stat(recoveryBin); e == nil {
@@ -723,7 +736,7 @@ func (dc *ProcessSupervisor) StopNode() error {
 
 	dc.broadcastLog("[Supervisor] Stopping Sirius Core process gracefully...")
 	if runtime.GOOS == "windows" {
-		_ = dc.cmd.Process.Signal(os.Interrupt)
+		_ = dc.stopWSL()
 	} else {
 		_ = dc.cmd.Process.Signal(syscall.SIGINT)
 	}

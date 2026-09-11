@@ -143,10 +143,16 @@ if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
 
 # 8. Launch Node Manager
 $BackendExe = Join-Path $RootDir "sirius-core.exe"
+if (Test-Path (Join-Path $RootDir "bin\sirius-core.exe")) {
+    $BackendExe = Join-Path $RootDir "bin\sirius-core.exe"
+} elseif (Test-Path (Join-Path $RootDir "backend\sirius-core.exe")) {
+    $BackendExe = Join-Path $RootDir "backend\sirius-core.exe"
+}
 if (-not (Test-Path $BackendExe)) {
     Write-Error "Binary not found: $BackendExe. Please run build or download the Windows release package."
     exit 1
 }
+Unblock-File $BackendExe -ErrorAction SilentlyContinue
 
 $LogFile = Join-Path $LogDir "manager.log"
 $ErrLogFile = Join-Path $LogDir "manager_error.log"
@@ -157,7 +163,7 @@ if ($Foreground) {
     & $BackendExe @ArgsList
 } else {
     Write-Host "-> Starting node manager in background..." -ForegroundColor Green
-    $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -RedirectStandardOutput $LogFile -RedirectStandardError $ErrLogFile -PassThru -WindowStyle Hidden
+    $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -PassThru -WindowStyle Hidden
     $Process.Id | Out-File -FilePath $PidFile -Encoding ascii
     Start-Sleep -Seconds 2
 

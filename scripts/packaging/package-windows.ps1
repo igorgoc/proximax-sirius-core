@@ -43,7 +43,7 @@ $FrontendDist = Join-Path $RootDir "backend\dist"
 if (-not (Test-Path $FrontendDist)) {
     Write-Host "-> Building React UI..." -ForegroundColor Green
     Set-Location (Join-Path $RootDir "frontend")
-    npm run build
+    cmd.exe /c "npm run build"
     Set-Location $RootDir
 }
 

@@ -255,8 +255,8 @@ func PlatformAssetDescriptor() (assetName, binaryName string) {
 
 	binaryName = "sirius.bc"
 	if goos == "windows" {
-		binaryName = "sirius.exe"
-		assetName = fmt.Sprintf("sirius-%s-%s.zip", goos, goarch)
+		// On Windows, the Sirius C++ engine runs inside WSL2 using the official Linux x86_64 ELF binary
+		assetName = "sirius-linux-amd64.tar.gz"
 	} else {
 		assetName = fmt.Sprintf("sirius-%s-%s.tar.gz", goos, goarch)
 	}

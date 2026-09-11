@@ -41,7 +41,7 @@ chainconfig/resources/config-storage.properties
 chainconfig/resources/config-manager.properties
 
 # Compiled Go manager binaries & PID
-bin/sirius-core-manager
+bin/sirius-core*
 bin/sirius-node-manager
 bin/sign-release
 bin/sign-release.exe
@@ -51,13 +51,18 @@ bin/*.so*
 bin/*.dylib*
 bin/*.dll*
 bin/stream-chunk-restore
-backend/sirius-core
-backend/proximax-sirius-core
+backend/sirius-core*
+backend/proximax-sirius-core*
 sirius-core
 /sirius-core
 sirius-core.exe
 /sirius-core.exe
 .sirius-core.pid
 native-core/
+
+# Runtime caches and temporary backup snapshots
+chainconfig/cache.json
+chainconfig/resources/.backup-configs-*/
+*.bak
 
 .aider*

@@ -219,6 +219,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/system/disk-space", s.handleSystemDiskSpace)
 	mux.HandleFunc("/api/system/shutdown", s.handleSystemShutdown)
 	mux.HandleFunc("/api/console/query", s.handleConsoleQuery)
+	mux.HandleFunc("/api/system/wsl/status", s.handleSystemWSLStatus)
+	mux.HandleFunc("/api/system/wsl/install", s.handleSystemWSLInstall)
+	mux.HandleFunc("/api/system/wsl/setup-distro", s.handleSystemWSLSetupDistro)
 
 	// Storage & Replicator (DFMS) Routes
 	mux.HandleFunc("/api/storage/status", s.handleStorageStatus)
@@ -483,6 +486,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"autoRecovery":          s.supervisor.IsAutoRecoveryEnabled(),
 		"updateInfo":            s.updateMgr.GetUpdateInfo(),
 		"engineStatus":          s.engineUpdater.GetStatus(),
+		"wslStatus":             s.supervisor.ProbeWSLStatus(),
 	}
 
 	jsonResponse(w, resp)
@@ -2023,6 +2027,49 @@ func (s *Server) handleUPnPRemap(w http.ResponseWriter, r *http.Request) {
 		"status":    "ok",
 		"message":   "UPnP router port re-mapping triggered",
 		"portCheck": result,
+	})
+}
+
+func (s *Server) handleSystemWSLStatus(w http.ResponseWriter, r *http.Request) {
+	status := s.supervisor.ProbeWSLStatus()
+	jsonResponse(w, status)
+}
+
+func (s *Server) handleSystemWSLInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	err := s.supervisor.InitiateWSLInstall()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"status":  "initiated",
+		"message": "WSL installation initiated. Please complete any administrator prompts.",
+	})
+}
+
+func (s *Server) handleSystemWSLSetupDistro(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Distro string `json:"distro"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	err := s.supervisor.SetupWSLDistro(req.Distro)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"status":  "ok",
+		"message": "WSL distribution setup completed.",
 	})
 }
 

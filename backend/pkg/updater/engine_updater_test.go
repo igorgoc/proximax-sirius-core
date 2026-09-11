@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -63,7 +62,8 @@ func createPlatformPackage(t *testing.T, binaryName string, content []byte) []by
 	t.Helper()
 	var buf bytes.Buffer
 
-	if runtime.GOOS == "windows" {
+	assetName, _ := PlatformAssetDescriptor()
+	if strings.HasSuffix(assetName, ".zip") {
 		zw := zip.NewWriter(&buf)
 		w, err := zw.Create(binaryName)
 		if err != nil {

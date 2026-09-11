@@ -4,6 +4,7 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -100,6 +101,12 @@ func main() {
 	}
 
 	log.Printf("[Sirius Core] Initializing with chainconfig directory: %s", basePath)
+
+	logsDir := filepath.Join(basePath, "logs")
+	_ = os.MkdirAll(logsDir, 0755)
+	if logFile, err := os.OpenFile(filepath.Join(logsDir, "manager.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+	}
 
 	configMgr := config.NewConfigManager(basePath)
 	supervisorCtrl := supervisor.NewProcessSupervisor(basePath)
