@@ -20,7 +20,12 @@ if defined PS_SCRIPT (
 REM 2. Stop WSL processes if WSL is active
 where wsl.exe >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    wsl.exe --cd "%~dp0" -u root -- ./stop.sh %* >nul 2>&1
+    if exist "%~dp0stop.sh" (
+        wsl.exe --cd "%~dp0" -u root -- ./stop.sh %* >nul 2>&1
+    ) else (
+        wsl.exe -u root -- pkill -f sirius-core >nul 2>&1
+        wsl.exe -u root -- pkill -f sirius.bc >nul 2>&1
+    )
 )
 
 echo ProximaX Sirius Node is stopped.

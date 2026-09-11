@@ -21,7 +21,19 @@ if [ -n "$OLD_PID" ]; then
     fi
 fi
 
-# 3. Ensure binaries and scripts are executable
+# 3. Ensure Sirius Catapult engine and shared libraries exist on Linux/WSL
+if [ "$(uname -s)" = "Linux" ]; then
+    if [ ! -f "$DIR/bin/librocksdb.so.8" ] || [ ! -f "$DIR/bin/sirius.bc" ]; then
+        echo "-> Catapult engine shared libraries missing. Downloading precompiled Sirius Linux binaries..."
+        mkdir -p "$DIR/bin"
+        if command -v curl >/dev/null 2>&1; then
+            curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz" | tar -xz -C "$DIR"
+            echo "-> Catapult engine unpacked successfully."
+        fi
+    fi
+fi
+
+# 4. Ensure binaries and scripts are executable
 chmod +x "$DIR/sirius-core" "$DIR"/*.sh 2>/dev/null || true
 [ -f "$DIR/start.command" ] && chmod +x "$DIR/start.command" 2>/dev/null || true
 [ -f "$DIR/bin/sirius.bc" ] && chmod +x "$DIR/bin/sirius.bc" 2>/dev/null || true

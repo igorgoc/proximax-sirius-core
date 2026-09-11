@@ -59,6 +59,15 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
 Set-Location (Join-Path $RootDir "backend")
 $BackendOut = Join-Path $BuildDir "sirius-core.exe"
 go build -ldflags="-s -w" -o $BackendOut .
+
+# Also build Linux binary for WSL execution
+Write-Host "-> Compiling Go backend for Linux (WSL engine)..." -ForegroundColor Green
+$env:GOOS = "linux"
+$env:GOARCH = "amd64"
+$LinuxBackendOut = Join-Path $BuildDir "sirius-core"
+go build -ldflags="-s -w" -o $LinuxBackendOut .
+$env:GOOS = "windows"
+$env:GOARCH = "amd64"
 Set-Location $RootDir
 
 # 3. Stage directories
@@ -73,7 +82,7 @@ New-Item -ItemType Directory -Path $TargetData -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetLogs -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetBin -Force | Out-Null
 if (Test-Path (Join-Path $RootDir "bin")) {
-    Copy-Item -Recurse (Join-Path $RootDir "bin\*") $TargetBin -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path (Join-Path $RootDir "bin\*") -Exclude "*.so*" | Copy-Item -Destination $TargetBin -Force -ErrorAction SilentlyContinue
 }
 
 # Copy engine & manager compatibility manifests
@@ -102,6 +111,12 @@ if (Test-Path (Join-Path $RootDir "chainconfig\data\00000\00001.dat")) {
 }
 
 # Copy launchers and helper scripts
+Copy-Item (Join-Path $RootDir "start.sh") $BuildDir
+Copy-Item (Join-Path $RootDir "stop.sh") $BuildDir
+Copy-Item (Join-Path $RootDir "restart.sh") $BuildDir
+if (Test-Path (Join-Path $RootDir "run.sh")) {
+    Copy-Item (Join-Path $RootDir "run.sh") $BuildDir
+}
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\start-node.ps1") $BuildDir
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\stop-node.ps1") $BuildDir
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\restart-node.ps1") $BuildDir
@@ -111,6 +126,13 @@ Copy-Item (Join-Path $RootDir "scripts\packaging\windows\restart.bat") $BuildDir
 Copy-Item (Join-Path $RootDir "scripts\packaging\windows\WINDOWS_DEFENDER_NOTES.md") $BuildDir
 if (Test-Path (Join-Path $RootDir "WINDOWS_HANDOVER.md")) {
     Copy-Item (Join-Path $RootDir "WINDOWS_HANDOVER.md") $BuildDir
+}
+
+# Ensure all staged shell scripts have strict Unix LF line endings
+Get-ChildItem -Path $BuildDir -Filter "*.sh" | ForEach-Object {
+    $text = [System.IO.File]::ReadAllText($_.FullName)
+    $text = $text.Replace("`r`n", "`n")
+    [System.IO.File]::WriteAllText($_.FullName, $text, [System.Text.UTF8Encoding]::new($false))
 }
 
 # 4. Create ZIP distribution

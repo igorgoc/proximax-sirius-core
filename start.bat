@@ -31,6 +31,24 @@ if %ERRORLEVEL% EQU 0 (
     echo   ProximaX Sirius Core (Windows Host - Engine in WSL)
     echo   Dashboard: http://localhost:8080
     echo =========================================================
+    if not exist "%~dp0start.sh" (
+        echo -^> Setting up WSL runner scripts...
+        (
+            echo #!/bin/bash
+            echo set -e
+            echo DIR="$^( cd "$^( dirname "${BASH_SOURCE[0]}" ^)" ^&^& pwd ^)"
+            echo cd "$DIR"
+            echo if [ ! -f "$DIR/bin/librocksdb.so.8" ] ^|^| [ ! -f "$DIR/bin/sirius.bc" ]; then
+            echo   echo "-^> Downloading precompiled Sirius Linux binaries..."
+            echo   mkdir -p "$DIR/bin"
+            echo   curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz" ^| tar -xz -C "$DIR"
+            echo fi
+            echo chmod +x "$DIR/sirius-core" "$DIR"/*.sh 2^>/dev/null ^|^| true
+            echo [ -f "$DIR/bin/sirius.bc" ] ^&^& chmod +x "$DIR/bin/sirius.bc" 2^>/dev/null ^|^| true
+            echo exec "$DIR/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig"
+        ) > "%~dp0start.sh"
+        wsl.exe --cd "%~dp0" -u root -- sed -i "s/\r$//" ./start.sh 2>nul
+    )
     wsl.exe --cd "%~dp0" -u root -- ./start.sh %*
     exit /b %ERRORLEVEL%
 )
