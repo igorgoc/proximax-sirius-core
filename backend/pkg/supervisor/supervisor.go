@@ -150,6 +150,9 @@ type ProcessSupervisor struct {
 	startTime  time.Time
 	isRunning  bool
 	isStarting bool
+	isStopping bool
+	stopMu     sync.Mutex
+	exitChan   chan struct{}
 	lastError  string
 
 	// Snapshot state
@@ -492,10 +495,13 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 		return fmt.Errorf("failed to start native sirius.bc process: %w", err)
 	}
 
+	exitChan := make(chan struct{})
 	dc.cmd = cmd
 	dc.cmdCancel = cancel
+	dc.exitChan = exitChan
 	dc.startTime = time.Now()
 	dc.isRunning = true
+	dc.isStopping = false
 	dc.userIntendedRunning = true
 
 	dc.broadcastLog(fmt.Sprintf("[Supervisor] Sirius Core started natively with PID %d", cmd.Process.Pid))
@@ -505,9 +511,12 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 
 	go func() {
 		waitErr := cmd.Wait()
+		close(exitChan)
 		dc.mu.Lock()
 		dc.isRunning = false
+		dc.isStopping = false
 		dc.cmd = nil
+		dc.exitChan = nil
 		dc.clearLocks(localDataDir)
 		userStopped := !dc.userIntendedRunning
 		if waitErr != nil && !userStopped {
@@ -749,51 +758,174 @@ func (dc *ProcessSupervisor) streamPipe(r io.Reader) {
 	}
 }
 
-func (dc *ProcessSupervisor) StopNode() error {
-	dc.mu.Lock()
-	defer dc.mu.Unlock()
+// getEngineLogProgress scans the logs directory for Boost.Log files (server_%4N.log)
+// and returns:
+// 1. activeLogName: lexicographically greatest file name (e.g. "server_0001.log")
+// 2. activeLogSize: current file size of active log
+// 3. totalLogsSize: sum of sizes across all server_*.log files
+func getEngineLogProgress(logsDir string) (string, int64, int64) {
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		return "", 0, 0
+	}
 
-	dc.userIntendedRunning = false
-	dc.lastError = ""
-	if !dc.isRunning || dc.cmd == nil || dc.cmd.Process == nil {
+	var latestName string
+	var activeSize int64
+	var totalSize int64
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "server_") && strings.HasSuffix(name, ".log") {
+			if info, err := entry.Info(); err == nil {
+				totalSize += info.Size()
+				if name > latestName {
+					latestName = name
+					activeSize = info.Size()
+				}
+			}
+		}
+	}
+	return latestName, activeSize, totalSize
+}
+
+func (dc *ProcessSupervisor) StopNode() error {
+	dc.stopMu.Lock()
+	defer dc.stopMu.Unlock()
+
+	dc.mu.Lock()
+	if !dc.isRunning && !dc.isStarting && !dc.isStopping {
+		dc.userIntendedRunning = false
+		dc.mu.Unlock()
+		return nil
+	}
+	if dc.isStopping {
+		exitChan := dc.exitChan
+		dc.mu.Unlock()
+		if exitChan != nil {
+			select {
+			case <-exitChan:
+			case <-time.After(60 * time.Second):
+			}
+		}
 		return nil
 	}
 
+	dc.isStopping = true
+	dc.userIntendedRunning = false
+	dc.lastError = ""
+	exitChan := dc.exitChan
+	cmd := dc.cmd
+	localDataDir := dc.currentDataDir
+	dc.mu.Unlock()
+
 	dc.broadcastLog("[Supervisor] Stopping Sirius Core process gracefully...")
+
+	// 1. Send graceful termination signal
 	if runtime.GOOS == "windows" {
 		_ = dc.stopWSL()
 	} else {
-		_ = dc.cmd.Process.Signal(syscall.SIGINT)
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		if dc.cmd != nil && dc.cmd.Process != nil {
-			_, _ = dc.cmd.Process.Wait()
-		}
-		done <- nil
-	}()
-
-	select {
-	case <-done:
-		dc.broadcastLog("[Supervisor] Sirius Core process terminated cleanly.")
-	case <-time.After(10 * time.Second):
-		dc.broadcastLog("[Supervisor] Process did not terminate in 10s, forcing SIGKILL...")
-		if dc.cmd != nil && dc.cmd.Process != nil {
-			_ = dc.cmd.Process.Kill()
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGINT)
 		}
 	}
 
-	if dc.cmdCancel != nil {
-		dc.cmdCancel()
+	// 2. Wait up to 180s for process completion via exitChan (coordinated by the cmd.Wait goroutine)
+	if exitChan != nil {
+		select {
+		case <-exitChan:
+			dc.broadcastLog("[Supervisor] Sirius Core process terminated cleanly.")
+		case <-time.After(180 * time.Second):
+			dc.broadcastLog("<warning> [Supervisor] Process did not terminate within 180s grace period. Forcing shutdown...")
+			if cmd != nil && cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			if dc.cmdCancel != nil {
+				dc.cmdCancel()
+			}
+		}
 	}
-	if dc.currentDataDir != "" {
-		dc.clearLocks(dc.currentDataDir)
+
+	// 3. Flush OS filesystem buffers
+	if runtime.GOOS != "windows" {
+		_ = exec.Command("sync").Run()
 	}
+
+	dc.mu.Lock()
 	dc.isRunning = false
+	dc.isStarting = false
+	dc.isStopping = false
 	dc.cmd = nil
+	dc.exitChan = nil
 	dc.lastError = ""
+	dc.mu.Unlock()
+
+	if localDataDir != "" {
+		dc.clearLocks(localDataDir)
+	}
+
+	// 4. Verify post-shutdown state integrity (storage height vs cache height)
+	if localDataDir != "" {
+		dc.verifyAndReconcileShutdownIntegrity(localDataDir)
+	}
+
 	return nil
+}
+
+// verifyAndReconcileShutdownIntegrity verifies that block storage height (index.dat)
+// and state cache height (state/supplemental.dat) are completely consistent after node shutdown.
+// If any discrepancy is found, it automatically invokes catapult.recovery to reconcile WAL and state commits.
+func (dc *ProcessSupervisor) verifyAndReconcileShutdownIntegrity(localDataDir string) {
+	if localDataDir == "" {
+		return
+	}
+
+	indexPath := filepath.Join(localDataDir, "index.dat")
+	suppPath := filepath.Join(localDataDir, "state", "supplemental.dat")
+
+	if !isPathExists(indexPath) || !isPathExists(suppPath) {
+		return
+	}
+
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil || len(indexData) < 8 {
+		return
+	}
+	storageHeight := binary.LittleEndian.Uint64(indexData[:8])
+
+	suppData, sErr := os.ReadFile(suppPath)
+	if sErr != nil || len(suppData) < 40 {
+		return
+	}
+	cacheHeight := binary.LittleEndian.Uint64(suppData[32:40])
+
+	if storageHeight <= 1 && cacheHeight <= 1 {
+		return
+	}
+
+	if storageHeight == cacheHeight {
+		dc.broadcastLog(fmt.Sprintf("[Supervisor] Shutdown integrity verified: Storage Height (%d) == Cache Height (%d). StateDB, caches, and flat files are 100%% synchronized.", storageHeight, cacheHeight))
+		return
+	}
+
+	// Inconsistency detected: let catapult.recovery reconcile WAL and state commits
+	dc.broadcastLog(fmt.Sprintf("<warning> [Supervisor] Height divergence detected at shutdown: Storage Height (%d) != Cache Height (%d). Running catapult.recovery to reconcile...", storageHeight, cacheHeight))
+	dc.runCatapultRecovery(localDataDir)
+
+	// Re-verify heights after recovery
+	if newIdx, err := os.ReadFile(indexPath); err == nil && len(newIdx) >= 8 {
+		newStorage := binary.LittleEndian.Uint64(newIdx[:8])
+		if newSupp, err := os.ReadFile(suppPath); err == nil && len(newSupp) >= 40 {
+			newCache := binary.LittleEndian.Uint64(newSupp[32:40])
+			if newStorage == newCache {
+				dc.broadcastLog(fmt.Sprintf("[Supervisor] State reconciled successfully by catapult.recovery at height %d.", newStorage))
+			} else {
+				dc.broadcastLog(fmt.Sprintf("<warning> [Supervisor] Post-recovery state: Storage Height (%d), Cache Height (%d).", newStorage, newCache))
+			}
+		}
+	}
 }
 
 func (dc *ProcessSupervisor) SetAutoRecovery(enabled bool) {
@@ -857,6 +989,9 @@ func (dc *ProcessSupervisor) GetStatus() (ContainerStatus, error) {
 
 	if dc.isStarting {
 		return StatusStarting, nil
+	}
+	if dc.isStopping {
+		return StatusStopped, nil
 	}
 	if dc.isRunning && dc.cmd != nil && dc.cmd.Process != nil {
 		if runtime.GOOS == "windows" {

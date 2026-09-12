@@ -59,8 +59,14 @@ public class Win32Picker {
             dialog.SetTitle(title);
         }
         int hr = dialog.Show(hwnd);
+        if (hr == unchecked((int)0x800704C7)) {
+            return null;
+        }
         if (hr != 0 && hwnd != IntPtr.Zero) {
             hr = dialog.Show(IntPtr.Zero);
+            if (hr == unchecked((int)0x800704C7)) {
+                return null;
+            }
         }
         if (hr == 0) {
             IntPtr ppsi;
@@ -83,8 +89,14 @@ public class Win32Picker {
             dialog.SetTitle(title);
         }
         int hr = dialog.Show(hwnd);
+        if (hr == unchecked((int)0x800704C7)) {
+            return null;
+        }
         if (hr != 0 && hwnd != IntPtr.Zero) {
             hr = dialog.Show(IntPtr.Zero);
+            if (hr == unchecked((int)0x800704C7)) {
+                return null;
+            }
         }
         if (hr == 0) {
             IntPtr ppsi;

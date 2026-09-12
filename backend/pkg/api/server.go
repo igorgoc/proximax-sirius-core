@@ -63,6 +63,7 @@ type Server struct {
 	apiToken         string
 	wsMutex          sync.Mutex
 	activeWsConns    int
+	nativePickerMu   sync.Mutex
 }
 
 func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSupervisor, chainMon *chain.ChainMonitor, staticFS fs.FS) *Server {
@@ -1418,8 +1419,14 @@ public class Win32Picker {
             dialog.SetTitle(title);
         }
         int hr = dialog.Show(hwnd);
+        if (hr == unchecked((int)0x800704C7)) {
+            return null;
+        }
         if (hr != 0 && hwnd != IntPtr.Zero) {
             hr = dialog.Show(IntPtr.Zero);
+            if (hr == unchecked((int)0x800704C7)) {
+                return null;
+            }
         }
         if (hr == 0) {
             IntPtr ppsi;
@@ -1442,8 +1449,14 @@ public class Win32Picker {
             dialog.SetTitle(title);
         }
         int hr = dialog.Show(hwnd);
+        if (hr == unchecked((int)0x800704C7)) {
+            return null;
+        }
         if (hr != 0 && hwnd != IntPtr.Zero) {
             hr = dialog.Show(IntPtr.Zero);
+            if (hr == unchecked((int)0x800704C7)) {
+                return null;
+            }
         }
         if (hr == 0) {
             IntPtr ppsi;
@@ -1498,6 +1511,16 @@ try {
 `
 
 func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
+	if !s.nativePickerMu.TryLock() {
+		jsonResponse(w, map[string]interface{}{
+			"success":  false,
+			"canceled": true,
+			"error":    "Picker dialog already open",
+		})
+		return
+	}
+	defer s.nativePickerMu.Unlock()
+
 	var selectedPath string
 	var err error
 

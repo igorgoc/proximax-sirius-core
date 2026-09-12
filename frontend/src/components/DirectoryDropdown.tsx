@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Folder, FolderOpen, ChevronDown, Check, Archive, Loader2 } from 'lucide-react';
 
 export interface DirectoryItem {
@@ -47,6 +47,7 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
   const [presetsOpen, setPresetsOpen] = useState(defaultPresetsOpen);
   const [presets, setPresets] = useState<DirectoryItem[]>(() => isFileMode ? [] : DEFAULT_DIR_PRESETS);
   const [browsingNative, setBrowsingNative] = useState(false);
+  const isBrowsingRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -73,6 +74,8 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
   const availablePresets = customPresets && customPresets.length > 0 ? customPresets : presets;
 
   const handleNativeBrowse = async () => {
+    if (isBrowsingRef.current) return;
+    isBrowsingRef.current = true;
     setBrowsingNative(true);
     try {
       const modeParam = mode ? `mode=${encodeURIComponent(mode)}` : 'mode=dir';
@@ -88,6 +91,7 @@ export const DirectoryDropdown: React.FC<DirectoryDropdownProps> = ({
     } catch (e) {
       console.error('Failed to invoke native picker:', e);
     } finally {
+      isBrowsingRef.current = false;
       setBrowsingNative(false);
     }
   };

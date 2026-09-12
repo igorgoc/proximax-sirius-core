@@ -2,7 +2,14 @@
 
 package supervisor
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
 
 func (dc *ProcessSupervisor) ProbeWSLStatus() WSLStatus {
 	return WSLStatus{
@@ -42,3 +49,24 @@ func ToWSLPath(path string) string {
 func FromWSLPath(path string) string {
 	return path
 }
+
+func (dc *ProcessSupervisor) runCatapultRecovery(localDataDir string) {
+	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
+	if _, err := os.Stat(recoveryBin); err != nil {
+		return
+	}
+
+	dc.broadcastLog("[Supervisor] Executing native catapult.recovery reconciliation...")
+	recCmd := exec.Command(recoveryBin, dc.chainConfigPath)
+	recCmd.Dir = filepath.Dir(dc.chainConfigPath)
+	out, recErr := recCmd.CombinedOutput()
+	if recErr != nil {
+		dc.broadcastLog(fmt.Sprintf("<warning> [Supervisor] catapult.recovery returned: %v (details: %s)", recErr, strings.TrimSpace(string(out))))
+	} else {
+		dc.broadcastLog("[Supervisor] catapult.recovery reconciliation completed successfully.")
+	}
+
+	_ = exec.Command("sync").Run()
+	dc.clearLocks(localDataDir)
+}
+

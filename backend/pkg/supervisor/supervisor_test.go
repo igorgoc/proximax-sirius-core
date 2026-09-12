@@ -332,5 +332,51 @@ func TestProcessSupervisor_ValidateHarvestKeyPreflight(t *testing.T) {
 	}
 }
 
+func TestGetEngineLogProgress_Rotation(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sirius_log_rotation_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
 
+	// Step 1: Empty directory
+	active, activeSz, totalSz := getEngineLogProgress(tempDir)
+	if active != "" || activeSz != 0 || totalSz != 0 {
+		t.Fatalf("expected empty result, got %s, %d, %d", active, activeSz, totalSz)
+	}
 
+	// Step 2: Initial log file (server_0000.log with 25000 bytes)
+	file0 := filepath.Join(tempDir, "server_0000.log")
+	_ = os.WriteFile(file0, make([]byte, 25000), 0644)
+
+	active, activeSz, totalSz = getEngineLogProgress(tempDir)
+	if active != "server_0000.log" || activeSz != 25000 || totalSz != 25000 {
+		t.Fatalf("expected server_0000.log, 25000, 25000, got %s, %d, %d", active, activeSz, totalSz)
+	}
+
+	// Step 3: Log rotation occurs! (server_0001.log created with 500 bytes)
+	file1 := filepath.Join(tempDir, "server_0001.log")
+	_ = os.WriteFile(file1, make([]byte, 500), 0644)
+
+	active, activeSz, totalSz = getEngineLogProgress(tempDir)
+	if active != "server_0001.log" || activeSz != 500 || totalSz != 25500 {
+		t.Fatalf("expected server_0001.log, 500, 25500, got %s, %d, %d", active, activeSz, totalSz)
+	}
+
+	// Step 4: Further writes to rotated file (server_0001.log grows to 1200 bytes)
+	_ = os.WriteFile(file1, make([]byte, 1200), 0644)
+
+	active, activeSz, totalSz = getEngineLogProgress(tempDir)
+	if active != "server_0001.log" || activeSz != 1200 || totalSz != 26200 {
+		t.Fatalf("expected server_0001.log, 1200, 26200, got %s, %d, %d", active, activeSz, totalSz)
+	}
+
+	// Step 5: Second rotation occurs (server_0002.log created with 300 bytes)
+	file2 := filepath.Join(tempDir, "server_0002.log")
+	_ = os.WriteFile(file2, make([]byte, 300), 0644)
+
+	active, activeSz, totalSz = getEngineLogProgress(tempDir)
+	if active != "server_0002.log" || activeSz != 300 || totalSz != 26500 {
+		t.Fatalf("expected server_0002.log, 300, 26500, got %s, %d, %d", active, activeSz, totalSz)
+	}
+}
