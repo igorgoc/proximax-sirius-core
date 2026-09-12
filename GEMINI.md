@@ -42,6 +42,12 @@ always_on: true
 - **Windows Path & Lock Synchronization**:
   - `ToWSLPath` converts `C:\Path` to `/mnt/c/Path` for WSL execution.
   - `FromWSLPath` and `normalizeHostPath` convert `/mnt/c/Path` to `C:\Path` when loading configuration properties.
-  - Stale locks (`server.lock`, `recovery.lock`, `statedb/*/LOCK`) must be cleared both via host Go and inside WSL (`rm -f '<wslDataDir>'/*.lock`).
+  - Stale locks (`server.lock`, `recovery.lock`, `broker.lock`, `statedb/*/LOCK`) must be cleared both via host Go and inside WSL (`rm -f '<wslDataDir>'/*.lock`).
+  - **State Cache & Storage Height Reconciliation (`reconcileChainStateIntegrity`)**:
+    - Abrupt process terminations can cause `state/supplemental.dat` and `state/BlockDifficultyCache.dat` (cache height) to advance to `N` while `index.dat` (storage height) remains at `N-1`.
+    - Both `LocalNode` and `catapult.recovery` abort with exit status 134 if `cache height > storage height`.
+    - Enforce automated pre-flight reconciliation in `wsl_windows.go`: aligns `supplemental.dat` and `BlockDifficultyCache.dat` back to `storage height`, and resets `commit_step.dat` to 0.
+  - **DrvFS Graceful Shutdown Timeout**:
+    - Catapult RocksDB state flushes on WSL DrvFS (`/mnt/c/...`) require up to 30s. `stopWSL()` enforces a 45s SIGINT grace period before issuing SIGKILL to prevent mid-commit disk corruption.
   - In WSL2, `catapult.recovery` only runs when block height > 1. At height ≤ 1, dirty partial `statedb` from aborted boots is cleared so `NemesisBlockLoader` boots cleanly.
   - Process liveness check in `GetStatus()` checks `dc.cmd.ProcessState == nil` on Windows (`proc.Signal(syscall.Signal(0))` is unsupported on Windows).

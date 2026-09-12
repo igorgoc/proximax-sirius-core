@@ -528,6 +528,8 @@ func (dc *ProcessSupervisor) clearLocks(dataPath string) {
 	_ = os.Remove(filepath.Join(dataPath, "server.lock"))
 	_ = os.Chmod(filepath.Join(dataPath, "recovery.lock"), 0777)
 	_ = os.Remove(filepath.Join(dataPath, "recovery.lock"))
+	_ = os.Chmod(filepath.Join(dataPath, "broker.lock"), 0777)
+	_ = os.Remove(filepath.Join(dataPath, "broker.lock"))
 	stateDbDir := filepath.Join(dataPath, "statedb")
 	if entries, err := os.ReadDir(stateDbDir); err == nil {
 		for _, entry := range entries {

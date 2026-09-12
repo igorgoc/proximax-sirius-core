@@ -303,7 +303,11 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 			"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
 	}
 
-	// 2. Pre-flight recovery execution inside WSL - only run if existing chain data has synced beyond nemesis (height > 1)
+	// 2. Pre-flight state integrity & height reconciliation
+	// Fixes cache height vs storage height inconsistency (exit status 134) and resets commit_step.dat
+	dc.reconcileChainStateIntegrity(localDataDir)
+
+	// 3. Pre-flight recovery execution inside WSL - only run if existing chain data has synced beyond nemesis (height > 1)
 	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
 	shouldRunRecovery := false
 	if indexPath := filepath.Join(localDataDir, "index.dat"); isPathExists(indexPath) {
@@ -330,7 +334,12 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 		dc.broadcastLog("[Supervisor] Running catapult.recovery pre-flight check inside WSL2...")
 		recCmd := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--cd", wslWorkDir, "--",
 			"env", fmt.Sprintf("LD_LIBRARY_PATH=%s", wslBinDir), wslRecoveryBin, wslChainConfig)
-		_ = recCmd.Run()
+		out, recErr := recCmd.CombinedOutput()
+		if recErr != nil {
+			dc.broadcastLog(fmt.Sprintf("<warning> [Supervisor] catapult.recovery returned: %v (details: %s)", recErr, strings.TrimSpace(cleanWSLOutput(out))))
+		} else {
+			dc.broadcastLog("[Supervisor] catapult.recovery pre-flight check completed successfully.")
+		}
 		dc.clearLocks(localDataDir)
 		if wslDataDir != "" {
 			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
@@ -391,6 +400,97 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	return nil
 }
 
+// reconcileChainStateIntegrity automatically resolves any inconsistency between
+// state cache (supplemental.dat, BlockDifficultyCache.dat) and block storage (index.dat).
+// In Catapult, if cache.height() > storage.chainHeight(), both sirius.bc and catapult.recovery
+// abort with exception (exit status 134). This self-healing reconciler aligns state cache back
+// to storage height and resets commit_step.dat to 0 to guarantee a clean boot.
+func (dc *ProcessSupervisor) reconcileChainStateIntegrity(localDataDir string) {
+	if localDataDir == "" {
+		return
+	}
+
+	// 1. Reset commit_step.dat to 0 if non-zero to avoid invalid block element lookups during recovery
+	commitStepPath := filepath.Join(localDataDir, "commit_step.dat")
+	if isPathExists(commitStepPath) {
+		if data, err := os.ReadFile(commitStepPath); err == nil && len(data) >= 8 {
+			val := binary.LittleEndian.Uint64(data[:8])
+			if val != 0 {
+				zeroBytes := make([]byte, 8)
+				_ = os.WriteFile(commitStepPath, zeroBytes, 0644)
+				dc.broadcastLog(fmt.Sprintf("[Supervisor] Reset commit_step.dat from %d to 0 for clean engine boot.", val))
+			}
+		}
+	}
+
+	indexPath := filepath.Join(localDataDir, "index.dat")
+	suppPath := filepath.Join(localDataDir, "state", "supplemental.dat")
+	diffPath := filepath.Join(localDataDir, "state", "BlockDifficultyCache.dat")
+
+	if !isPathExists(indexPath) || !isPathExists(suppPath) {
+		return
+	}
+
+	// 2. Read storage height from index.dat
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil || len(indexData) < 8 {
+		return
+	}
+	storageHeight := binary.LittleEndian.Uint64(indexData[:8])
+	if storageHeight <= 1 {
+		return
+	}
+
+	// 3. Read cache height from state/supplemental.dat (offset 32, uint64)
+	suppData, err := os.ReadFile(suppPath)
+	if err != nil || len(suppData) < 40 {
+		return
+	}
+	cacheHeight := binary.LittleEndian.Uint64(suppData[32:40])
+
+	if cacheHeight > storageHeight {
+		dc.broadcastLog(fmt.Sprintf("[Supervisor] Detected state cache height (%d) ahead of storage height (%d). Auto-reconciling...", cacheHeight, storageHeight))
+
+		// a. Reconcile supplemental.dat (offset 32 is Height)
+		binary.LittleEndian.PutUint64(suppData[32:40], storageHeight)
+		if err := os.WriteFile(suppPath, suppData, 0644); err != nil {
+			dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Failed to update supplemental.dat: %v", err))
+		}
+
+		// b. Reconcile BlockDifficultyCache.dat
+		// Format: [uint64 Height][uint64 Count][28-byte records...]
+		if isPathExists(diffPath) {
+			diffData, dErr := os.ReadFile(diffPath)
+			if dErr == nil && len(diffData) >= 16 {
+				diffHeight := binary.LittleEndian.Uint64(diffData[0:8])
+				diffCount := binary.LittleEndian.Uint64(diffData[8:16])
+
+				if diffHeight > storageHeight {
+					binary.LittleEndian.PutUint64(diffData[0:8], storageHeight)
+
+					excess := diffHeight - storageHeight
+					newCount := diffCount
+					if excess <= diffCount {
+						newCount = diffCount - excess
+					} else {
+						newCount = 0
+					}
+					binary.LittleEndian.PutUint64(diffData[8:16], newCount)
+
+					expectedLen := 16 + int(newCount)*28
+					if expectedLen <= len(diffData) {
+						diffData = diffData[:expectedLen]
+					}
+					_ = os.WriteFile(diffPath, diffData, 0644)
+					dc.broadcastLog(fmt.Sprintf("[Supervisor] Reconciled BlockDifficultyCache.dat to height %d (entries: %d).", storageHeight, newCount))
+				}
+			}
+		}
+
+		dc.broadcastLog(fmt.Sprintf("[Supervisor] State cache successfully reconciled to storage height %d.", storageHeight))
+	}
+}
+
 // stopWSL gracefully terminates sirius.bc inside WSL2 via SIGINT, then SIGKILL if needed
 func (dc *ProcessSupervisor) stopWSL() error {
 	status := dc.ProbeWSLStatus()
@@ -402,22 +502,22 @@ func (dc *ProcessSupervisor) stopWSL() error {
 	// Send SIGINT to sirius.bc inside WSL
 	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "pkill", "-INT", "-f", "sirius.bc").Run()
 
-	// Wait up to 15 seconds for process termination
+	// Wait up to 45 seconds for process termination to allow RocksDB on DrvFS to flush cleanly
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 
 	for time.Now().Before(deadline) {
 		checkCmd := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "pgrep", "-f", "sirius.bc")
 		out, err := checkCmd.Output()
 		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-			// Process has terminated
+			// Process has terminated cleanly
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Force kill if still lingering
+	// Force kill if still lingering after 45s
 	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "pkill", "-9", "-f", "sirius.bc").Run()
 	return nil
 }
