@@ -43,11 +43,15 @@ always_on: true
   - `ToWSLPath` converts `C:\Path` to `/mnt/c/Path` for WSL execution.
   - `FromWSLPath` and `normalizeHostPath` convert `/mnt/c/Path` to `C:\Path` when loading configuration properties.
   - Stale locks (`server.lock`, `recovery.lock`, `broker.lock`, `statedb/*/LOCK`) must be cleared both via host Go and inside WSL (`rm -f '<wslDataDir>'/*.lock`).
-  - **State Cache & Storage Height Reconciliation (`reconcileChainStateIntegrity`)**:
-    - Abrupt process terminations can cause `state/supplemental.dat` and `state/BlockDifficultyCache.dat` (cache height) to advance to `N` while `index.dat` (storage height) remains at `N-1`.
-    - Both `LocalNode` and `catapult.recovery` abort with exit status 134 if `cache height > storage height`.
-    - Enforce automated pre-flight reconciliation in `wsl_windows.go`: aligns `supplemental.dat` and `BlockDifficultyCache.dat` back to `storage height`, and resets `commit_step.dat` to 0.
-  - **DrvFS Graceful Shutdown Timeout**:
-    - Catapult RocksDB state flushes on WSL DrvFS (`/mnt/c/...`) require up to 30s. `stopWSL()` enforces a 45s SIGINT grace period before issuing SIGKILL to prevent mid-commit disk corruption.
+  - **No Isolated Flat-File Byte Surgery**:
+    - Sirius Catapult stores chain state across flat files (`supplemental.dat`, `BlockDifficultyCache.dat`, `index.dat`) and RocksDB column families (`statedb/`).
+    - Flat files MUST NEVER be manually modified or rolled back independently of RocksDB. Desynchronizing them corrupts the Merkle state tree and causes `FastFinalityActions.cpp: rejecting block, signer ... invalid` and peer disconnections (`Verify_Error`).
+  - **Automatic Recovery via catapult.recovery**:
+    - Do not artificially alter `commit_step.dat` or `index.dat`. Let `catapult.recovery` automatically reconcile WAL and state commits.
+  - **DrvFS Graceful Shutdown Timeout & Native ext4 Storage**:
+    - Catapult RocksDB state flushes on WSL DrvFS (`/mnt/c/...`) have higher write latency than ext4. `stopWSL()` enforces a 45s SIGINT grace period before issuing SIGKILL to prevent mid-commit disk corruption.
+    - Storing blockchain data in native WSL2 ext4 (`/var/lib/sirius/data`) eliminates DrvFS 9P overhead.
+  - **State Desynchronization Recovery Rule**:
+    - When statedb and flat files diverge (`signer invalid`), wipe `data/` and perform a fast-sync restore from the official snapshot (`https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst`).
   - In WSL2, `catapult.recovery` only runs when block height > 1. At height ≤ 1, dirty partial `statedb` from aborted boots is cleared so `NemesisBlockLoader` boots cleanly.
   - Process liveness check in `GetStatus()` checks `dc.cmd.ProcessState == nil` on Windows (`proc.Signal(syscall.Signal(0))` is unsupported on Windows).
