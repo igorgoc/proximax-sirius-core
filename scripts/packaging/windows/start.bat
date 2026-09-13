@@ -29,6 +29,16 @@ if exist "%~dp0sirius-core.exe" (
     start "" "%~dp0sirius-core.exe" -port 8080 -chainconfig "%~dp0chainconfig"
     echo Dashboard: http://localhost:8080
     exit /b 0
+) else if exist "%~dp0..\..\..\bin\sirius-core.exe" (
+    echo Starting Sirius Core Native on Windows...
+    start "" "%~dp0..\..\..\bin\sirius-core.exe" -port 8080 -chainconfig "%~dp0..\..\..\chainconfig"
+    echo Dashboard: http://localhost:8080
+    exit /b 0
+) else if exist "%~dp0bin\sirius-core.exe" (
+    echo Starting Sirius Core Native on Windows...
+    start "" "%~dp0bin\sirius-core.exe" -port 8080 -chainconfig "%~dp0chainconfig"
+    echo Dashboard: http://localhost:8080
+    exit /b 0
 )
 
 echo Error: sirius-core.exe not found!

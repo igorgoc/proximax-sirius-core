@@ -136,13 +136,16 @@ if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
     }
 }
 
-# 7. Check for rogue processes holding P2P port 7900
+# 7. Check for rogue non-system processes holding P2P ports
 if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
     foreach ($p in @(7900, 7901, 7903)) {
         $conn = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
-        if ($conn -and $conn.OwningProcess -gt 0) {
-            Write-Host "-> Freeing occupied Sirius P2P port $p (PID: $($conn.OwningProcess))..." -ForegroundColor Yellow
-            Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+        if ($conn -and $conn.OwningProcess -gt 4) {
+            $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+            if ($proc -and $proc.ProcessName -ne "svchost" -and $proc.ProcessName -ne "System") {
+                Write-Host "-> Freeing occupied Sirius P2P port $p ($($proc.ProcessName), PID: $($conn.OwningProcess))..." -ForegroundColor Yellow
+                Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
@@ -171,7 +174,7 @@ try {
         & $BackendExe @ArgsList
     } else {
         Write-Host "-> Starting node manager in background..." -ForegroundColor Green
-        $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -PassThru -WindowStyle Hidden
+        $Process = Start-Process -FilePath $BackendExe -ArgumentList $ArgsList -WorkingDirectory $RootDir -PassThru -WindowStyle Hidden
         $Process.Id | Out-File -FilePath $PidFile -Encoding ascii
     }
 } catch {

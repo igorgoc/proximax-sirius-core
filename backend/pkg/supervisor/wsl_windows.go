@@ -553,9 +553,15 @@ func (dc *ProcessSupervisor) stopWSL() error {
 		logsDir = filepath.Join(dc.chainConfigPath, "logs")
 	}
 
-	indexPath := filepath.Join(filepath.Dir(dc.chainConfigPath), "chainconfig", "data", "index.dat")
-	if !isPathExists(indexPath) {
-		indexPath = filepath.Join(dc.chainConfigPath, "data", "index.dat")
+	indexPath := ""
+	if dc.currentDataDir != "" {
+		indexPath = filepath.Join(dc.currentDataDir, "index.dat")
+	}
+	if indexPath == "" || !isPathExists(indexPath) {
+		indexPath = filepath.Join(filepath.Dir(dc.chainConfigPath), "chainconfig", "data", "index.dat")
+		if !isPathExists(indexPath) {
+			indexPath = filepath.Join(dc.chainConfigPath, "data", "index.dat")
+		}
 	}
 
 	// Loop indefinitely as long as the engine is actively making forward progress (committing blocks)

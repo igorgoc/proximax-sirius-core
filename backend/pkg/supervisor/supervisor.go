@@ -822,6 +822,21 @@ func (dc *ProcessSupervisor) StopNode() error {
 	exitChan := dc.exitChan
 	cmd := dc.cmd
 	localDataDir := dc.currentDataDir
+	if localDataDir == "" {
+		userPropsPath := filepath.Join(dc.chainConfigPath, "resources", "config-user.properties")
+		if props, err := readPropertiesFile(userPropsPath); err == nil {
+			if dp, ok := props["data.path"]; ok && dp != "" {
+				if filepath.IsAbs(dp) {
+					localDataDir = dp
+				} else {
+					localDataDir = filepath.Join(dc.chainConfigPath, "..", dp)
+				}
+			}
+		}
+		if localDataDir == "" {
+			localDataDir = filepath.Join(dc.chainConfigPath, "data")
+		}
+	}
 	dc.mu.Unlock()
 
 	dc.broadcastLog("[Supervisor] Stopping Sirius Core process gracefully...")
@@ -829,6 +844,12 @@ func (dc *ProcessSupervisor) StopNode() error {
 	// 1. Send graceful termination signal
 	if runtime.GOOS == "windows" {
 		_ = dc.stopWSL()
+		if exitChan != nil {
+			select {
+			case <-exitChan:
+			case <-time.After(5 * time.Second):
+			}
+		}
 	} else {
 		if cmd != nil && cmd.Process != nil {
 			_ = cmd.Process.Signal(syscall.SIGINT)
@@ -973,6 +994,9 @@ func (dc *ProcessSupervisor) verifyAndReconcileShutdownIntegrity(localDataDir st
 
 	indexPath := filepath.Join(localDataDir, "index.dat")
 	suppPath := filepath.Join(localDataDir, "state", "supplemental.dat")
+	if !isPathExists(suppPath) {
+		suppPath = filepath.Join(localDataDir, "supplemental.dat")
+	}
 
 	if !isPathExists(indexPath) || !isPathExists(suppPath) {
 		return
@@ -1006,7 +1030,11 @@ func (dc *ProcessSupervisor) verifyAndReconcileShutdownIntegrity(localDataDir st
 	// Re-verify heights after recovery
 	if newIdx, err := os.ReadFile(indexPath); err == nil && len(newIdx) >= 8 {
 		newStorage := binary.LittleEndian.Uint64(newIdx[:8])
-		if newSupp, err := os.ReadFile(suppPath); err == nil && len(newSupp) >= 40 {
+		newSuppPath := filepath.Join(localDataDir, "state", "supplemental.dat")
+		if !isPathExists(newSuppPath) {
+			newSuppPath = filepath.Join(localDataDir, "supplemental.dat")
+		}
+		if newSupp, err := os.ReadFile(newSuppPath); err == nil && len(newSupp) >= 40 {
 			newCache := binary.LittleEndian.Uint64(newSupp[32:40])
 			if newStorage == newCache {
 				dc.broadcastLog(fmt.Sprintf("[Supervisor] State reconciled successfully by catapult.recovery at height %d.", newStorage))
@@ -1015,6 +1043,30 @@ func (dc *ProcessSupervisor) verifyAndReconcileShutdownIntegrity(localDataDir st
 			}
 		}
 	}
+}
+
+func readPropertiesFile(filePath string) (map[string]string, error) {
+	props := make(map[string]string)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return props, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			k := strings.TrimSpace(parts[0])
+			v := strings.TrimSpace(parts[1])
+			props[k] = v
+		}
+	}
+	return props, nil
 }
 
 func (dc *ProcessSupervisor) SetAutoRecovery(enabled bool) {
