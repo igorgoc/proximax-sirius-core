@@ -80,6 +80,16 @@ func FromWSLPath(wslPath string) string {
 	return filepath.FromSlash(wslPath)
 }
 
+func extractExitHex(err error) string {
+	if err == nil {
+		return ""
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return fmt.Sprintf("0x%08x", uint32(exitErr.ExitCode()))
+	}
+	return ""
+}
+
 func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	dc.wslCacheMu.RLock()
 	if time.Since(dc.wslCacheTime) < 5*time.Second && dc.wslCachedStatus.State == WSL2Ready {
@@ -123,28 +133,56 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	cleanedStatus := cleanWSLOutput(outStatus)
 	status.RawStatus = cleanedStatus
 
-	// Detect BIOS/UEFI Virtualization disabled
-	if strings.Contains(cleanedStatus, "0x80370102") ||
-		strings.Contains(cleanedStatus, "CreateVm") ||
+	statusCombined := cleanedStatus + " " + extractExitHex(errStatus)
+	statusLower := strings.ToLower(statusCombined)
+
+	// Check for known error codes / HRESULTs first (locale-independent)
+	// 0x80370102: WSL_E_VIRTUAL_MACHINE_PREREQUISITE_MINIMUM (BIOS Virtualization disabled or hypervisor not active)
+	if strings.Contains(statusLower, "0x80370102") ||
+		strings.Contains(statusLower, "80370102") ||
 		strings.Contains(cleanedStatus, "Wsl/Service/CreateVm") ||
-		strings.Contains(strings.ToLower(cleanedStatus), "virtual machine platform") {
+		strings.Contains(cleanedStatus, "CreateVm") {
 		status.State = WSLNotInstalled
 		status.ErrorCode = "BIOS_VIRTUALIZATION_DISABLED"
-		status.ErrorMessage = "Hardware Virtualization is disabled in your computer's BIOS/UEFI. WSL2 requires CPU virtualization (Intel VT-x or AMD-V) to run."
+		status.ErrorMessage = "Hardware Virtualization is disabled in your computer's BIOS/UEFI, or a system restart is required to initialize the Virtual Machine Platform."
 		return status
 	}
 
-	if errStatus != nil && strings.Contains(strings.ToLower(cleanedStatus), "optional component") {
+	// 0x80072ee7: Network timeout / Microsoft Store or CDN unreachable
+	if strings.Contains(statusLower, "0x80072ee7") || strings.Contains(statusLower, "80072ee7") {
+		status.State = WSLNotInstalled
+		status.ErrorCode = "NETWORK_TIMEOUT"
+		status.ErrorMessage = "Network connection to Microsoft Store / WSL CDN timed out. Check your internet connection."
+		return status
+	}
+
+	// 0x8024500c: Windows Update / Store blocked by Group Policy
+	if strings.Contains(statusLower, "0x8024500c") || strings.Contains(statusLower, "8024500c") {
+		status.State = WSLNotInstalled
+		status.ErrorCode = "GROUP_POLICY_BLOCKED"
+		status.ErrorMessage = "Microsoft Store / Windows Update is blocked by Group Policy in your organization."
+		return status
+	}
+
+	// Locale-independent guard: If wsl.exe --status fails with non-zero exit, WSL is NOT ready/installed!
+	// We do NOT rely on English text like "optional component". Any error from --status means WSL optional component is disabled.
+	if errStatus != nil {
 		status.State = WSLNotInstalled
 		status.ErrorCode = "WSL_NOT_INSTALLED"
-		status.ErrorMessage = "Windows Subsystem for Linux optional component is not enabled."
+		status.ErrorMessage = "Windows Subsystem for Linux (WSL2) optional component is not enabled on this system."
 		return status
 	}
 
 	// Determine default WSL version
 	status.DefaultVersion = 2
-	if strings.Contains(cleanedStatus, "Default Version: 1") {
-		status.DefaultVersion = 1
+	for _, line := range strings.Split(cleanedStatus, "\n") {
+		lineLower := strings.ToLower(strings.TrimSpace(line))
+		// Check for Version: 1 in English, German (Standardversion), French (Version par défaut), Russian, Chinese, etc.
+		if (strings.Contains(lineLower, "version") || strings.Contains(lineLower, "версия") || strings.Contains(lineLower, "版本")) &&
+			strings.Contains(lineLower, "1") && !strings.Contains(lineLower, "2") {
+			status.DefaultVersion = 1
+			break
+		}
 	}
 
 	// 3. Query installed distributions with wsl.exe -l -v
@@ -152,16 +190,25 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	outList, errList := cmdList.CombinedOutput()
 	cleanedList := cleanWSLOutput(outList)
 
-	if errList != nil || strings.Contains(strings.ToLower(cleanedList), "no installed distributions") ||
-		strings.Contains(cleanedList, "WSL_E_DEFAULT_DISTRO_NOT_FOUND") ||
-		len(strings.TrimSpace(cleanedList)) == 0 {
-		if status.DefaultVersion == 1 {
-			status.State = WSLV1Only
-			status.ErrorMessage = "WSL1 is enabled, but WSL2 is required for Sirius ext4/RocksDB performance."
-		} else {
-			status.State = WSL2NoDistro
-			status.ErrorMessage = "WSL2 kernel is ready, but no Sirius Linux distribution is installed."
-		}
+	listCombined := cleanedList + " " + extractExitHex(errList)
+	listLower := strings.ToLower(listCombined)
+
+	if strings.Contains(listLower, "0x80370102") || strings.Contains(listLower, "80370102") {
+		status.State = WSLNotInstalled
+		status.ErrorCode = "BIOS_VIRTUALIZATION_DISABLED"
+		status.ErrorMessage = "Hardware Virtualization is disabled in your computer's BIOS/UEFI, or a system restart is required."
+		return status
+	}
+	if strings.Contains(listLower, "0x80072ee7") || strings.Contains(listLower, "80072ee7") {
+		status.State = WSLNotInstalled
+		status.ErrorCode = "NETWORK_TIMEOUT"
+		status.ErrorMessage = "Network connection to Microsoft Store / WSL CDN timed out."
+		return status
+	}
+	if strings.Contains(listLower, "0x8024500c") || strings.Contains(listLower, "8024500c") {
+		status.State = WSLNotInstalled
+		status.ErrorCode = "GROUP_POLICY_BLOCKED"
+		status.ErrorMessage = "Microsoft Store / Windows Update is blocked by Group Policy."
 		return status
 	}
 
@@ -172,33 +219,47 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "NAME") || strings.HasPrefix(trimmed, "----") || trimmed == "" {
+		if trimmed == "" || strings.HasPrefix(trimmed, "----") {
 			continue
 		}
 		fields := strings.Fields(trimmed)
-		if len(fields) >= 3 {
-			name := fields[0]
-			isDefault := false
-			if name == "*" && len(fields) >= 4 {
-				isDefault = true
-				name = fields[1]
-			}
-			verStr := fields[len(fields)-1]
-			ver := 2
-			if verStr == "1" {
-				ver = 1
-			}
+		// A valid distro row in `wsl -l -v` always has at least 3 fields, with the last field being the VERSION ("1" or "2")
+		if len(fields) < 3 {
+			continue
+		}
+		verStr := fields[len(fields)-1]
+		// Locale-independent guard: Header rows (NAME STATE VERSION, NOM ÉTAT VERSION, ИМЯ СОСТОЯНИЕ ВЕРСИЯ, etc.)
+		// NEVER have "1" or "2" as the last field! This skips headers across all Windows languages.
+		if verStr != "1" && verStr != "2" {
+			continue
+		}
 
-			if isDefault || selectedDistro == "" || strings.Contains(strings.ToLower(name), "ubuntu") {
-				selectedDistro = name
-				selectedVersion = ver
-			}
+		ver := 2
+		if verStr == "1" {
+			ver = 1
+		}
+
+		name := fields[0]
+		isDefault := false
+		if name == "*" && len(fields) >= 4 {
+			isDefault = true
+			name = fields[1]
+		}
+
+		if isDefault || selectedDistro == "" || strings.Contains(strings.ToLower(name), "ubuntu") {
+			selectedDistro = name
+			selectedVersion = ver
 		}
 	}
 
-	if selectedDistro == "" {
-		status.State = WSL2NoDistro
-		status.ErrorMessage = "No suitable Linux distribution found in WSL."
+	if errList != nil || selectedDistro == "" {
+		if status.DefaultVersion == 1 {
+			status.State = WSLV1Only
+			status.ErrorMessage = "WSL1 is enabled, but WSL2 is required for Sirius ext4/RocksDB performance."
+		} else {
+			status.State = WSL2NoDistro
+			status.ErrorMessage = "WSL2 kernel is ready, but no Sirius Linux distribution is installed."
+		}
 		return status
 	}
 
@@ -269,6 +330,20 @@ func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
 		fmt.Sprintf("Start-Process wsl -ArgumentList '--install -d %s --no-launch' -Verb RunAs", distroName))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		outStr := string(out) + " " + extractExitHex(err)
+		outLower := strings.ToLower(outStr)
+		if strings.Contains(outStr, "1223") || strings.Contains(outLower, "canceled by the user") || strings.Contains(outLower, "access is denied") {
+			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined.")
+		}
+		if strings.Contains(outLower, "0x80370102") || strings.Contains(outLower, "80370102") {
+			return fmt.Errorf("BIOS_VIRTUALIZATION_DISABLED: Hardware Virtualization is disabled or a system restart is required.")
+		}
+		if strings.Contains(outLower, "0x80072ee7") || strings.Contains(outLower, "80072ee7") {
+			return fmt.Errorf("NETWORK_TIMEOUT: Network connection to Microsoft Store / WSL CDN timed out.")
+		}
+		if strings.Contains(outLower, "0x8024500c") || strings.Contains(outLower, "8024500c") {
+			return fmt.Errorf("GROUP_POLICY_BLOCKED: Windows Update / Store is blocked by Group Policy.")
+		}
 		return fmt.Errorf("failed to install distribution %s: %v (%s)", distroName, err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -285,6 +360,13 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	if distro == "" {
 		distro = "Ubuntu-22.04"
 	}
+
+	// Configure PortProxy now that WSL2 is verified ready
+	go func() {
+		if err := dc.SetupPortProxy(); err != nil {
+			dc.broadcastLog(fmt.Sprintf("[Supervisor] Note: PortProxy setup: %v", err))
+		}
+	}()
 
 	// 1. Silent pre-flight self-healing: Ensure essential dynamic runtime dependencies are installed inside WSL (e.g. libatomic1)
 	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",

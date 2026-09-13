@@ -453,11 +453,6 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 		libEnvList = append(libEnvList, fmt.Sprintf("PATH=%s;%s", dyldPath, os.Getenv("PATH")))
 		ctx, cancel := context.WithCancel(context.Background())
 		dc.cmdCancel = cancel
-		go func() {
-			if err := dc.SetupPortProxy(); err != nil {
-				dc.broadcastLog(fmt.Sprintf("[Supervisor] Note: PortProxy setup: %v", err))
-			}
-		}()
 		return dc.executeWSL(ctx, siriusBin, dc.chainConfigPath, localDataDir, libEnvList)
 	}
 

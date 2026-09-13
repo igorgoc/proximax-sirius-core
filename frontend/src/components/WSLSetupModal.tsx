@@ -14,7 +14,8 @@ import {
   ChevronUp,
   ShieldCheck,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Globe
 } from 'lucide-react';
 import { WSLStatus } from '../types';
 
@@ -59,6 +60,27 @@ export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
     wslStatus?.errorMessage?.includes('UAC_DENIED') ||
     installError?.toLowerCase().includes('canceled by the user');
 
+  const isNetworkTimeout = wslStatus?.errorCode === 'NETWORK_TIMEOUT' ||
+    installError?.includes('NETWORK_TIMEOUT') ||
+    installError?.toLowerCase().includes('0x80072ee7') ||
+    wslStatus?.rawStatus?.toLowerCase().includes('0x80072ee7');
+
+  const isGroupPolicyBlocked = wslStatus?.errorCode === 'GROUP_POLICY_BLOCKED' ||
+    installError?.includes('GROUP_POLICY_BLOCKED') ||
+    installError?.toLowerCase().includes('0x8024500c') ||
+    wslStatus?.rawStatus?.toLowerCase().includes('0x8024500c');
+
+  const [distroInstalling, setDistroInstalling] = useState(() => {
+    return sessionStorage.getItem('sirius_wsl_distro_installing') === 'true';
+  });
+
+  useEffect(() => {
+    if (wslStatus?.state === 'WSL2_READY') {
+      sessionStorage.removeItem('sirius_wsl_distro_installing');
+      setDistroInstalling(false);
+    }
+  }, [wslStatus?.state]);
+
   const handleEnableWSL = async () => {
     setIsInstalling(true);
     setInstallError(null);
@@ -82,6 +104,8 @@ export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
 
   const handleSetupDistro = async () => {
     setIsInstalling(true);
+    setDistroInstalling(true);
+    sessionStorage.setItem('sirius_wsl_distro_installing', 'true');
     setInstallError(null);
     try {
       const res = await fetch('/api/system/wsl/setup-distro', {
@@ -92,11 +116,15 @@ export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
       const data = await res.json();
       if (!res.ok) {
         setInstallError(data.error || 'Failed to setup Sirius Linux subsystem');
+        sessionStorage.removeItem('sirius_wsl_distro_installing');
+        setDistroInstalling(false);
       } else {
         onRefreshStatus();
       }
     } catch (e: any) {
       setInstallError(e.message || 'Network error occurred');
+      sessionStorage.removeItem('sirius_wsl_distro_installing');
+      setDistroInstalling(false);
     } finally {
       setIsInstalling(false);
     }
@@ -221,8 +249,59 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
             </div>
           )}
 
+          {/* Network Timeout Card */}
+          {isNetworkTimeout && (
+            <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-3 animate-fadeIn">
+              <div className="flex items-start space-x-3">
+                <Globe className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-amber-300">
+                    Network Connection Timeout (0x80072ee7)
+                  </h4>
+                  <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
+                    WSL installer could not reach Microsoft Store / CDN distribution servers. Please check your internet connection, proxy settings, or VPN.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3 pt-1">
+                <button
+                  onClick={state === 'WSL2_NO_DISTRO' ? handleSetupDistro : handleEnableWSL}
+                  disabled={isInstalling}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold shadow transition-all flex items-center space-x-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isInstalling ? 'animate-spin' : ''}`} />
+                  <span>Retry Download</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Group Policy Blocked Card */}
+          {isGroupPolicyBlocked && (
+            <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/50 space-y-3 animate-fadeIn">
+              <div className="flex items-start space-x-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-red-300">
+                    Installation Blocked by Group Policy (0x8024500c)
+                  </h4>
+                  <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
+                    Windows Update / Microsoft Store downloads are restricted by your system administrator or corporate Group Policy.
+                  </p>
+                </div>
+              </div>
+              <div className="bg-zinc-950/80 p-3 rounded-lg border border-red-500/20 text-xs text-zinc-300 space-y-1.5">
+                <div className="font-semibold text-red-200">Recommended Next Steps:</div>
+                <ul className="list-disc list-inside space-y-1 text-zinc-400">
+                  <li>Contact your IT administrator to allow Windows Subsystem for Linux packages.</li>
+                  <li>Alternatively, install Ubuntu manually using an offline rootfs package.</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
           {/* General Install Error */}
-          {installError && !isUacDenied && (
+          {installError && !isUacDenied && !isBiosDisabled && !isNetworkTimeout && !isGroupPolicyBlocked && (
             <div className="p-3.5 rounded-xl bg-red-950/30 border border-red-500/30 text-xs text-red-300 flex items-center space-x-2">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>{installError}</span>
@@ -298,26 +377,64 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
 
             {state === 'WSL2_NO_DISTRO' && (
               <div className="space-y-3">
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  WSL2 core is active! The isolated Linux subsystem environment (Ubuntu-22.04) needs to be initialized to execute the Sirius node engine.
-                </p>
-                <button
-                  onClick={handleSetupDistro}
-                  disabled={isInstalling}
-                  className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
-                >
-                  {isInstalling ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Setting Up Subsystem Distribution...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Cpu className="w-4 h-4" />
-                      <span>Install Sirius Linux Subsystem (Ubuntu-22.04)</span>
-                    </>
-                  )}
-                </button>
+                {distroInstalling ? (
+                  <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/40 space-y-3 animate-fadeIn">
+                    <div className="flex items-start space-x-3">
+                      <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin flex-shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="font-semibold text-indigo-300">
+                          Downloading & Installing Ubuntu-22.04...
+                        </h4>
+                        <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
+                          Windows is downloading and initializing the Linux environment in the background (~500 MB). This may take a few minutes depending on your internet connection.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1 text-[11px] text-zinc-400">
+                      <span>Status: Waiting for distribution installation...</span>
+                      <div className="flex items-center space-x-3">
+                        <button
+                          onClick={onRefreshStatus}
+                          className="text-indigo-400 hover:text-indigo-300 font-medium underline"
+                        >
+                          Check now
+                        </button>
+                        <button
+                          onClick={() => {
+                            sessionStorage.removeItem('sirius_wsl_distro_installing');
+                            setDistroInstalling(false);
+                          }}
+                          className="text-zinc-500 hover:text-zinc-400 underline"
+                        >
+                          Reset status
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      WSL2 core is active! The isolated Linux subsystem environment (Ubuntu-22.04) needs to be initialized to execute the Sirius node engine.
+                    </p>
+                    <button
+                      onClick={handleSetupDistro}
+                      disabled={isInstalling}
+                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
+                    >
+                      {isInstalling ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Initiating Distro Setup...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Cpu className="w-4 h-4" />
+                          <span>Install Sirius Linux Subsystem (Ubuntu-22.04)</span>
+                        </>
+                      )}
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
