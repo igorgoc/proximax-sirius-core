@@ -1,8 +1,8 @@
-# ProximaX Sirius Mainnet Peer Node (Native GUI & Node Manager)
+# ProximaX Sirius Mainnet Peer Node (Native Cockpit & Node Manager)
 
 A high-performance, **Bitcoin Core-inspired** standalone desktop and web application for running, configuring, and managing a **ProximaX Sirius Chain Mainnet Peer Node, POS+ Block Harvester, and DFMS Storage Replicator**.
 
-Built as a lightweight native management engine (Go backend + React/TypeScript frontend) interfacing directly with the native C++ ProximaX Sirius Core blockchain binary (`cpp-xpx-chain`) on macOS (Apple Silicon ARM64 & Intel) and Linux — with **zero Docker overhead**.
+Built as a lightweight native management engine (Go backend + React/TypeScript frontend) interfacing directly with the native C++ ProximaX Sirius Core blockchain binary (`cpp-xpx-chain`) on **macOS**, **Linux**, and **Windows** — with **zero Docker overhead and zero Electron bloat**.
 
 ---
 
@@ -10,129 +10,172 @@ Built as a lightweight native management engine (Go backend + React/TypeScript f
 
 ```
                       +-----------------------------------+
-                      |      Operator Browser / GUI       |
+                      |     Operator Browser / Cockpit    |
                       |       http://localhost:8080       |
                       +-----------------+-----------------+
-                                        | (HTTP / REST / SSE)
+                                        | (HTTP / REST / SSE / WebSockets)
                       +-----------------v-----------------+
                       |    Native Go Node Manager Core    |
                       |   Process Supervisor & Telemetry  |
                       +---+-------------+---------------+--+
                           |             |               |
-             (IPC / Unix) |             | (Disk I/O)    | (TLS 7900)
+             (IPC/Signals)|             | (Disk I/O)    | (TLS 7900)
     +---------------------v-+     +-----v-------+  +----v--------------------+
     |  Sirius C++ Engine    |     | RocksDB /   |  | ProximaX Sirius Mainnet |
     |  (sirius.bc / WAL)    |     | Chunk Files |  | P2P Validator Network   |
     +-----------------------+     +-------------+  +-------------------------+
 ```
 
-- **Engine**: Native compiled Sirius C++ binary (`sirius.bc`) with optimized async WAL and RocksDB state cache.
-- **Manager Daemon**: Lightweight Go daemon managing process lifecycles, configuration persistence, disaster recovery, and network health.
-- **Cockpit GUI**: Modern dark-themed operator interface built with React, Vite, Tailwind CSS, and Lucide icons.
-- **Storage Subsystem**: Supports Bitcoin-style 65,536-blocks chunked storage with seamless external SSD relocation.
+### Cross-Platform Architecture Strategy
+
+| Operating System | Node Manager (UI & Supervisor) | Sirius Catapult Engine (`sirius.bc`) | Storage & Filesystem |
+| :--- | :--- | :--- | :--- |
+| **macOS** (Apple Silicon & Intel) | Native Darwin binary (`sirius-core`) | Native Darwin C++ binary (`bin/sirius.bc`) with dyld RocksDB | Native APFS / External NVMe SSD |
+| **Linux** (Ubuntu / Debian x86_64) | Native Linux ELF binary (`sirius-core`) | Native Linux ELF binary (`bin/sirius.bc`) with glibc 2.35+ | Native ext4 / XFS filesystem |
+| **Windows** (Windows 10 / 11 x64) | Native Windows x64 binary (`sirius-core.exe`) | Linux ELF binary (`sirius.bc`) orchestrated via **WSL2** | Native ext4 (`/var/lib/sirius`) or NTFS |
+
+- **Why WSL2 on Windows?**  
+  Direct Windows MSVC ports for Catapult are deprecated upstream. Running the C++ engine inside WSL2 provides **100% binary compatibility** with the verified Linux consensus engine, POSIX signal handling, and native ext4 write speeds for RocksDB multi-gigabyte state flushes without Docker overhead.
 
 ---
 
-## Prerequisites
+## Operating System Guides (Pre-Compiled Releases)
 
-- **macOS**: Apple Silicon (M1/M2/M3/M4) or Intel (macOS 12.0+)
-- **Linux**: Ubuntu 22.04+ / Debian 12+ (x86_64 or aarch64)
-- **Windows**: Windows 10 (Version 2004 / Build 19041+) or Windows 11 with **WSL2** enabled. *(Note: The Windows Node Manager GUI runs natively on Windows and automatically detects or guides the one-time setup of the high-performance Linux Sirius engine subsystem inside WSL2).*
-- **Node.js**: v20+ with `npm`
-- **Go**: v1.22+
-- **Disk Space**: At least 50 GB free disk space (external high-speed SSD recommended)
+Pre-compiled standalone packages with the embedded React cockpit are available under [GitHub Releases](https://github.com/igorgoc/proximax-sirius-core/releases).
 
-## Pre-Compiled Standalone Releases
+### 1. macOS (Apple Silicon ARM64 & Intel)
 
-Pre-compiled standalone packages with the React web cockpit embedded inside are available under [GitHub Releases](https://github.com/igorgoc/proximax-sirius-core/releases).
+#### Start Node:
+- **Option A (Finder)**: Extract the `.tar.gz` archive and double-click **`start.command`**.
+- **Option B (Terminal)**:
+  ```bash
+  tar -xzf proximax-sirius-darwin-arm64-1.9.8.tar.gz
+  cd proximax-sirius-core
+  ./start.sh
+  ```
+- **Option C (One-Line cURL Install — Bypasses macOS Gatekeeper Quarantine)**:
+  ```bash
+  curl -sL https://github.com/igorgoc/proximax-sirius-core/releases/download/v1.9.8/proximax-sirius-darwin-arm64-1.9.8.tar.gz | tar -xz
+  cd proximax-sirius-core && ./start.command
+  ```
 
-### macOS (Apple Silicon ARM64 & Intel)
+#### Stop & Restart Node:
+- **Stop**: Run `./stop.sh` (or click "Stop Node" in the Web Cockpit).
+- **Restart**: Run `./restart.sh`.
 
-#### Option 1: One-Line Terminal Setup (Bypasses Browser Quarantine)
+#### Access Dashboard:
+- Browser opens automatically at **`http://localhost:8080`**.
+
+> **macOS Gatekeeper Tip**: If downloaded via Safari/Chrome and blocked, right-click `start.command` → **Open** → **Open**, or run `xattr -cr .` inside the folder.
+
+---
+
+### 2. Linux (Ubuntu 22.04+ / Debian 12+)
+
+#### Option A: Standalone Portable Tarball (No Root Required)
 ```bash
-curl -sL https://github.com/igorgoc/proximax-sirius-core/releases/download/v1.9.8/proximax-sirius-darwin-arm64-1.9.8.tar.gz | tar -xz
-cd proximax-sirius-core && ./start.command
+tar -xzf proximax-sirius-linux-amd64-1.9.8.tar.gz
+cd proximax-sirius-core
+
+# Start the node & manager
+./start.sh
+
+# Stop or restart gracefully
+./stop.sh
+./restart.sh
 ```
-*(Files downloaded via `curl` do not receive browser quarantine attributes and launch immediately with zero Gatekeeper prompts).*
 
-#### Option 2: If Downloaded Via Web Browser (Safari / Chrome)
-1. Extract the downloaded `proximax-sirius-darwin-arm64-1.9.8.tar.gz`.
-2. In the extracted folder, double-click **`start.command`** (or in Terminal run `xattr -cr . && ./start.command`).
-3. If macOS Gatekeeper flags the open-source binary as unverified, right-click `start.command` → **Open** → **Open**, or navigate to **System Settings > Privacy & Security** and click **Open Anyway**.
+#### Option B: Debian / Ubuntu Package (`.deb` with systemd Service)
+```bash
+# Install the deb package
+sudo dpkg -i proximax-sirius-core_1.9.8_amd64.deb
+
+# Enable and start the systemd service
+sudo systemctl enable --now proximax-sirius
+
+# Check service status & logs
+sudo systemctl status proximax-sirius
+journalctl -u proximax-sirius -f
+```
+
+#### Access Dashboard:
+- Open your browser at **`http://localhost:8080`** (or remote server IP `http://<server-ip>:8080`).
 
 ---
 
-## Quick Start (Build from Source)
+### 3. Windows (Windows 10 / 11 64-bit)
 
-### 1. Launch the Node & GUI
-In your terminal, navigate to the repository directory and run:
+#### Start Node:
+1. Extract `proximax-sirius-windows-amd64-1.9.8.zip` to a folder (e.g. `C:\proximax-sirius-core`).
+2. Double-click **`start.bat`** (or in PowerShell run `.\start.bat`).
+3. Your default web browser will open **`http://localhost:8080`**.
 
+#### Stop & Restart Node:
+- **Stop**: Double-click **`stop.bat`** (or in PowerShell run `.\stop.bat`).
+- **Restart**: Double-click **`restart.bat`** (or in PowerShell run `.\restart.bat`).
+
+#### Windows WSL2 Onboarding Wizard:
+- On first launch, the Node Manager automatically inspects the Windows Subsystem for Linux (`wsl.exe --status`).
+- If WSL2 or Ubuntu is not yet installed, the Web Cockpit presents a **1-Click Subsystem Setup Wizard** with automatic elevation (`Start-Process wsl -ArgumentList '--install --no-distribution' -Verb RunAs`) and reboot-resume state persistence.
+
+> **Windows Defender SmartScreen**: If prompted with "Windows protected your PC", click **"More info"** → **"Run anyway"**.
+
+---
+
+## Developer Quick Start (Build from Source)
+
+### macOS & Linux:
 ```bash
+git clone https://github.com/igorgoc/proximax-sirius-core.git
+cd proximax-sirius-core
+
+# Builds React frontend, compiles Go supervisor, and launches on port 8080
 ./run.sh
 ```
 
-`run.sh` will:
-1. Automatically set optimal file descriptor limits (`ulimit -n 65536`) for RocksDB.
-2. Build the React frontend into static assets embedded within the Go binary.
-3. Compile and launch the native manager daemon on port **8080**.
-4. Perform readiness healthchecks and open the dashboard.
+### Windows:
+```cmd
+git clone https://github.com/igorgoc/proximax-sirius-core.git
+cd proximax-sirius-core
 
-### 2. Access the Dashboard & Automatic Engine Setup
-Open your browser at:
-👉 **[http://localhost:8080](http://localhost:8080)**
-
-> **Automatic Initial Setup:** Download the Node Manager for your platform; it will automatically fetch and verify the matching Sirius Engine on first launch (requires internet access once). The application cryptographically validates the release manifest via Ed25519 signatures and SHA-256 integrity checks before extracting the native engine binary.
-
-On first launch, the **Setup Wizard** will also guide you through:
-- Node network identity and friendly name.
-- Storage path configuration (internal or external SSD).
-- High-speed snapshot synchronization.
-- Harvesting and storage replicator credentials.
-
-### 3. Stopping the Node
-To safely shut down the daemon, flush RocksDB caches, and stop background processes:
-
-```bash
-./stop.sh
+:: Builds React UI and compiles Windows native supervisor
+run.bat
 ```
 
 ---
 
-## Key Capabilities
+## Key Capabilities & Invariants
 
-### 1. POS+ Harvester Cockpit
+### 1. Mandatory Harvest Key Enforcement
+- The Sirius Catapult engine will **refuse to start** unless a valid 64-character hexadecimal `harvestKey` is configured.
+- Configure your remote harvesting account key in the **Validator Settings** tab or via the initial **Setup Wizard**.
+
+### 2. Hardware Vault & Key Privacy
+- **Zero Raw Key Exposure**: Raw private keys are never displayed in UI overview cards, public API responses, or plain text logs.
+- **Strict Key Separation**: Enforces strict isolation between P2P transport identity (`bootKey`) and POS+ consensus harvesting identity (`harvestKey`). Never mirror harvest key to boot key.
+- **Encrypted Disaster Recovery**: Export and import password-protected recovery packages (`.drpkg`) using Argon2id key derivation and authenticated AES-256-GCM encryption.
+
+### 3. High-Speed Snapshot Streaming Sync
+- Direct streaming decompression from the official HuggingFace Mainnet snapshot (`.tar.zst`) without saving intermediate multi-gigabyte archive files to disk.
+- Automatically re-initializes block storage (`data/`) and RocksDB state (`statedb/`) cleanly in under 2 minutes.
+
+### 4. POS+ Harvester & Storage Replicator Cockpit
 - Real-time harvester synchronization status, committee voting eligibility, and block generation metrics.
 - Track total blocks harvested, fees earned in XPX, and average blocks per day.
-- Delegated account linkage diagnostics against public Sirius REST nodes.
-
-### 2. DFMS Storage Replicator
-- Monitor distributed file management (DFMS) storage node operations.
-- Metrics for active shards, allocated storage space, streaming units (SI), and storage units (SO).
-- Drive path management with native OS file dialog support.
-
-### 3. Fast Snapshot Synchronization & Live Streaming Restorer
-- High-speed direct-streaming snapshot downloader and unpacker.
-- Memory-streamed decompression directly into chunked block files (`blocks.dat`, `hashes.dat`, `statements.dat`) without intermediate archive extraction overhead.
-- Real-time ETA, download bandwidth, and extraction progress meters.
-
-### 4. Hardware Vault & Key Security Invariants
-- **Zero Raw Key Exposure**: Raw private keys are never exposed in UI overview cards or API responses.
-- **Strict Key Separation**: Enforces complete architectural separation between P2P transport identity (`bootKey`) and consensus block harvesting identity (`harvestKey`).
-- **Encrypted Disaster Recovery**: Export and import password-protected, encrypted recovery packages (`.drpkg`) using Argon2id key derivation and authenticated AES-256-GCM encryption.
+- Monitor DFMS storage node operations, active shards, and allocated storage units.
 
 ---
 
 ## Configuration Reference
 
-Node configuration is maintained in `chainconfig/resources/`:
+Runtime configuration files reside in `chainconfig/resources/`:
 
 | File | Key | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `config-manager.properties` | `bootkey.source` | Sourcing method for P2P transport key (`generated` or `custom`) | `generated` |
-| `config-manager.properties` | `data.path` | Local filesystem path where chain data is stored | `./chainconfig/data` |
-| `config-harvesting.properties` | `harvestKey` | Delegated harvesting remote account private key | *(Unset / Template)* |
+| `config-harvesting.properties` | `harvestKey` | Delegated harvesting remote account private key (Mandatory) | *(Configured via UI)* |
 | `config-harvesting.properties` | `isAutoHarvestingEnabled` | Automatic block creation on eligible rounds | `true` |
 | `config-user.properties` | `bootKey` | Node P2P transport session identity | *(Auto-generated)* |
+| `config-user.properties` | `data.path` | Local or external SSD storage path | `./chainconfig/data` |
 | `config-node.properties` | `friendlyName` | Public validator node nickname | `sirius-mainnet-peer` |
 
 ---
@@ -145,15 +188,9 @@ Node configuration is maintained in `chainconfig/resources/`:
 | **7900** | TCP | Sirius Mainnet P2P Transport & Block Synchronization |
 | **7901** | TCP | Sirius Peer API Gateway |
 | **7902** | TCP | Sirius Broker / Messaging Queue |
-| **7903** | TCP | Sirius Distributed Byzantine Agreement (DBRB) |
+| **7903** | TCP | Sirius Distributed Byzantine Agreement (DBRB / Fast Finality) |
 | **7904** | TCP / UDP | Sirius DFMS Storage Replicator Data Stream |
 | **3000** | TCP (HTTP) | Public Blockchain REST API Gateway |
-
----
-
-## Upstream Relationship
-
-This project is the native desktop and operator control software for the **ProximaX Sirius Chain**, derived from and compatible with the official [ProximaX Sirius Core C++ engine](https://github.com/proximax-sirius/cpp-xpx-chain) (Catapult architecture).
 
 ---
 
