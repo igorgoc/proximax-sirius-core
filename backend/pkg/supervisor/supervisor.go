@@ -472,6 +472,7 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 	dc.broadcastLog(fmt.Sprintf("[Supervisor] Starting native Sirius Core process from %s...", siriusBin))
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, siriusBin, dc.chainConfigPath)
+	setCmdSysProcAttr(cmd)
 	cmd.Env = append(os.Environ(), libEnvList...)
 	cmd.Dir = filepath.Dir(dc.chainConfigPath)
 
@@ -847,9 +848,15 @@ func (dc *ProcessSupervisor) StopNode() error {
 				logsDir = filepath.Join(dc.chainConfigPath, "logs")
 			}
 
-			indexPath := filepath.Join(filepath.Dir(dc.chainConfigPath), "chainconfig", "data", "index.dat")
-			if !isPathExists(indexPath) {
-				indexPath = filepath.Join(dc.chainConfigPath, "data", "index.dat")
+			indexPath := ""
+			if localDataDir != "" {
+				indexPath = filepath.Join(localDataDir, "index.dat")
+			}
+			if indexPath == "" || !isPathExists(indexPath) {
+				indexPath = filepath.Join(filepath.Dir(dc.chainConfigPath), "chainconfig", "data", "index.dat")
+				if !isPathExists(indexPath) {
+					indexPath = filepath.Join(dc.chainConfigPath, "data", "index.dat")
+				}
 			}
 
 			exited := false

@@ -116,11 +116,20 @@ func main() {
 	signal.Ignore(syscall.SIGHUP)
 
 	// Graceful shutdown on SIGINT / SIGTERM
-	sigChan := make(chan os.Signal, 1)
+	sigChan := make(chan os.Signal, 10)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigChan
-		log.Printf("[Sirius Core] Received termination signal (%v). Stopping Sirius node engine...", sig)
+		log.Printf("[Sirius Core] Received termination signal (%v). Stopping Sirius node engine gracefully...", sig)
+		log.Printf("[Sirius Core] Flushing RocksDB statedb and in-flight blocks to disk. Please wait (do not kill)...")
+
+		// Absorb any additional Ctrl+C signals while shutdown is in progress
+		go func() {
+			for s := range sigChan {
+				log.Printf("[Sirius Core] Shutdown already in progress (%v). Waiting for disk commit to complete safely...", s)
+			}
+		}()
+
 		_ = supervisorCtrl.StopNode()
 		os.Exit(0)
 	}()
