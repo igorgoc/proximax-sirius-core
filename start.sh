@@ -21,10 +21,19 @@ if [ -n "$OLD_PID" ]; then
     fi
 fi
 
-# 3. Ensure Sirius Catapult engine and shared libraries exist on Linux/WSL
-if [ "$(uname -s)" = "Linux" ]; then
-    if [ ! -f "$DIR/bin/librocksdb.so.8" ] || [ ! -f "$DIR/bin/sirius.bc" ]; then
-        echo "-> Catapult engine shared libraries missing. Downloading precompiled Sirius Linux binaries..."
+# 3. Ensure Sirius Catapult engine and shared libraries exist and match platform architecture
+if [ "$(uname -s)" = "Darwin" ]; then
+    if [ ! -f "$DIR/bin/sirius.bc" ] || ! file -b "$DIR/bin/sirius.bc" | grep -q "Mach-O"; then
+        echo "-> Catapult macOS arm64 engine missing or invalid format. Downloading native binaries..."
+        mkdir -p "$DIR/bin"
+        if command -v curl >/dev/null 2>&1; then
+            curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-darwin-arm64.tar.gz" | tar -xz -C "$DIR"
+            echo "-> Sirius macOS engine unpacked successfully."
+        fi
+    fi
+elif [ "$(uname -s)" = "Linux" ]; then
+    if [ ! -f "$DIR/bin/sirius.bc" ] || ! file -b "$DIR/bin/sirius.bc" | grep -q "ELF"; then
+        echo "-> Catapult Linux engine missing or invalid format. Downloading precompiled Sirius Linux binaries..."
         mkdir -p "$DIR/bin"
         if command -v curl >/dev/null 2>&1; then
             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz" | tar -xz -C "$DIR"
@@ -74,13 +83,5 @@ echo "-> Web Dashboard: http://localhost:8080"
 echo "-> To stop: Press Ctrl+C or run ./stop.sh"
 echo "========================================================="
 
-# 7. Automatically open web browser if display/desktop available
-if [ "$(uname)" = "Darwin" ]; then
-    ( sleep 1 && open "http://localhost:8080" 2>/dev/null || true ) &
-elif command -v xdg-open >/dev/null 2>&1 && [ -n "$DISPLAY" ]; then
-    ( sleep 1 && xdg-open "http://localhost:8080" 2>/dev/null || true ) &
-elif grep -qi "microsoft" /proc/version 2>/dev/null; then
-    ( sleep 1 && cmd.exe /c start http://localhost:8080 2>/dev/null || true ) &
-fi
 
 exec "$SIRIUS_CORE_BIN" -port 8080 -chainconfig "$DIR/chainconfig" "$@"
