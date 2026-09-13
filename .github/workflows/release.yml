@@ -79,7 +79,9 @@ jobs:
           path: backend/dist/
 
       - name: Run Package Script
-        run: ${{ matrix.platform.script }}
+        run: |
+          chmod +x ./scripts/linux/*.sh ./scripts/macos/*.sh ./scripts/macos/*.command 2>/dev/null || true
+          ${{ matrix.platform.script }}
 
       - name: Upload Platform Package Artifacts
         uses: actions/upload-artifact@v4

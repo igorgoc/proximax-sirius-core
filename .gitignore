@@ -67,3 +67,4 @@ chainconfig/resources/.backup-configs-*/
 *.bak
 
 .aider*
+Modelfile
