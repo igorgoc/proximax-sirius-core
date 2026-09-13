@@ -2,6 +2,14 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+REM 0. Detect project root directory
+set "ROOT_DIR=%~dp0"
+if exist "%~dp0..\..\chainconfig\resources" (
+    pushd "%~dp0..\.."
+    set "ROOT_DIR=!CD!"
+    popd
+)
+
 echo =========================================================
 echo   ProximaX Sirius Mainnet Peer Node (Windows Native)
 echo =========================================================
@@ -24,24 +32,27 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM 1. If in a pre-built release package (no frontend/backend source directories), delegate to start.bat
-if not exist "%~dp0frontend" (
+if not exist "!ROOT_DIR!\frontend" (
     if exist "%~dp0start.bat" (
         call "%~dp0start.bat" %*
+        exit /b %ERRORLEVEL%
+    ) else if exist "!ROOT_DIR!\start.bat" (
+        call "!ROOT_DIR!\start.bat" %*
         exit /b %ERRORLEVEL%
     )
 )
 
 REM 2. Source repo build workflow: build React UI if not built
-if not exist "%~dp0backend\dist\index.html" (
-    if exist "%~dp0frontend" (
-        if not exist "%~dp0frontend\node_modules" (
+if not exist "!ROOT_DIR!\backend\dist\index.html" (
+    if exist "!ROOT_DIR!\frontend" (
+        if not exist "!ROOT_DIR!\frontend\node_modules" (
             echo -^> Installing frontend dependencies...
-            cd /d "%~dp0frontend"
+            cd /d "!ROOT_DIR!\frontend"
             call npm ci
             cd /d "%~dp0"
         )
         echo -^> Building React UI...
-        cd /d "%~dp0frontend"
+        cd /d "!ROOT_DIR!\frontend"
         call npm run build
         if %ERRORLEVEL% NEQ 0 (
             echo Failed to build React UI!
@@ -54,8 +65,8 @@ if not exist "%~dp0backend\dist\index.html" (
 
 REM 3. Compile Go backend for Windows
 echo -^> Compiling native Go backend (sirius-core.exe)...
-cd /d "%~dp0backend"
-go build -ldflags="-s -w" -o "%~dp0sirius-core.exe" .
+cd /d "!ROOT_DIR!\backend"
+go build -ldflags="-s -w" -o "!ROOT_DIR!\sirius-core.exe" .
 if %ERRORLEVEL% NEQ 0 (
     echo Failed to build sirius-core.exe!
     pause
@@ -67,6 +78,8 @@ REM 4. Launch Node Manager
 echo -^> Launching Node Manager...
 if exist "%~dp0start.bat" (
     call "%~dp0start.bat" %*
-) else if exist "%~dp0scripts\packaging\windows\start-node.ps1" (
-    powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0scripts\packaging\windows\start-node.ps1" %*
+) else if exist "%~dp0start-node.ps1" (
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0start-node.ps1" %*
+) else if exist "!ROOT_DIR!\scripts\windows\start-node.ps1" (
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -File "!ROOT_DIR!\scripts\windows\start-node.ps1" %*
 )

@@ -1,7 +1,17 @@
 #!/bin/bash
 set -e
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$SCRIPT_DIR/chainconfig" ]; then
+    DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+elif [ -d "$SCRIPT_DIR/../../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
+else
+    DIR="$SCRIPT_DIR"
+fi
+
 DATA_DIR="$DIR/chainconfig/data"
 SNAPSHOT_URL="${1:-https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst}"
 
@@ -15,7 +25,7 @@ echo ""
 mkdir -p "$DATA_DIR"
 
 echo "[1/4] Stopping Sirius Core containers to release file locks..."
-cd "$DIR" && docker compose stop sirius-core || true
+cd "$DIR" && docker compose stop sirius-core 2>/dev/null || true
 
 echo "[2/4] Removing stale server.lock..."
 rm -f "$DATA_DIR/server.lock"
@@ -35,7 +45,7 @@ fi
 
 echo "[4/4] Restarting Sirius Core Web Dashboard..."
 rm -f "$DATA_DIR/server.lock"
-docker compose start sirius-core || docker compose up -d
+docker compose start sirius-core 2>/dev/null || docker compose up -d 2>/dev/null || true
 
 echo ""
 echo "================================================================="

@@ -1,5 +1,15 @@
 #!/bin/bash
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$SCRIPT_DIR/chainconfig" ]; then
+    DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+elif [ -d "$SCRIPT_DIR/../../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
+else
+    DIR="$SCRIPT_DIR"
+fi
 cd "$DIR"
 
 echo "========================================================="

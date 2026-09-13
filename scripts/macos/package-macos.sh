@@ -69,9 +69,13 @@ if [ -f "chainconfig/data/00000/00001.dat" ]; then
     cp "chainconfig/data/00000/hashes.dat" "$BUILD_DIR/chainconfig/data/00000/"
 fi
 
-# Include launcher helper scripts
-cp start.sh start.command stop.sh restart.sh start-node.sh "$BUILD_DIR/"
-chmod +x "$BUILD_DIR"/*.sh "$BUILD_DIR"/*.command "$BUILD_DIR/sirius-core"
+# Include launcher helper scripts (both in release root and in scripts/macos)
+cp scripts/macos/start.sh scripts/macos/start.command scripts/macos/stop.sh scripts/macos/restart.sh "$BUILD_DIR/"
+[ -f "scripts/linux/start-node.sh" ] && cp scripts/linux/start-node.sh "$BUILD_DIR/"
+
+mkdir -p "$BUILD_DIR/scripts/macos"
+cp -R scripts/macos/* "$BUILD_DIR/scripts/macos/"
+chmod +x "$BUILD_DIR"/*.sh "$BUILD_DIR"/*.command "$BUILD_DIR/sirius-core" "$BUILD_DIR/scripts/macos"/* 2>/dev/null || true
 
 # Set strict permissions on properties
 chmod 0600 "$BUILD_DIR"/chainconfig/resources/*.properties || true

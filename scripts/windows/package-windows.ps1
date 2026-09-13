@@ -113,26 +113,45 @@ if (Test-Path (Join-Path $RootDir "chainconfig\data\00000\00001.dat")) {
     Copy-Item (Join-Path $RootDir "chainconfig\data\00000\hashes.dat") $TargetData
 }
 
-# Copy launchers and helper scripts
-Copy-Item (Join-Path $RootDir "start.sh") $BuildDir
-Copy-Item (Join-Path $RootDir "stop.sh") $BuildDir
-Copy-Item (Join-Path $RootDir "restart.sh") $BuildDir
-if (Test-Path (Join-Path $RootDir "run.sh")) {
-    Copy-Item (Join-Path $RootDir "run.sh") $BuildDir
-}
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\start-node.ps1") $BuildDir
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\stop-node.ps1") $BuildDir
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\restart-node.ps1") $BuildDir
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\start.bat") $BuildDir
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\stop.bat") $BuildDir
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\restart.bat") $BuildDir
-Copy-Item (Join-Path $RootDir "scripts\packaging\windows\WINDOWS_DEFENDER_NOTES.md") $BuildDir
+# Copy launchers and helper scripts (both at root of zip and in scripts\windows for maximum flexibility)
+$WinScriptDir = Join-Path $RootDir "scripts\windows"
+$BuildWinScripts = Join-Path $BuildDir "scripts\windows"
+New-Item -ItemType Directory -Path $BuildWinScripts -Force | Out-Null
+Copy-Item (Join-Path $WinScriptDir "*") $BuildWinScripts -Force
+
+# Stage top-level launchers in release root
+Copy-Item (Join-Path $WinScriptDir "start.bat") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "stop.bat") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "restart.bat") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "run.bat") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "start-node.ps1") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "stop-node.ps1") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "restart-node.ps1") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "pick-directory.ps1") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "WINDOWS_DEFENDER_NOTES.md") $BuildDir
+
 if (Test-Path (Join-Path $RootDir "WINDOWS_HANDOVER.md")) {
     Copy-Item (Join-Path $RootDir "WINDOWS_HANDOVER.md") $BuildDir
 }
 
+# Stage Linux scripts for WSL execution support
+$LinuxScriptDir = Join-Path $RootDir "scripts\linux"
+$BuildLinuxScripts = Join-Path $BuildDir "scripts\linux"
+New-Item -ItemType Directory -Path $BuildLinuxScripts -Force | Out-Null
+if (Test-Path $LinuxScriptDir) {
+    Copy-Item (Join-Path $LinuxScriptDir "*") $BuildLinuxScripts -Recurse -Force
+}
+if (Test-Path (Join-Path $LinuxScriptDir "start.sh")) {
+    Copy-Item (Join-Path $LinuxScriptDir "start.sh") $BuildDir
+    Copy-Item (Join-Path $LinuxScriptDir "stop.sh") $BuildDir
+    Copy-Item (Join-Path $LinuxScriptDir "restart.sh") $BuildDir
+}
+if (Test-Path (Join-Path $LinuxScriptDir "run.sh")) {
+    Copy-Item (Join-Path $LinuxScriptDir "run.sh") $BuildDir
+}
+
 # Ensure all staged shell scripts have strict Unix LF line endings
-Get-ChildItem -Path $BuildDir -Filter "*.sh" | ForEach-Object {
+Get-ChildItem -Path $BuildDir -Filter "*.sh" -Recurse | ForEach-Object {
     $text = [System.IO.File]::ReadAllText($_.FullName)
     $text = $text.Replace("`r`n", "`n")
     [System.IO.File]::WriteAllText($_.FullName, $text, [System.Text.UTF8Encoding]::new($false))

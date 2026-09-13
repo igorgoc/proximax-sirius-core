@@ -1561,15 +1561,28 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 		}
 	case "windows":
 		chainConfigDir := filepath.Dir(s.configMgr.GetResourcesPath())
-		scriptPath := filepath.Join(chainConfigDir, "..", "scripts", "packaging", "windows", "pick-directory.ps1")
-		if _, eStat := os.Stat(scriptPath); eStat != nil {
-			if execPath, e2 := os.Executable(); e2 == nil {
-				scriptPath = filepath.Join(filepath.Dir(execPath), "scripts", "packaging", "windows", "pick-directory.ps1")
+		candidates := []string{
+			filepath.Join(chainConfigDir, "..", "scripts", "windows", "pick-directory.ps1"),
+			filepath.Join(chainConfigDir, "..", "pick-directory.ps1"),
+			filepath.Join(chainConfigDir, "..", "scripts", "packaging", "windows", "pick-directory.ps1"),
+		}
+		if execPath, e2 := os.Executable(); e2 == nil {
+			candidates = append(candidates,
+				filepath.Join(filepath.Dir(execPath), "scripts", "windows", "pick-directory.ps1"),
+				filepath.Join(filepath.Dir(execPath), "pick-directory.ps1"),
+				filepath.Join(filepath.Dir(execPath), "scripts", "packaging", "windows", "pick-directory.ps1"),
+			)
+		}
+		scriptPath := ""
+		for _, c := range candidates {
+			if _, eStat := os.Stat(c); eStat == nil {
+				scriptPath = c
+				break
 			}
-			if _, e3 := os.Stat(scriptPath); e3 != nil {
-				scriptPath = filepath.Join(os.TempDir(), "sirius-pick-directory.ps1")
-				_ = os.WriteFile(scriptPath, []byte(winPickerScript), 0644)
-			}
+		}
+		if scriptPath == "" {
+			scriptPath = filepath.Join(os.TempDir(), "sirius-pick-directory.ps1")
+			_ = os.WriteFile(scriptPath, []byte(winPickerScript), 0644)
 		}
 		cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-Sta", "-File", scriptPath, prompt, mode)
 		out, e := cmd.Output()
@@ -1582,7 +1595,18 @@ func (s *Server) handleNativePickDir(w http.ResponseWriter, r *http.Request) {
 		// WSL detection: if running under WSL, powershell.exe opens native Windows Explorer dialog
 		if _, e := exec.LookPath("powershell.exe"); e == nil {
 			chainConfigDir := filepath.Dir(s.configMgr.GetResourcesPath())
-			scriptPath := filepath.Join(chainConfigDir, "..", "scripts", "packaging", "windows", "pick-directory.ps1")
+			candidates := []string{
+				filepath.Join(chainConfigDir, "..", "scripts", "windows", "pick-directory.ps1"),
+				filepath.Join(chainConfigDir, "..", "pick-directory.ps1"),
+				filepath.Join(chainConfigDir, "..", "scripts", "packaging", "windows", "pick-directory.ps1"),
+			}
+			scriptPath := candidates[0]
+			for _, c := range candidates {
+				if _, eStat := os.Stat(c); eStat == nil {
+					scriptPath = c
+					break
+				}
+			}
 			winScriptPath := scriptPath
 			if wslOut, wErr := exec.Command("wslpath", "-w", scriptPath).Output(); wErr == nil {
 				winScriptPath = strings.TrimSpace(string(wslOut))

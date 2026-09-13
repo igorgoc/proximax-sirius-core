@@ -81,12 +81,12 @@ Run these verification steps on the Linux machine:
   cd backend && go build -ldflags="-s -w" -o ../sirius-core .
   ```
 - [ ] **Launcher Test**:
-  - Test `./start.sh` (verifies port conflict handling, `xdg-open` browser launch, and node startup).
-  - Test `./stop.sh` (verifies clean shutdown and lock file cleanup).
-  - Test `./restart.sh` (verifies clean graceful restart).
+  - Test `./scripts/linux/start.sh` (verifies port conflict handling, `xdg-open` browser launch, and node startup).
+  - Test `./scripts/linux/stop.sh` (verifies clean shutdown and lock file cleanup).
+  - Test `./scripts/linux/restart.sh` (verifies clean graceful restart).
 - [ ] **Harvest Key Enforcement Test on Linux**:
   - Set `harvestKey = REMOTE_ACCOUNT_PRIVATE_KEY` in `chainconfig/resources/config-harvesting.properties`.
-  - Attempt to run `./start-node.sh`: verify it refuses to start with an error message.
+  - Attempt to run `./scripts/linux/start-node.sh`: verify it refuses to start with an error message.
   - Attempt to call `POST http://127.0.0.1:8080/api/node/start`: verify HTTP 400 rejection.
   - Restore a valid 64-hex key and verify start succeeds.
 - [ ] **Dynamic Libraries (`LD_LIBRARY_PATH`)**:

@@ -81,11 +81,15 @@ elif [ -f "chainconfig/data/00000/00001.dat" ]; then
     cp "chainconfig/data/00000/hashes.dat" "$TARGET_OPT/chainconfig/data/00000/"
 fi
 
-# Include launcher helper scripts
-cp start.sh stop.sh restart.sh start-node.sh "$TARGET_OPT/"
-[ -f "run.sh" ] && cp run.sh "$TARGET_OPT/"
-[ -f "scripts/reset_to_genesis.sh" ] && cp scripts/reset_to_genesis.sh "$TARGET_OPT/"
-chmod +x "$TARGET_OPT"/*.sh "$TARGET_OPT/sirius-core"
+# Include launcher helper scripts (both at root of package and in scripts/linux)
+cp scripts/linux/start.sh scripts/linux/stop.sh scripts/linux/restart.sh scripts/linux/start-node.sh "$TARGET_OPT/"
+[ -f "scripts/linux/run.sh" ] && cp scripts/linux/run.sh "$TARGET_OPT/"
+[ -f "scripts/linux/reset_to_genesis.sh" ] && cp scripts/linux/reset_to_genesis.sh "$TARGET_OPT/"
+
+mkdir -p "$TARGET_OPT/scripts/linux"
+cp -R scripts/linux/* "$TARGET_OPT/scripts/linux/"
+
+chmod +x "$TARGET_OPT"/*.sh "$TARGET_OPT/sirius-core" "$TARGET_OPT/scripts/linux"/*.sh 2>/dev/null || true
 
 # 4. Create standalone tarball
 TARBALL_NAME="proximax-sirius-linux-${ARCH}-${VERSION}.tar.gz"
@@ -100,7 +104,7 @@ mkdir -p "$DEB_STAGE/opt"
 mkdir -p "$DEB_STAGE/etc/systemd/system"
 
 cp -R "$BUILD_DIR/opt/proximax-sirius-core" "$DEB_STAGE/opt/"
-cp scripts/packaging/systemd/proximax-sirius.service "$DEB_STAGE/etc/systemd/system/"
+cp scripts/linux/systemd/proximax-sirius.service "$DEB_STAGE/etc/systemd/system/"
 
 # Control file
 cat << EOF > "$DEB_STAGE/DEBIAN/control"

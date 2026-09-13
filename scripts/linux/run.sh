@@ -1,7 +1,16 @@
 #!/bin/bash
 set -e
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$SCRIPT_DIR/chainconfig" ]; then
+    DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+elif [ -d "$SCRIPT_DIR/../../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
+else
+    DIR="$SCRIPT_DIR"
+fi
 cd "$DIR"
 
 # Detect Platform Architecture
@@ -17,7 +26,11 @@ fi
 # If running inside a pre-built release package (no frontend/backend source directories),
 # seamlessly delegate to start.sh
 if [ ! -d "$DIR/frontend" ] || [ ! -d "$DIR/backend" ]; then
-    if [ -f "$DIR/start.sh" ]; then
+    if [ -f "$SCRIPT_DIR/start.sh" ]; then
+        exec "$SCRIPT_DIR/start.sh" "$@"
+    elif [ -f "$DIR/scripts/linux/start.sh" ]; then
+        exec "$DIR/scripts/linux/start.sh" "$@"
+    elif [ -f "$DIR/start.sh" ]; then
         exec "$DIR/start.sh" "$@"
     elif [ -f "$DIR/sirius-core" ]; then
         exec "$DIR/sirius-core" -port 8080 -chainconfig "$DIR/chainconfig" "$@"
@@ -107,7 +120,7 @@ if [ "$READY" = true ]; then
     echo "    >>> http://localhost:$PORT <<<"
     echo ""
     echo "  Logs:   tail -f chainconfig/logs/manager.log"
-    echo "  Stop:   ./stop.sh"
+    echo "  Stop:   ./scripts/linux/stop.sh"
 else
     echo "  Notice: Manager started with PID $NEW_PID, check logs:"
     echo "  tail -n 20 chainconfig/logs/manager.log"

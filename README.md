@@ -130,7 +130,7 @@ git clone https://github.com/igorgoc/proximax-sirius-core.git
 cd proximax-sirius-core
 
 # Builds React frontend, compiles Go supervisor, and launches on port 8080
-./run.sh
+./scripts/linux/run.sh
 ```
 
 ### Windows:
@@ -139,7 +139,7 @@ git clone https://github.com/igorgoc/proximax-sirius-core.git
 cd proximax-sirius-core
 
 :: Builds React UI and compiles Windows native supervisor
-run.bat
+scripts\windows\run.bat
 ```
 
 ---

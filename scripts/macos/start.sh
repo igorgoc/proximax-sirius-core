@@ -1,7 +1,16 @@
 #!/bin/bash
 set -e
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$SCRIPT_DIR/chainconfig" ]; then
+    DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+elif [ -d "$SCRIPT_DIR/../../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
+else
+    DIR="$SCRIPT_DIR"
+fi
 cd "$DIR"
 
 # 1. Clear macOS Gatekeeper quarantine if on Darwin
@@ -21,7 +30,7 @@ if [ -n "$OLD_PID" ]; then
     fi
 fi
 
-# 3. Ensure Sirius Catapult engine and shared libraries exist and match platform architecture
+# 3. Ensure Sirius Catapult engine and shared libraries exist
 if [ "$(uname -s)" = "Darwin" ]; then
     if [ ! -f "$DIR/bin/sirius.bc" ] || ! file -b "$DIR/bin/sirius.bc" | grep -q "Mach-O"; then
         echo "-> Catapult macOS arm64 engine missing or invalid format. Downloading native binaries..."
@@ -29,15 +38,6 @@ if [ "$(uname -s)" = "Darwin" ]; then
         if command -v curl >/dev/null 2>&1; then
             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-darwin-arm64.tar.gz" | tar -xz -C "$DIR"
             echo "-> Sirius macOS engine unpacked successfully."
-        fi
-    fi
-elif [ "$(uname -s)" = "Linux" ]; then
-    if [ ! -f "$DIR/bin/sirius.bc" ] || ! file -b "$DIR/bin/sirius.bc" | grep -q "ELF"; then
-        echo "-> Catapult Linux engine missing or invalid format. Downloading precompiled Sirius Linux binaries..."
-        mkdir -p "$DIR/bin"
-        if command -v curl >/dev/null 2>&1; then
-            curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz" | tar -xz -C "$DIR"
-            echo "-> Catapult engine unpacked successfully."
         fi
     fi
 fi
@@ -60,14 +60,14 @@ fi
 
 if [ -z "$SIRIUS_CORE_BIN" ] || [ ! -f "$SIRIUS_CORE_BIN" ]; then
     echo "ERROR: sirius-core binary not found!" >&2
-    echo "Please build with './run.sh' or download a release package." >&2
+    echo "Please build with './scripts/linux/run.sh' or download a release package." >&2
     exit 1
 fi
 
 # 5. Ensure binaries and scripts are executable
-chmod +x "$SIRIUS_CORE_BIN" "$DIR"/*.sh 2>/dev/null || true
+chmod +x "$SIRIUS_CORE_BIN" 2>/dev/null || true
+[ -d "$DIR/scripts/macos" ] && chmod +x "$DIR/scripts/macos"/*.sh "$DIR/scripts/macos"/*.command 2>/dev/null || true
 [ -f "$DIR/sirius-core" ] && chmod +x "$DIR/sirius-core" 2>/dev/null || true
-[ -f "$DIR/start.command" ] && chmod +x "$DIR/start.command" 2>/dev/null || true
 [ -f "$DIR/bin/sirius.bc" ] && chmod +x "$DIR/bin/sirius.bc" 2>/dev/null || true
 
 # 6. Configure dynamic library search paths
@@ -75,13 +75,12 @@ export DYLD_LIBRARY_PATH="$DIR/bin:${DYLD_LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="$DIR/bin:${LD_LIBRARY_PATH:-}"
 
 echo "========================================================="
-echo "  ProximaX Sirius Core Standalone Node Manager"
+echo "  ProximaX Sirius Core Standalone Node Manager (macOS)"
 echo "  Architecture: $(uname -s) $(uname -m)"
 echo "========================================================="
 echo "-> Starting Sirius Core Web Manager on port 8080..."
 echo "-> Web Dashboard: http://localhost:8080"
-echo "-> To stop: Press Ctrl+C or run ./stop.sh"
+echo "-> To stop: Press Ctrl+C or run ./scripts/macos/stop.sh"
 echo "========================================================="
-
 
 exec "$SIRIUS_CORE_BIN" -port 8080 -chainconfig "$DIR/chainconfig" "$@"

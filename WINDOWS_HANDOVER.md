@@ -41,10 +41,11 @@
    - Process liveness in `GetStatus()` checks `dc.cmd.ProcessState == nil` on Windows (`syscall.Signal(0)` is unsupported on Windows).
 5. **Cross-Platform Isolation**:
    - All Windows-specific logic is strictly isolated to `*_windows.go` or guarded by `if runtime.GOOS == "windows"`. Native macOS and Linux behaviors are preserved untouched.
-6. **Frictionless Batch & PowerShell Launchers**:
-   - `start.bat`, `stop.bat`, `restart.bat` allow double-click launching or CMD execution without encountering PowerShell execution policy restrictions.
-   - `start-node.ps1`, `stop-node.ps1`, `restart-node.ps1` provide full PowerShell scripting support.
-   - `run.bat` provides end-to-end dev build + run workflow.
+6. **Frictionless Batch & PowerShell Launchers (`scripts/windows/`)**:
+   - `scripts/windows/start.bat`, `stop.bat`, `restart.bat` allow double-click launching or CMD execution without encountering PowerShell execution policy restrictions (also staged at the root of release ZIP packages).
+   - `scripts/windows/start-node.ps1`, `stop-node.ps1`, `restart-node.ps1` provide full PowerShell scripting support.
+   - `scripts/windows/run.bat` provides end-to-end dev build + run workflow.
+   - `scripts/windows/package-windows.ps1` compiles and packages the complete Windows distribution.
 
 ---
 
@@ -133,8 +134,8 @@ Copy and paste the following prompt into your AI agent or assistant on the Windo
 Please read WINDOWS_HANDOVER.md and GEMINI.md in the repository root. Follow the Windows Verification Checklist in WINDOWS_HANDOVER.md step-by-step:
 1. Verify prerequisites (WSL2 status with Ubuntu-22.04, Go 1.22+, Node 18+ if rebuilding frontend).
 2. Run backend tests using `cd backend; go test ./pkg/...` to ensure all pure-Go tests pass on Windows.
-3. Build or launch the node manager using `run.bat` (or `start.bat` if testing pre-built package).
+3. Build or launch the node manager using `scripts\windows\run.bat` (or `scripts\windows\start.bat` if testing pre-built package).
 4. Verify the web cockpit loads on http://localhost:8080 and verify WSL2 state detection / onboarding modal.
-5. Verify mandatory harvest key enforcement, stop-node (stop.bat), and restart-node (restart.bat) operations.
+5. Verify mandatory harvest key enforcement, stop-node (`scripts\windows\stop.bat`), and restart-node (`scripts\windows\restart.bat`) operations.
 6. Report findings and any Windows-specific edge cases encountered.
 ```

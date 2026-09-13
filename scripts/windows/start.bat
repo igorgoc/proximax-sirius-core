@@ -2,12 +2,20 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+REM 0. Detect project/package root directory
+set "ROOT_DIR=%~dp0"
+if exist "%~dp0..\..\chainconfig\resources" (
+    pushd "%~dp0..\.."
+    set "ROOT_DIR=!CD!"
+    popd
+)
+
 REM 1. Launch native Windows supervisor via PowerShell launcher
 set "PS_SCRIPT="
 if exist "%~dp0start-node.ps1" (
     set "PS_SCRIPT=%~dp0start-node.ps1"
-) else if exist "%~dp0scripts\packaging\windows\start-node.ps1" (
-    set "PS_SCRIPT=%~dp0scripts\packaging\windows\start-node.ps1"
+) else if exist "!ROOT_DIR!\scripts\windows\start-node.ps1" (
+    set "PS_SCRIPT=!ROOT_DIR!\scripts\windows\start-node.ps1"
 )
 
 if defined PS_SCRIPT (
@@ -24,14 +32,14 @@ if defined PS_SCRIPT (
 )
 
 REM 2. Fallback: Launch native Windows binary sirius-core.exe directly
-if exist "%~dp0sirius-core.exe" (
+if exist "!ROOT_DIR!\sirius-core.exe" (
     echo Starting Sirius Core Native on Windows...
-    start "" "%~dp0sirius-core.exe" -port 8080 -chainconfig "%~dp0chainconfig"
+    start "" "!ROOT_DIR!\sirius-core.exe" -port 8080 -chainconfig "!ROOT_DIR!\chainconfig"
     echo Dashboard: http://localhost:8080
     exit /b 0
-) else if exist "%~dp0bin\sirius-core.exe" (
+) else if exist "!ROOT_DIR!\bin\sirius-core.exe" (
     echo Starting Sirius Core Native on Windows...
-    start "" "%~dp0bin\sirius-core.exe" -port 8080 -chainconfig "%~dp0chainconfig"
+    start "" "!ROOT_DIR!\bin\sirius-core.exe" -port 8080 -chainconfig "!ROOT_DIR!\chainconfig"
     echo Dashboard: http://localhost:8080
     exit /b 0
 )

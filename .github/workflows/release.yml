@@ -54,12 +54,12 @@ jobs:
             # MUST use ubuntu-22.04 (Jammy, GLIBC 2.35), not ubuntu-latest, for backward and forward binary compatibility
             os: ubuntu-22.04
             goarch: amd64
-            script: ./scripts/packaging/package-linux.sh amd64
+            script: ./scripts/linux/package-linux.sh amd64
             dist_path: dist/linux-amd64/*
           - name: macos-arm64
             os: macos-latest
             goarch: arm64
-            script: ./scripts/packaging/package-macos.sh
+            script: ./scripts/macos/package-macos.sh
             dist_path: dist/macos-arm64/*
 
     steps:
@@ -110,7 +110,7 @@ jobs:
 
       - name: Run Windows Packaging Script
         shell: pwsh
-        run: .\scripts\packaging\package-windows.ps1
+        run: .\scripts\windows\package-windows.ps1
 
       - name: Upload Windows Package Artifacts
         uses: actions/upload-artifact@v4

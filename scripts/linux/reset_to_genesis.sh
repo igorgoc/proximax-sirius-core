@@ -1,7 +1,17 @@
 #!/bin/bash
 set -e
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$SCRIPT_DIR/chainconfig" ]; then
+    DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+elif [ -d "$SCRIPT_DIR/../../chainconfig" ]; then
+    DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
+else
+    DIR="$SCRIPT_DIR"
+fi
+
 CONFIG_USER="$DIR/chainconfig/resources/config-user.properties"
 CONFIGURED_DATA_DIR=$(grep -E '^[[:space:]]*dataDirectory[[:space:]]*=' "$CONFIG_USER" 2>/dev/null | cut -d'=' -f2- | tr -d ' \r\t' || true)
 TARGET_DIR="${1:-${CONFIGURED_DATA_DIR:-$DIR/chainconfig/data}}"
