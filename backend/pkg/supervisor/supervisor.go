@@ -359,6 +359,13 @@ func (dc *ProcessSupervisor) StartNode(dataPath string) error {
 	if dc.isRunning {
 		return fmt.Errorf("node is already running")
 	}
+	if runtime.GOOS == "windows" && dc.isWSLEngineRunning() {
+		dc.isRunning = true
+		dc.userIntendedRunning = true
+		dc.lastError = ""
+		dc.broadcastLog("[Supervisor] Detected active Sirius Core engine already running in WSL2.")
+		return nil
+	}
 
 	dc.isStarting = true
 	dc.lastError = ""
@@ -1086,6 +1093,11 @@ func (dc *ProcessSupervisor) GetStatus() (ContainerStatus, error) {
 			}
 		}
 	}
+	if runtime.GOOS == "windows" && dc.isWSLEngineRunning() {
+		dc.isRunning = true
+		dc.lastError = ""
+		return StatusRunning, nil
+	}
 	if !dc.userIntendedRunning {
 		return StatusStopped, nil
 	}
@@ -1139,7 +1151,9 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 	}
 
 	runningPid := 0
-	if dc.cmd != nil && dc.cmd.Process != nil {
+	if runtime.GOOS == "windows" {
+		runningPid = dc.getWSLEnginePid()
+	} else if dc.cmd != nil && dc.cmd.Process != nil {
 		runningPid = dc.cmd.Process.Pid
 	} else if pOut, pErr := exec.Command("pgrep", "-f", "sirius.bc").Output(); pErr == nil {
 		lines := strings.Split(strings.TrimSpace(string(pOut)), "\n")
@@ -1153,6 +1167,15 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 		if !dc.startTime.IsZero() {
 			uptimeDuration := time.Since(dc.startTime).Round(time.Second)
 			metrics.Uptime = uptimeDuration.String()
+		} else if runtime.GOOS == "windows" {
+			status := dc.ProbeWSLStatus()
+			distro := status.DistroName
+			if distro == "" {
+				distro = "Ubuntu-22.04"
+			}
+			if upOut, upErr := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "ps", "-o", "etime=", "-p", strconv.Itoa(runningPid)).Output(); upErr == nil {
+				metrics.Uptime = strings.TrimSpace(cleanWSLOutput(upOut))
+			}
 		} else {
 			// Query process uptime from ps etime
 			if upOut, upErr := exec.Command("ps", "-o", "etime=", "-p", strconv.Itoa(runningPid)).Output(); upErr == nil {
@@ -1166,7 +1189,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 			if distro == "" {
 				distro = "Ubuntu-22.04"
 			}
-			if out, err := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "ps", "-o", "%cpu,rss", "-C", "sirius.bc").Output(); err == nil {
+			if out, err := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "ps", "-o", "%cpu,rss", "-p", strconv.Itoa(runningPid)).Output(); err == nil {
 				lines := strings.Split(strings.TrimSpace(cleanWSLOutput(out)), "\n")
 				if len(lines) >= 2 {
 					fields := strings.Fields(lines[1])
@@ -1178,7 +1201,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 					}
 				}
 			}
-			if thOut, thErr := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "sh", "-c", "ps -o nlwp -C sirius.bc 2>/dev/null | tail -n +2").Output(); thErr == nil {
+			if thOut, thErr := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "sh", "-c", fmt.Sprintf("ps -o nlwp -p %d 2>/dev/null | tail -n +2", runningPid)).Output(); thErr == nil {
 				if count, err := strconv.Atoi(strings.TrimSpace(cleanWSLOutput(thOut))); err == nil && count > 0 {
 					metrics.ThreadsCount = count
 				}

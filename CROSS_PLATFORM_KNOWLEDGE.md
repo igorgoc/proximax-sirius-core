@@ -113,3 +113,26 @@ When working in parallel across Windows, Linux, and macOS environments:
 1. **Rule File Synchronization**: Keep `GEMINI.md` checked into the repository root so every agent session automatically inherits the architectural invariants and storage rules.
 2. **Knowledge Base Updates**: When a platform-specific trap (such as Windows CLI localization or macOS Docker volume binding) is discovered and fixed, document it here in `CROSS_PLATFORM_KNOWLEDGE.md` and commit to Git.
 3. **Fail-Closed Verification**: Ensure all cross-platform paths are tested with automated Go tests (`go test ./pkg/...`) before committing.
+
+---
+
+## 8. Multi-Architecture Binary Contamination & Shell Syntax Error Trap
+
+### The Trap: "Syntax error: `|` unexpected (expecting `)`)"
+When an executable binary fails with shell errors like:
+```
+/bin/sirius.bc: 1: Syntax error: "|" unexpected (expecting ")")
+catapult.recovery: 2: Syntax error: ")" unexpected
+```
+This is **never** a script syntax error. It occurs because:
+1. The file is NOT a valid ELF binary for the host/guest architecture (e.g. it is a macOS Mach-O 64-bit arm64 binary checked out on a Linux/WSL x86_64 host).
+2. The Linux kernel's `execve()` fails with `ENOEXEC` (*Exec format error*).
+3. POSIX shells (`/bin/sh`) fallback to interpreting the file as an un-shebanged shell script.
+4. The shell interprets the binary machine code bytes (`0xCF, 0xFA, 0xED, 0xFE` or load commands) as ASCII text, encountering characters like `|` or `)` and failing with a syntax error.
+
+### Prevention & Auto-Healing Rules:
+1. **Canonical Git Binaries**: The tracked engine binaries in `bin/` (`sirius.bc`, `catapult.recovery`, `stream-chunk-restore`) must strictly remain Linux ELF x86_64 binaries.
+2. **Never Commit Architecture-Swapped Binaries**: Agents on macOS downloading Darwin arm64 binaries must NOT commit them back to Git.
+3. **Automated Supervisor Self-Healing**:
+   - Both `start.sh` (on Linux) and `executeWSL()` in `backend/pkg/supervisor/wsl_windows.go` (on Windows) check the 4-byte magic number `\x7fELF` before invoking engine binaries.
+   - If an architecture mismatch (Mach-O, PE, or corrupted) is detected, the supervisor automatically downloads and extracts the official `sirius-linux-amd64.tar.gz` release archive without manual intervention.

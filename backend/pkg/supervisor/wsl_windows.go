@@ -7,9 +7,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -88,6 +90,45 @@ func extractExitHex(err error) string {
 		return fmt.Sprintf("0x%08x", uint32(exitErr.ExitCode()))
 	}
 	return ""
+}
+
+func isLinuxELF(filePath string) bool {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var header [4]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil {
+		return false
+	}
+	return header[0] == 0x7F && header[1] == 'E' && header[2] == 'L' && header[3] == 'F'
+}
+
+func (dc *ProcessSupervisor) getWSLEnginePid() int {
+	status := dc.ProbeWSLStatus()
+	if status.State != WSL2Ready {
+		return 0
+	}
+	distro := status.DistroName
+	if distro == "" {
+		distro = "Ubuntu-22.04"
+	}
+	out, err := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "pgrep", "-f", "sirius.bc").Output()
+	if err != nil {
+		return 0
+	}
+	lines := strings.Split(strings.TrimSpace(cleanWSLOutput(out)), "\n")
+	if len(lines) > 0 && lines[0] != "" {
+		pid, _ := strconv.Atoi(strings.TrimSpace(lines[0]))
+		return pid
+	}
+	return 0
+}
+
+func (dc *ProcessSupervisor) isWSLEngineRunning() bool {
+	return dc.getWSLEnginePid() > 0
 }
 
 func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
@@ -372,6 +413,21 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
 		"sh", "-c", "dpkg -s libatomic1 >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq libatomic1 >/dev/null 2>&1)").Run()
 
+	// 2. Binary Architecture Self-Healing: Verify sirius.bc and catapult.recovery are valid Linux ELF binaries.
+	// If foreign binaries (e.g. macOS Mach-O) were checked out from Git, automatically restore official Linux x86_64 binaries.
+	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
+	if !isLinuxELF(siriusBin) || !isLinuxELF(recoveryBin) {
+		dc.broadcastLog("<warning> [Supervisor] Catapult engine binary is not a Linux ELF executable (architecture mismatch). Auto-healing precompiled Linux x86_64 binaries...")
+		wslRootDir := ToWSLPath(filepath.Dir(dc.binPath))
+		healCmd := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+			"sh", "-c", fmt.Sprintf("mkdir -p '%s/bin' && curl -f -sSL https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz | tar -xz -C '%s'", wslRootDir, wslRootDir))
+		if healOut, err := healCmd.CombinedOutput(); err != nil {
+			dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Failed to auto-heal Linux engine binaries: %v (%s)", err, strings.TrimSpace(cleanWSLOutput(healOut))))
+		} else {
+			dc.broadcastLog("[Supervisor] Successfully restored Linux ELF x86_64 Catapult engine.")
+		}
+	}
+
 	wslBinDir := ToWSLPath(dc.binPath)
 	wslSiriusBin := ToWSLPath(siriusBin)
 	wslChainConfig := ToWSLPath(chainConfigPath)
@@ -385,8 +441,7 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 			"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
 	}
 
-	// 2. Pre-flight recovery execution inside WSL - only run if existing chain data has synced beyond nemesis (height > 1)
-	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
+	// 3. Pre-flight recovery execution inside WSL - only run if existing chain data has synced beyond nemesis (height > 1)
 	shouldRunRecovery := false
 	if indexPath := filepath.Join(localDataDir, "index.dat"); isPathExists(indexPath) {
 		if data, err := os.ReadFile(indexPath); err == nil && len(data) >= 8 {
@@ -583,7 +638,7 @@ func (dc *ProcessSupervisor) runCatapultRecovery(localDataDir string) {
 	}
 
 	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
-	if !isPathExists(recoveryBin) {
+	if !isPathExists(recoveryBin) || !isLinuxELF(recoveryBin) {
 		return
 	}
 

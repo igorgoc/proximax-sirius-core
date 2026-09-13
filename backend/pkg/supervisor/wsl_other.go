@@ -36,6 +36,14 @@ func (dc *ProcessSupervisor) stopWSL() error {
 	return nil
 }
 
+func (dc *ProcessSupervisor) getWSLEnginePid() int {
+	return 0
+}
+
+func (dc *ProcessSupervisor) isWSLEngineRunning() bool {
+	return false
+}
+
 func (dc *ProcessSupervisor) SetupPortProxy() error {
 	return nil
 }
