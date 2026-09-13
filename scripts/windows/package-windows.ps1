@@ -60,12 +60,22 @@ Set-Location (Join-Path $RootDir "backend")
 $BackendOut = Join-Path $BuildDir "sirius-core.exe"
 go build -ldflags="-s -w" -o $BackendOut .
 
+# Also stage into bin\windows in release package
+$BuildWinBin = Join-Path $BuildDir "bin\windows"
+New-Item -ItemType Directory -Path $BuildWinBin -Force | Out-Null
+Copy-Item $BackendOut (Join-Path $BuildWinBin "sirius-core.exe")
+
 # Also build Linux binary for WSL execution
 Write-Host "-> Compiling Go backend for Linux (WSL engine)..." -ForegroundColor Green
 $env:GOOS = "linux"
 $env:GOARCH = "amd64"
 $LinuxBackendOut = Join-Path $BuildDir "sirius-core"
 go build -ldflags="-s -w" -o $LinuxBackendOut .
+
+$BuildLinuxBin = Join-Path $BuildDir "bin\linux"
+New-Item -ItemType Directory -Path $BuildLinuxBin -Force | Out-Null
+Copy-Item $LinuxBackendOut (Join-Path $BuildLinuxBin "sirius-core")
+
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
 Set-Location $RootDir

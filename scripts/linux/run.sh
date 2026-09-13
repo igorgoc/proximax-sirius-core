@@ -71,7 +71,8 @@ fi
 
 echo "Building React UI and native Go backend..."
 (cd "$DIR/frontend" && npm run build)
-(cd "$DIR/backend" && go build -o sirius-core .)
+mkdir -p "$DIR/bin/linux"
+(cd "$DIR/backend" && go build -ldflags="-s -w" -o "$DIR/bin/linux/sirius-core" .)
 
 # 4. Stop any existing background instance
 if [ -f "$DIR/.sirius-core.pid" ]; then
@@ -96,7 +97,7 @@ fi
 
 # 5. Start native manager in background
 echo "Starting Sirius Core Native Manager on port $PORT..."
-DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/backend/sirius-core" -port "$PORT" -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
+DYLD_LIBRARY_PATH="$DIR/bin" LD_LIBRARY_PATH="$DIR/bin" "$DIR/bin/linux/sirius-core" -port "$PORT" -chainconfig "$DIR/chainconfig" > "$DIR/chainconfig/logs/manager.log" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$DIR/.sirius-core.pid"
 

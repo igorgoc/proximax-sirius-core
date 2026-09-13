@@ -41,6 +41,7 @@ chainconfig/resources/config-storage.properties
 chainconfig/resources/config-manager.properties
 
 # Compiled Go manager binaries & PID
+bin/**/sirius-core*
 bin/sirius-core*
 bin/sirius-node-manager
 bin/sign-release

@@ -64,9 +64,10 @@ if not exist "!ROOT_DIR!\backend\dist\index.html" (
 )
 
 REM 3. Compile Go backend for Windows
-echo -^> Compiling native Go backend (sirius-core.exe)...
+echo -^> Compiling native Go backend (bin\windows\sirius-core.exe)...
 cd /d "!ROOT_DIR!\backend"
-go build -ldflags="-s -w" -o "!ROOT_DIR!\sirius-core.exe" .
+if not exist "!ROOT_DIR!\bin\windows" mkdir "!ROOT_DIR!\bin\windows"
+go build -ldflags="-s -w" -o "!ROOT_DIR!\bin\windows\sirius-core.exe" .
 if %ERRORLEVEL% NEQ 0 (
     echo Failed to build sirius-core.exe!
     pause

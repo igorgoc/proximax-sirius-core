@@ -33,7 +33,13 @@ fi
 
 # 2. Compile Go Backend
 echo "-> Compiling Go backend for macOS (${ARCH})..."
-(cd backend && go build -ldflags="-s -w" -o "$BUILD_DIR/sirius-core" .)
+mkdir -p "$BUILD_DIR/bin/macos"
+if [ "$(uname)" = "Darwin" ]; then
+    (cd backend && go build -ldflags="-s -w" -o "$BUILD_DIR/sirius-core" .)
+else
+    (cd backend && GOOS=darwin GOARCH="$ARCH" go build -ldflags="-s -w" -o "$BUILD_DIR/sirius-core" .)
+fi
+cp "$BUILD_DIR/sirius-core" "$BUILD_DIR/bin/macos/sirius-core"
 
 # 3. Stage directories & clean configurations
 echo "-> Staging configuration templates and runtime structure..."

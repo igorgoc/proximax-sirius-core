@@ -30,16 +30,20 @@ fi
 
 # 2. Compile Go Backend for Linux
 echo "-> Compiling/staging Go backend for Linux (${ARCH})..."
+mkdir -p "$BUILD_DIR/opt/proximax-sirius-core/bin/linux"
 if [ "$(uname)" = "Linux" ]; then
     (cd backend && go build -ldflags="-s -w" -o "$BUILD_DIR/opt/proximax-sirius-core/sirius-core" .)
+elif [ -f "bin/linux/sirius-core" ]; then
+    cp "bin/linux/sirius-core" "$BUILD_DIR/opt/proximax-sirius-core/sirius-core"
 elif [ -f "backend/sirius-core-linux-${ARCH}" ]; then
     cp "backend/sirius-core-linux-${ARCH}" "$BUILD_DIR/opt/proximax-sirius-core/sirius-core"
 elif [ -f "backend/sirius-core" ] && file "backend/sirius-core" | grep -qi "ELF"; then
     cp "backend/sirius-core" "$BUILD_DIR/opt/proximax-sirius-core/sirius-core"
 else
-    echo "ℹ Non-Linux host detected without Linux CGO toolchain; creating staging placeholder binary."
-    touch "$BUILD_DIR/opt/proximax-sirius-core/sirius-core"
+    echo "ℹ Non-Linux host detected; cross-compiling pure Go backend for Linux..."
+    (cd backend && GOOS=linux GOARCH="$ARCH" go build -ldflags="-s -w" -o "$BUILD_DIR/opt/proximax-sirius-core/sirius-core" .)
 fi
+cp "$BUILD_DIR/opt/proximax-sirius-core/sirius-core" "$BUILD_DIR/opt/proximax-sirius-core/bin/linux/sirius-core"
 
 # 3. Stage directories & clean configurations
 echo "-> Staging configuration templates and runtime structure..."

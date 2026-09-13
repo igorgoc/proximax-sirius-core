@@ -53,18 +53,19 @@ fi
 
 # 4. Resolve or build the sirius-core binary
 SIRIUS_CORE_BIN=""
-if [ -f "$DIR/sirius-core" ]; then
+if [ -f "$DIR/bin/linux/sirius-core" ]; then
+    SIRIUS_CORE_BIN="$DIR/bin/linux/sirius-core"
+elif [ -f "$DIR/bin/sirius-core" ]; then
+    SIRIUS_CORE_BIN="$DIR/bin/sirius-core"
+elif [ -f "$DIR/sirius-core" ]; then
     SIRIUS_CORE_BIN="$DIR/sirius-core"
 elif [ -f "$DIR/backend/sirius-core" ]; then
     SIRIUS_CORE_BIN="$DIR/backend/sirius-core"
-    cp -p "$DIR/backend/sirius-core" "$DIR/sirius-core" 2>/dev/null || true
-elif [ -f "$DIR/bin/sirius-core" ]; then
-    SIRIUS_CORE_BIN="$DIR/bin/sirius-core"
 elif [ -d "$DIR/backend" ] && command -v go >/dev/null 2>&1; then
     echo "-> Compiling native Go manager binary..."
-    (cd "$DIR/backend" && go build -o sirius-core .)
-    SIRIUS_CORE_BIN="$DIR/backend/sirius-core"
-    cp -p "$DIR/backend/sirius-core" "$DIR/sirius-core" 2>/dev/null || true
+    mkdir -p "$DIR/bin/linux"
+    (cd "$DIR/backend" && go build -ldflags="-s -w" -o "$DIR/bin/linux/sirius-core" .)
+    SIRIUS_CORE_BIN="$DIR/bin/linux/sirius-core"
 fi
 
 if [ -z "$SIRIUS_CORE_BIN" ] || [ ! -f "$SIRIUS_CORE_BIN" ]; then

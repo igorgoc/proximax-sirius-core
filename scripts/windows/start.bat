@@ -32,14 +32,19 @@ if defined PS_SCRIPT (
 )
 
 REM 2. Fallback: Launch native Windows binary sirius-core.exe directly
-if exist "!ROOT_DIR!\sirius-core.exe" (
+if exist "!ROOT_DIR!\bin\windows\sirius-core.exe" (
     echo Starting Sirius Core Native on Windows...
-    start "" "!ROOT_DIR!\sirius-core.exe" -port 8080 -chainconfig "!ROOT_DIR!\chainconfig"
+    start "" "!ROOT_DIR!\bin\windows\sirius-core.exe" -port 8080 -chainconfig "!ROOT_DIR!\chainconfig"
     echo Dashboard: http://localhost:8080
     exit /b 0
 ) else if exist "!ROOT_DIR!\bin\sirius-core.exe" (
     echo Starting Sirius Core Native on Windows...
     start "" "!ROOT_DIR!\bin\sirius-core.exe" -port 8080 -chainconfig "!ROOT_DIR!\chainconfig"
+    echo Dashboard: http://localhost:8080
+    exit /b 0
+) else if exist "!ROOT_DIR!\sirius-core.exe" (
+    echo Starting Sirius Core Native on Windows...
+    start "" "!ROOT_DIR!\sirius-core.exe" -port 8080 -chainconfig "!ROOT_DIR!\chainconfig"
     echo Dashboard: http://localhost:8080
     exit /b 0
 )

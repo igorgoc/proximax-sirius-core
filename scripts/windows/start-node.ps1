@@ -151,14 +151,21 @@ if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
 }
 
 # 8. Launch Node Manager
-$BackendExe = Join-Path $RootDir "sirius-core.exe"
-if (Test-Path (Join-Path $RootDir "bin\sirius-core.exe")) {
-    $BackendExe = Join-Path $RootDir "bin\sirius-core.exe"
-} elseif (Test-Path (Join-Path $RootDir "backend\sirius-core.exe")) {
-    $BackendExe = Join-Path $RootDir "backend\sirius-core.exe"
+$CandidateExes = @(
+    (Join-Path $RootDir "bin\windows\sirius-core.exe"),
+    (Join-Path $RootDir "bin\sirius-core.exe"),
+    (Join-Path $RootDir "backend\sirius-core.exe"),
+    (Join-Path $RootDir "sirius-core.exe")
+)
+$BackendExe = $null
+foreach ($cand in $CandidateExes) {
+    if (Test-Path $cand) {
+        $BackendExe = $cand
+        break
+    }
 }
-if (-not (Test-Path $BackendExe)) {
-    Write-Error "Binary not found: $BackendExe. Please run build or download the Windows release package."
+if (-not $BackendExe) {
+    Write-Error "Binary sirius-core.exe not found. Looked in bin\windows\sirius-core.exe and bin\sirius-core.exe. Please run scripts\windows\run.bat to build."
     exit 1
 }
 Unblock-File $BackendExe -ErrorAction SilentlyContinue

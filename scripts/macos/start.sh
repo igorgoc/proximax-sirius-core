@@ -44,23 +44,24 @@ fi
 
 # 4. Resolve or build the sirius-core binary
 SIRIUS_CORE_BIN=""
-if [ -f "$DIR/sirius-core" ]; then
+if [ -f "$DIR/bin/macos/sirius-core" ]; then
+    SIRIUS_CORE_BIN="$DIR/bin/macos/sirius-core"
+elif [ -f "$DIR/bin/sirius-core" ]; then
+    SIRIUS_CORE_BIN="$DIR/bin/sirius-core"
+elif [ -f "$DIR/sirius-core" ]; then
     SIRIUS_CORE_BIN="$DIR/sirius-core"
 elif [ -f "$DIR/backend/sirius-core" ]; then
     SIRIUS_CORE_BIN="$DIR/backend/sirius-core"
-    cp -p "$DIR/backend/sirius-core" "$DIR/sirius-core" 2>/dev/null || true
-elif [ -f "$DIR/bin/sirius-core" ]; then
-    SIRIUS_CORE_BIN="$DIR/bin/sirius-core"
 elif [ -d "$DIR/backend" ] && command -v go >/dev/null 2>&1; then
-    echo "-> Compiling native Go manager binary..."
-    (cd "$DIR/backend" && go build -o sirius-core .)
-    SIRIUS_CORE_BIN="$DIR/backend/sirius-core"
-    cp -p "$DIR/backend/sirius-core" "$DIR/sirius-core" 2>/dev/null || true
+    echo "-> Compiling native Go manager binary for macOS..."
+    mkdir -p "$DIR/bin/macos"
+    (cd "$DIR/backend" && go build -ldflags="-s -w" -o "$DIR/bin/macos/sirius-core" .)
+    SIRIUS_CORE_BIN="$DIR/bin/macos/sirius-core"
 fi
 
 if [ -z "$SIRIUS_CORE_BIN" ] || [ ! -f "$SIRIUS_CORE_BIN" ]; then
     echo "ERROR: sirius-core binary not found!" >&2
-    echo "Please build with './scripts/linux/run.sh' or download a release package." >&2
+    echo "Please build with './scripts/macos/start.sh' or download a release package." >&2
     exit 1
 fi
 
