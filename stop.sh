@@ -61,30 +61,77 @@ if [ "$STOPPED" = false ]; then
         fi
     fi
 
-    # 2b. Gracefully signal the C++ Catapult engine (sirius.bc)
+    # 2b. Gracefully signal the C++ Catapult engine (sirius.bc) with forward-progress tracking
     if pgrep -f "sirius.bc" >/dev/null 2>&1; then
         echo "-> Gracefully terminating sirius.bc engine (SIGINT)..."
         pkill -INT -f "sirius.bc" 2>/dev/null || true
 
-        # Give RocksDB multi-gigabyte state cache and block disruptor up to 60 seconds to flush
-        echo -n "-> Waiting for RocksDB state cache to flush to disk"
+        LOGS_DIR="$DIR/chainconfig/logs"
+        INDEX_FILE="$DIR/chainconfig/data/index.dat"
+
+        LAST_ACTIVE_LOG=""
+        LAST_LOG_SIZE=0
+        LAST_INDEX_MTIME=""
+        IDLE_SECS=0
+        ELAPSED=0
         ENGINE_STOPPED=false
-        for i in {1..60}; do
+
+        echo -n "-> Gracefully committing in-flight blocks & flushing RocksDB"
+
+        while true; do
             if ! pgrep -f "sirius.bc" >/dev/null 2>&1; then
                 ENGINE_STOPPED=true
                 echo ""
-                echo "✓ sirius.bc engine finished clean shutdown (${i}s elapsed)."
+                echo "✓ sirius.bc engine finished clean shutdown (${ELAPSED}s elapsed)."
                 break
             fi
+
+            # Multi-Signal Forward Progress Check:
+            # Signal 1: Active server_*.log file growth or log rotation
+            PROGRESS=false
+            CUR_LOG=$(ls -t "$LOGS_DIR"/server_*.log 2>/dev/null | head -n 1 || true)
+            if [ -n "$CUR_LOG" ] && [ -f "$CUR_LOG" ]; then
+                CUR_SIZE=$(wc -c < "$CUR_LOG" 2>/dev/null | tr -d ' ' || echo 0)
+                if [ "$CUR_LOG" != "$LAST_ACTIVE_LOG" ]; then
+                    PROGRESS=true
+                    LAST_ACTIVE_LOG="$CUR_LOG"
+                    LAST_LOG_SIZE=$CUR_SIZE
+                elif [ "$CUR_SIZE" -gt "$LAST_LOG_SIZE" ]; then
+                    PROGRESS=true
+                    LAST_LOG_SIZE=$CUR_SIZE
+                fi
+            fi
+
+            # Signal 2: Storage height / index.dat modification
+            if [ -f "$INDEX_FILE" ]; then
+                CUR_INDEX_MTIME=$(stat -f "%m" "$INDEX_FILE" 2>/dev/null || stat -c "%Y" "$INDEX_FILE" 2>/dev/null || true)
+                if [ -n "$CUR_INDEX_MTIME" ] && [ "$CUR_INDEX_MTIME" != "$LAST_INDEX_MTIME" ]; then
+                    if [ -n "$LAST_INDEX_MTIME" ]; then
+                        PROGRESS=true
+                    fi
+                    LAST_INDEX_MTIME="$CUR_INDEX_MTIME"
+                fi
+            fi
+
+            if [ "$PROGRESS" = true ]; then
+                IDLE_SECS=0
+            else
+                IDLE_SECS=$((IDLE_SECS + 1))
+            fi
+
+            # Strictly progress-based timeout: NEVER kill as long as forward progress continues.
+            # Only escalate if process made ZERO forward progress for 60 consecutive seconds (deadlock):
+            if [ "$IDLE_SECS" -ge 60 ]; then
+                echo ""
+                echo "<warning> sirius.bc made ZERO forward progress for 60 seconds (deadlock detected). Escalating with SIGKILL..."
+                pkill -KILL -f "sirius.bc" 2>/dev/null || true
+                break
+            fi
+
             echo -n "."
             sleep 1
+            ELAPSED=$((ELAPSED + 1))
         done
-
-        if [ "$ENGINE_STOPPED" = false ]; then
-            echo ""
-            echo "<warning> sirius.bc did not terminate within 60s (possible freeze). Escalating with SIGKILL..."
-            pkill -KILL -f "sirius.bc" 2>/dev/null || true
-        fi
     fi
 
     # 2c. Clean up any remaining manager daemon processes

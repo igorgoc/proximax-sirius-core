@@ -830,20 +830,100 @@ func (dc *ProcessSupervisor) StopNode() error {
 		if cmd != nil && cmd.Process != nil {
 			_ = cmd.Process.Signal(syscall.SIGINT)
 		}
-	}
 
-	// 2. Wait up to 180s for process completion via exitChan (coordinated by the cmd.Wait goroutine)
-	if exitChan != nil {
-		select {
-		case <-exitChan:
-			dc.broadcastLog("[Supervisor] Sirius Core process terminated cleanly.")
-		case <-time.After(180 * time.Second):
-			dc.broadcastLog("<warning> [Supervisor] Process did not terminate within 180s grace period. Forcing shutdown...")
-			if cmd != nil && cmd.Process != nil {
-				_ = cmd.Process.Kill()
+		// 2. Wait for process completion via exitChan with multi-signal forward-progress monitoring
+		if exitChan != nil {
+			startTime := time.Now()
+			lastProgressTime := time.Now()
+			lastLogBroadcast := time.Now()
+
+			var lastActiveLogName string
+			var lastActiveLogSize int64 = -1
+			var lastTotalLogsSize int64 = -1
+			var lastStorageHeight uint64 = 0
+
+			logsDir := filepath.Join(filepath.Dir(dc.chainConfigPath), "chainconfig", "logs")
+			if !isPathExists(logsDir) {
+				logsDir = filepath.Join(dc.chainConfigPath, "logs")
 			}
-			if dc.cmdCancel != nil {
-				dc.cmdCancel()
+
+			indexPath := filepath.Join(filepath.Dir(dc.chainConfigPath), "chainconfig", "data", "index.dat")
+			if !isPathExists(indexPath) {
+				indexPath = filepath.Join(dc.chainConfigPath, "data", "index.dat")
+			}
+
+			exited := false
+			for !exited {
+				select {
+				case <-exitChan:
+					exited = true
+					dc.broadcastLog("[Supervisor] Sirius Core process terminated cleanly.")
+					break
+				default:
+				}
+
+				if exited {
+					break
+				}
+
+				// Multi-Signal Forward Progress Check:
+				// Signal 1: Log file size growth or log file rotation (e.g. server_0000.log -> server_0001.log)
+				activeLog, activeSize, totalSize := getEngineLogProgress(logsDir)
+				if activeLog != "" {
+					if lastActiveLogName == "" {
+						lastActiveLogName = activeLog
+						lastActiveLogSize = activeSize
+						lastTotalLogsSize = totalSize
+					} else if activeLog != lastActiveLogName {
+						dc.broadcastLog(fmt.Sprintf("[Supervisor] Log rotation detected: %s -> %s (engine active)", lastActiveLogName, activeLog))
+						lastProgressTime = time.Now()
+						lastActiveLogName = activeLog
+						lastActiveLogSize = activeSize
+						lastTotalLogsSize = totalSize
+					} else if activeSize > lastActiveLogSize || totalSize > lastTotalLogsSize {
+						lastProgressTime = time.Now()
+						lastActiveLogSize = activeSize
+						lastTotalLogsSize = totalSize
+					}
+				}
+
+				// Signal 2: Storage height progress in index.dat
+				if idxBytes, iErr := os.ReadFile(indexPath); iErr == nil && len(idxBytes) >= 8 {
+					curHeight := binary.LittleEndian.Uint64(idxBytes[:8])
+					if curHeight > lastStorageHeight {
+						if lastStorageHeight > 0 {
+							lastProgressTime = time.Now()
+						}
+						lastStorageHeight = curHeight
+					}
+				}
+
+				elapsed := int(time.Since(startTime).Seconds())
+				timeSinceProgress := time.Since(lastProgressTime)
+
+				if time.Since(lastLogBroadcast) >= 5*time.Second {
+					lastLogBroadcast = time.Now()
+					if timeSinceProgress < 10*time.Second {
+						dc.broadcastLog(fmt.Sprintf("[Supervisor] Gracefully committing in-flight blocks & flushing RocksDB statedb to disk (%ds elapsed, active log: %s)...", elapsed, activeLog))
+					} else {
+						dc.broadcastLog(fmt.Sprintf("[Supervisor] Waiting for disk synchronization and RocksDB compaction to finish (%ds elapsed, idle: %ds)...", elapsed, int(timeSinceProgress.Seconds())))
+					}
+				}
+
+				// Strictly progress-based timeout: NEVER interrupt or kill as long as forward progress continues.
+				// Only escalate if process made ZERO forward progress for 60 consecutive seconds (deadlock):
+				if timeSinceProgress > 60*time.Second {
+					dc.broadcastLog("<error> [Supervisor] Process made ZERO forward progress for 60 seconds (deadlock detected). Escalating with SIGKILL...")
+					if cmd != nil && cmd.Process != nil {
+						_ = cmd.Process.Kill()
+					}
+					if dc.cmdCancel != nil {
+						dc.cmdCancel()
+					}
+					break
+				}
+
+				time.Sleep(500 * time.Millisecond)
 			}
 		}
 	}
