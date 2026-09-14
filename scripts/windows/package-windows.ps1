@@ -91,10 +91,92 @@ New-Item -ItemType Directory -Path $TargetResources -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetData -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetLogs -Force | Out-Null
 New-Item -ItemType Directory -Path $TargetBin -Force | Out-Null
-if (Test-Path (Join-Path $RootDir "bin")) {
-    Get-ChildItem -Path (Join-Path $RootDir "bin\*") -Exclude "*.so*" | Copy-Item -Destination $TargetBin -Force -ErrorAction SilentlyContinue
-    if (Test-Path (Join-Path $RootDir "bin\libatomic.so.1")) {
-        Copy-Item (Join-Path $RootDir "bin\libatomic.so.1") (Join-Path $TargetBin "libatomic.so.1") -Force -ErrorAction SilentlyContinue
+$SourceBin = Join-Path $RootDir "bin"
+$RocksDbLib = Join-Path $SourceBin "librocksdb.so.8"
+$needsEngineFetch = $false
+if (-not (Test-Path $RocksDbLib)) {
+    $needsEngineFetch = $true
+} else {
+    $rockItem = Get-Item $RocksDbLib -ErrorAction SilentlyContinue
+    if ($rockItem -and $rockItem.Length -eq 0) {
+        $needsEngineFetch = $true
+    }
+}
+
+if ($needsEngineFetch) {
+    Write-Host "-> Fetching official Sirius Linux engine binaries & shared libraries for WSL..." -ForegroundColor Yellow
+    $TarUrl = "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v$Version/sirius-linux-amd64.tar.gz"
+    $TempTar = Join-Path $BuildDir "sirius-linux-amd64.tar.gz"
+    try {
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -f -sSL $TarUrl -o $TempTar
+        } else {
+            Invoke-WebRequest -Uri $TarUrl -OutFile $TempTar -UseBasicParsing
+        }
+        if (Test-Path $TempTar) {
+            if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
+                & tar.exe -xzf $TempTar -C $RootDir
+            }
+            Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Warning "Could not pre-fetch Linux engine archive: $_"
+    }
+}
+
+# Materialize shared library aliases (symlinks in Linux) as real files on NTFS so Windows packaging and extraction succeed
+$SymlinkAliases = @{
+    "librocksdb.so.8" = "librocksdb.so.8.5.3"
+    "librocksdb.so" = "librocksdb.so.8.5.3"
+    "libsnappy.so.1" = "libsnappy.so.1.1.8"
+    "libsnappy.so" = "libsnappy.so.1.1.8"
+    "libzstd.so.1" = "libzstd.so.1.4.8"
+    "libzstd.so" = "libzstd.so.1.4.8"
+    "libtorrent-sirius.so.2.0" = "libtorrent-sirius.so.2.0.4"
+    "libtorrent-sirius.so" = "libtorrent-sirius.so.2.0.4"
+    "libcrypto.so" = "libcrypto.so.3"
+    "libssl.so" = "libssl.so.3"
+}
+Get-ChildItem -Path $SourceBin -Filter "libboost_*.so.1.81.0" -ErrorAction SilentlyContinue | ForEach-Object {
+    $baseAlias = $_.Name -replace '\.1\.81\.0$', ''
+    $SymlinkAliases[$baseAlias] = $_.Name
+}
+
+foreach ($alias in $SymlinkAliases.Keys) {
+    $targetName = $SymlinkAliases[$alias]
+    $aliasPath = Join-Path $SourceBin $alias
+    $targetPath = Join-Path $SourceBin $targetName
+    if (Test-Path $targetPath) {
+        $needCopy = $false
+        if (-not (Test-Path $aliasPath)) {
+            $needCopy = $true
+        } else {
+            $item = Get-Item $aliasPath -ErrorAction SilentlyContinue
+            if ($item.Length -eq 0 -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                Remove-Item -Force $aliasPath -ErrorAction SilentlyContinue
+                $needCopy = $true
+            }
+        }
+        if ($needCopy) {
+            Copy-Item $targetPath $aliasPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+if (Test-Path $SourceBin) {
+    # Copy all real files (binaries, materialized .so libraries) into TargetBin, skipping directory trees like bin\linux or bin\macos
+    Get-ChildItem -Path $SourceBin -File | Where-Object {
+        $_.Length -gt 0 -and (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint))
+    } | Copy-Item -Destination $TargetBin -Force -ErrorAction SilentlyContinue
+
+    # Ensure all symlink aliases are also mirrored into TargetBin
+    foreach ($alias in $SymlinkAliases.Keys) {
+        $targetName = $SymlinkAliases[$alias]
+        $aliasInBin = Join-Path $TargetBin $alias
+        $targetInBin = Join-Path $TargetBin $targetName
+        if ((Test-Path $targetInBin) -and (-not (Test-Path $aliasInBin))) {
+            Copy-Item $targetInBin $aliasInBin -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 

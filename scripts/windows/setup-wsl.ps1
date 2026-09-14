@@ -286,24 +286,21 @@ function Ensure-DistroRuntimePackages {
     Log-Message " STEP: Configuring Sirius Engine Runtime Packages in $targetDistroName..." "Cyan"
     Log-Message "==========================================================================" "Cyan"
 
-    # Check if libatomic1 is already installed
-    Log-Message "-> Checking runtime dependency 'libatomic1' (required by Catapult FastFinality engine)..." "Cyan"
+    Log-Message "-> Updating Ubuntu package lists (apt-get update)..." "Yellow"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get update -qq") -Description "Updating package lists"
+
+    Log-Message "-> Upgrading Ubuntu system packages (apt-get upgrade)..." "Yellow"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq") -Description "Upgrading system packages"
+
+    Log-Message "-> Installing libatomic1 and essential tools (ca-certificates, curl, tar)..." "Yellow"
+    $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libatomic1 ca-certificates curl tar") -Description "Installing libatomic1 runtime"
+
+    # Verify libatomic1 is installed
     $checkAtomic = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "dpkg", "-s", "libatomic1") -NoNewWindow -Wait -PassThru
-
-    if ($checkAtomic.ExitCode -ne 0) {
-        Log-Message "-> Updating Ubuntu package lists (apt-get update)..." "Yellow"
-        Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "update", "-qq") -Description "Updating package lists"
-
-        Log-Message "-> Installing libatomic1 and essential tools (ca-certificates, curl, tar)..." "Yellow"
-        $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "install", "-y", "-qq", "libatomic1", "ca-certificates", "curl", "tar") -Description "Installing libatomic1 runtime"
-
-        if ($instCode -eq 0) {
-            Log-Message "-> [OK] Sirius runtime packages successfully installed in $targetDistroName!" "Green"
-        } else {
-            Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $instCode)." "Red"
-        }
+    if ($checkAtomic.ExitCode -eq 0) {
+        Log-Message "-> [OK] Sirius runtime packages successfully installed and verified in $targetDistroName!" "Green"
     } else {
-        Log-Message "-> [OK] Runtime dependency 'libatomic1' is already verified in $targetDistroName!" "Green"
+        Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $($checkAtomic.ExitCode))." "Red"
     }
 }
 

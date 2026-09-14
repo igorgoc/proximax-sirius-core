@@ -867,24 +867,21 @@ function Ensure-DistroRuntimePackages {
     Log-Message " STEP: Configuring Sirius Engine Runtime Packages in $targetDistroName..." "Cyan"
     Log-Message "==========================================================================" "Cyan"
 
-    # Check if libatomic1 is already installed
-    Log-Message "-> Checking runtime dependency 'libatomic1' (required by Catapult FastFinality engine)..." "Cyan"
+    Log-Message "-> Updating Ubuntu package lists (apt-get update)..." "Yellow"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get update -qq") -Description "Updating package lists"
+
+    Log-Message "-> Upgrading Ubuntu system packages (apt-get upgrade)..." "Yellow"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq") -Description "Upgrading system packages"
+
+    Log-Message "-> Installing libatomic1 and essential tools (ca-certificates, curl, tar)..." "Yellow"
+    $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libatomic1 ca-certificates curl tar") -Description "Installing libatomic1 runtime"
+
+    # Verify libatomic1 is installed
     $checkAtomic = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "dpkg", "-s", "libatomic1") -NoNewWindow -Wait -PassThru
-
-    if ($checkAtomic.ExitCode -ne 0) {
-        Log-Message "-> Updating Ubuntu package lists (apt-get update)..." "Yellow"
-        Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "update", "-qq") -Description "Updating package lists"
-
-        Log-Message "-> Installing libatomic1 and essential tools (ca-certificates, curl, tar)..." "Yellow"
-        $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "install", "-y", "-qq", "libatomic1", "ca-certificates", "curl", "tar") -Description "Installing libatomic1 runtime"
-
-        if ($instCode -eq 0) {
-            Log-Message "-> [OK] Sirius runtime packages successfully installed in $targetDistroName!" "Green"
-        } else {
-            Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $instCode)." "Red"
-        }
+    if ($checkAtomic.ExitCode -eq 0) {
+        Log-Message "-> [OK] Sirius runtime packages successfully installed and verified in $targetDistroName!" "Green"
     } else {
-        Log-Message "-> [OK] Runtime dependency 'libatomic1' is already verified in $targetDistroName!" "Green"
+        Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $($checkAtomic.ExitCode))." "Red"
     }
 }
 
@@ -1036,18 +1033,50 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
 		"sh", "-c", "dpkg -s libatomic1 >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq libatomic1 >/dev/null 2>&1)").Run()
 
-	// 2. Binary Architecture Self-Healing: Verify sirius.bc and catapult.recovery are valid Linux ELF binaries.
-	// If foreign binaries (e.g. macOS Mach-O) were checked out from Git, automatically restore official Linux x86_64 binaries.
+	// 2. Binary Architecture & Dependency Self-Healing: Verify sirius.bc and catapult.recovery are valid Linux ELF binaries
+	// and verify essential Linux dynamic shared libraries (RocksDB, plugins) exist.
+	// If foreign binaries (e.g. macOS Mach-O) or missing .so libraries are detected, automatically restore official Linux x86_64 binaries.
 	recoveryBin := filepath.Join(dc.binPath, "catapult.recovery")
-	if !isLinuxELF(siriusBin) || !isLinuxELF(recoveryBin) {
-		dc.broadcastLog("<warning> [Supervisor] Catapult engine binary is not a Linux ELF executable (architecture mismatch). Auto-healing precompiled Linux x86_64 binaries...")
+	rocksDbLib := filepath.Join(dc.binPath, "librocksdb.so.8")
+	fastFinalityLib := filepath.Join(dc.binPath, "libextension.fastfinality.so")
+
+	engineVer := "v1.9.8"
+	if verBytes, err := os.ReadFile(filepath.Join(dc.binPath, "version.txt")); err == nil {
+		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
+			engineVer = trimmed
+		}
+	}
+	if !strings.HasPrefix(engineVer, "v") {
+		engineVer = "v" + engineVer
+	}
+
+	isValidSharedLib := func(p string) bool {
+		fi, err := os.Stat(p)
+		return err == nil && fi.Size() > 0
+	}
+
+	needsHealing := !isPathExists(siriusBin) || !isLinuxELF(siriusBin) ||
+		!isPathExists(recoveryBin) || !isLinuxELF(recoveryBin) ||
+		!isValidSharedLib(rocksDbLib) || !isValidSharedLib(fastFinalityLib)
+
+	if needsHealing {
+		dc.broadcastLog(fmt.Sprintf("<warning> [Supervisor] Sirius engine binaries or required shared libraries (RocksDB/plugins) are missing or invalid in %s. Auto-healing Linux x86_64 binaries (%s)...", dc.binPath, engineVer))
 		wslRootDir := ToWSLPath(filepath.Dir(dc.binPath))
 		healCmd := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
-			"sh", "-c", fmt.Sprintf("mkdir -p '%s/bin' && curl -f -sSL https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz | tar -xz -C '%s'", wslRootDir, wslRootDir))
+			"sh", "-c", fmt.Sprintf("mkdir -p '%s/bin' && curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/%s/sirius-linux-amd64.tar.gz' | tar -xz -C '%s' && (cp -f '%s/bin/librocksdb.so.8.5.3' '%s/bin/librocksdb.so.8' 2>/dev/null || true)", wslRootDir, engineVer, wslRootDir, wslRootDir, wslRootDir))
 		if healOut, err := healCmd.CombinedOutput(); err != nil {
-			dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Failed to auto-heal Linux engine binaries: %v (%s)", err, strings.TrimSpace(cleanWSLOutput(healOut))))
+			if engineVer != "v1.9.8" {
+				healCmd = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+					"sh", "-c", fmt.Sprintf("mkdir -p '%s/bin' && curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz' | tar -xz -C '%s' && (cp -f '%s/bin/librocksdb.so.8.5.3' '%s/bin/librocksdb.so.8' 2>/dev/null || true)", wslRootDir, wslRootDir, wslRootDir, wslRootDir))
+				healOut, err = healCmd.CombinedOutput()
+			}
+			if err != nil {
+				dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Failed to auto-heal Linux engine binaries: %v (%s)", err, strings.TrimSpace(cleanWSLOutput(healOut))))
+			} else {
+				dc.broadcastLog("[Supervisor] Successfully restored Linux ELF x86_64 Catapult engine and libraries.")
+			}
 		} else {
-			dc.broadcastLog("[Supervisor] Successfully restored Linux ELF x86_64 Catapult engine.")
+			dc.broadcastLog("[Supervisor] Successfully restored Linux ELF x86_64 Catapult engine and libraries.")
 		}
 	}
 
