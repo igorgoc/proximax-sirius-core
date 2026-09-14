@@ -48,9 +48,10 @@ mkdir -p "$BUILD_DIR/chainconfig/resources"
 mkdir -p "$BUILD_DIR/chainconfig/data/00000"
 mkdir -p "$BUILD_DIR/chainconfig/logs"
 
-# Copy engine & manager compatibility manifests
+# Copy engine, manager & snapshot compatibility manifests
 cp chainconfig/engine.compat.json "$BUILD_DIR/chainconfig/"
 [ -f "chainconfig/manager.compat.json" ] && cp chainconfig/manager.compat.json "$BUILD_DIR/chainconfig/"
+[ -f "chainconfig/snapshot.compat.json" ] && cp chainconfig/snapshot.compat.json "$BUILD_DIR/chainconfig/"
 
 # Copy resources while strictly scrubbing private keys and state
 cp -R chainconfig/resources/* "$BUILD_DIR/chainconfig/resources/"

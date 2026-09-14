@@ -180,10 +180,13 @@ if (Test-Path $SourceBin) {
     }
 }
 
-# Copy engine & manager compatibility manifests
+# Copy engine, manager & snapshot compatibility manifests
 Copy-Item (Join-Path $RootDir "chainconfig\engine.compat.json") (Join-Path $BuildDir "chainconfig\engine.compat.json")
 if (Test-Path (Join-Path $RootDir "chainconfig\manager.compat.json")) {
     Copy-Item (Join-Path $RootDir "chainconfig\manager.compat.json") (Join-Path $BuildDir "chainconfig\manager.compat.json")
+}
+if (Test-Path (Join-Path $RootDir "chainconfig\snapshot.compat.json")) {
+    Copy-Item (Join-Path $RootDir "chainconfig\snapshot.compat.json") (Join-Path $BuildDir "chainconfig\snapshot.compat.json")
 }
 
 # Copy resource files strictly without active private keys or sensitive state

@@ -113,16 +113,18 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	mig := migrator.New()
 
 	releasePubKey := "68b1a927c47850a5d4244305b2670960d9fe6f048e5a458d801959b606f3e917"
-	if snapManifestBytes, err := os.ReadFile("chainconfig/snapshot.compat.json"); err == nil {
-		var smManifest struct {
-			ReleasePublicKeyHex string `json:"releasePublicKeyHex"`
-		}
-		if json.Unmarshal(snapManifestBytes, &smManifest) == nil && smManifest.ReleasePublicKeyHex != "" {
-			releasePubKey = smManifest.ReleasePublicKeyHex
-		}
-	} else if eu != nil {
-		if m, err := eu.LoadManifest(); err == nil && m.ReleasePublicKeyHex != "" {
-			releasePubKey = m.ReleasePublicKeyHex
+	for _, snapPath := range []string{
+		filepath.Join(filepath.Dir(configMgr.GetResourcesPath()), "snapshot.compat.json"),
+		"chainconfig/snapshot.compat.json",
+	} {
+		if snapManifestBytes, err := os.ReadFile(snapPath); err == nil {
+			var smManifest struct {
+				ReleasePublicKeyHex string `json:"releasePublicKeyHex"`
+			}
+			if json.Unmarshal(snapManifestBytes, &smManifest) == nil && smManifest.ReleasePublicKeyHex != "" {
+				releasePubKey = smManifest.ReleasePublicKeyHex
+				break
+			}
 		}
 	}
 	snapMgr := snapshot.NewSnapshotManager(supervisor, releasePubKey, nil)

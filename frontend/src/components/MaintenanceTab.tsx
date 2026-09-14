@@ -460,6 +460,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             manifestUrl: url,
+            releasePublicKeyHex: prefs.releasePubKey || DEFAULT_SNAPSHOT_PREFS.releasePubKey,
             targetDataPath: remoteSyncTarget.trim(),
           }),
         });
@@ -834,6 +835,14 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
       ['fetching_manifest', 'verifying_signature', 'downloading', 'verifying_checksum', 'extracting'].includes(
         remoteManagerStatus.stage
       ));
+  const remoteSyncError =
+    (remoteManagerStatus?.stage === 'error' && remoteManagerStatus?.operation === 'restore_remote'
+      ? remoteManagerStatus.errorMessage
+      : null) ||
+    (remoteSnapshotStatus?.stage === 'error' ? remoteSnapshotStatus.message : null);
+  const isRemoteSyncCompleted =
+    (remoteManagerStatus?.stage === 'completed' && remoteManagerStatus?.operation === 'restore_remote') ||
+    remoteSnapshotStatus?.stage === 'complete';
   const isLocalRestoreRunning =
     remoteManagerStatus?.stage === 'extracting' && remoteManagerStatus?.operation === 'restore_local';
   const isConvertRunning = convertStatus?.status === 'running';
@@ -1230,12 +1239,17 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                       Remote Sync
                     </h3>
                   </div>
-                  {/* 3-State Status Badge */}
+                  {/* Status Badge */}
                   {isRemoteSyncRunning ? (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/40 text-amber-400 border border-amber-500/40 uppercase">
-                      Streaming
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/40 text-amber-400 border border-amber-500/40 uppercase flex items-center space-x-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      <span>{remoteManagerStatus?.stage === 'verifying_signature' ? 'Verifying' : remoteManagerStatus?.stage === 'extracting' ? 'Extracting' : 'Streaming'}</span>
                     </span>
-                  ) : remoteSnapshotStatus?.stage === 'complete' ? (
+                  ) : remoteSyncError ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950/40 text-rose-400 border border-rose-500/40 uppercase">
+                      Failed
+                    </span>
+                  ) : isRemoteSyncCompleted ? (
                     <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-500/40 uppercase">
                       Synced
                     </span>
@@ -1303,6 +1317,31 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                     </span>
                   </div>
 
+                  {/* Remote Sync Error Alert */}
+                  {remoteSyncError && !isRemoteSyncRunning && (
+                    <div className="p-2.5 bg-rose-950/30 border border-rose-500/40 rounded-lg text-xs text-rose-300 space-y-1 animate-in fade-in duration-150">
+                      <div className="flex items-center space-x-1.5 font-semibold text-rose-400">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>Remote Fast-Sync Failed</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed break-words font-mono text-rose-300">
+                        {remoteSyncError}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Snapshot Restoration Completed Banner */}
+                  {isRemoteSyncCompleted && !isRemoteSyncRunning && !remoteSyncError && (
+                    <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/40 rounded-lg text-xs text-emerald-300 space-y-1 animate-in fade-in duration-150">
+                      <div className="flex items-center space-x-1.5 font-semibold text-emerald-400">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>Snapshot Fast-Sync Complete</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-slate-300">
+                        Blockchain data successfully extracted and verified. The node is ready to start from the restored state.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Live Progress Bar */}
                   {isRemoteSyncRunning && (
@@ -1316,7 +1355,9 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                             : 'Streaming...'}
                         </span>
                         <span className="text-slate-400 truncate max-w-[160px]">
-                          {remoteSnapshotStatus?.stage?.toUpperCase() || remoteManagerStatus?.stage?.toUpperCase()}
+                          {remoteManagerStatus?.stage
+                            ? remoteManagerStatus.stage.replace(/_/g, ' ').toUpperCase()
+                            : remoteSnapshotStatus?.stage?.toUpperCase()}
                         </span>
                       </div>
                       <div className="w-full bg-[#181B20] h-1.5 rounded-full overflow-hidden">
@@ -1324,7 +1365,7 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                           className="bg-amber-400 h-full rounded-full transition-all duration-300"
                           style={{
                             width: `${Math.max(
-                              5,
+                              3,
                               remoteSnapshotStatus?.download?.percentage ||
                                 remoteManagerStatus?.progress?.percentage ||
                                 0
@@ -1332,9 +1373,19 @@ export const MaintenanceTab: React.FC<MaintenanceTabProps> = ({ metrics: propMet
                           }}
                         />
                       </div>
-                      <p className="text-[10px] text-slate-400 truncate">
-                        {remoteSnapshotStatus?.message || remoteManagerStatus?.message}
-                      </p>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <p className="truncate flex-1">
+                          {remoteManagerStatus?.message || remoteSnapshotStatus?.message || 'Processing...'}
+                        </p>
+                        {remoteManagerStatus?.progress?.speedMbs && remoteManagerStatus.progress.speedMbs > 0 ? (
+                          <span className="font-mono text-zinc-400 shrink-0 ml-2">
+                            {remoteManagerStatus.progress.speedMbs.toFixed(1)} MB/s
+                            {remoteManagerStatus.progress.etaSeconds > 0
+                              ? ` · ETA ${Math.ceil(remoteManagerStatus.progress.etaSeconds / 60)}m`
+                              : ''}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                 </div>
