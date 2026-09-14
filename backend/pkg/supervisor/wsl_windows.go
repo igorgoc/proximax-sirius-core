@@ -454,6 +454,11 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	// WSL2 is ready with a valid distribution!
 	status.State = WSL2Ready
 
+	// Check if essential runtime dependency (libatomic1) is installed inside the distro
+	if errAtomic := exec.Command("wsl.exe", "-d", selectedDistro, "-u", "root", "--", "dpkg", "-s", "libatomic1").Run(); errAtomic == nil {
+		status.HasLibAtomic = true
+	}
+
 	// Reboot-Resume Invariant: If WSL install was initiated and is now ready, automatically clear marker!
 	if cache.WSLInstallInitiated {
 		cache.WSLInstallInitiated = false
@@ -839,6 +844,48 @@ function Update-WSLSubsystem {
 
     # Ensure default version 2
     Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-default-version", "2") -Description "Setting WSL default version to 2"
+
+    # If an Ubuntu distribution is already installed, verify runtime dependencies as well
+    $listRaw = & wsl.exe -l -v 2>&1 | Out-String
+    $cleanList = Clean-WSLString $listRaw
+    foreach ($line in ($cleanList -split '\r?\n')) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '(Ubuntu[A-Za-z0-9\._\-]*)') {
+            $existingDistro = $matches[1]
+            Ensure-DistroRuntimePackages -targetDistroName $existingDistro
+            break
+        }
+    }
+}
+
+function Ensure-DistroRuntimePackages {
+    param([string]$targetDistroName)
+    if (-not $targetDistroName) { return }
+
+    Log-Message ""
+    Log-Message "==========================================================================" "Cyan"
+    Log-Message " STEP: Configuring Sirius Engine Runtime Packages in $targetDistroName..." "Cyan"
+    Log-Message "==========================================================================" "Cyan"
+
+    # Check if libatomic1 is already installed
+    Log-Message "-> Checking runtime dependency 'libatomic1' (required by Catapult FastFinality engine)..." "Cyan"
+    $checkAtomic = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "dpkg", "-s", "libatomic1") -NoNewWindow -Wait -PassThru
+
+    if ($checkAtomic.ExitCode -ne 0) {
+        Log-Message "-> Updating Ubuntu package lists (apt-get update)..." "Yellow"
+        Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "update", "-qq") -Description "Updating package lists"
+
+        Log-Message "-> Installing libatomic1 and essential tools (ca-certificates, curl, tar)..." "Yellow"
+        $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "install", "-y", "-qq", "libatomic1", "ca-certificates", "curl", "tar") -Description "Installing libatomic1 runtime"
+
+        if ($instCode -eq 0) {
+            Log-Message "-> [OK] Sirius runtime packages successfully installed in $targetDistroName!" "Green"
+        } else {
+            Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $instCode)." "Red"
+        }
+    } else {
+        Log-Message "-> [OK] Runtime dependency 'libatomic1' is already verified in $targetDistroName!" "Green"
+    }
 }
 
 function Install-WSLDistro {
@@ -920,6 +967,8 @@ function Install-WSLDistro {
     # Ensure distribution is on WSL version 2
     if ($installedDistroName) {
         Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-version", $installedDistroName, "2") -Description "Verifying WSL2 version for $installedDistroName"
+        # Update package lists and install essential runtime dependencies
+        Ensure-DistroRuntimePackages -targetDistroName $installedDistroName
     }
 
     # List current installed distributions

@@ -410,4 +410,5 @@ export interface WSLStatus {
   errorCode?: string;
   errorMessage?: string;
   rawStatus?: string;
+  hasLibAtomic?: boolean;
 }

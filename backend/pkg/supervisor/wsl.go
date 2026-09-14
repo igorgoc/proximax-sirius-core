@@ -60,4 +60,5 @@ type WSLStatus struct {
 	ErrorCode           string   `json:"errorCode,omitempty"`
 	ErrorMessage        string   `json:"errorMessage,omitempty"`
 	RawStatus           string   `json:"rawStatus,omitempty"`
+	HasLibAtomic        bool     `json:"hasLibAtomic,omitempty"`
 }

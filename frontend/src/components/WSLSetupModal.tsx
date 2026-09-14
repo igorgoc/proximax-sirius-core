@@ -74,6 +74,9 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
   if (!isOpen) return null;
 
   const state = wslStatus?.state || 'WSL_NOT_INSTALLED';
+  const isStep1Ready = state !== 'WSL_NOT_INSTALLED' && state !== 'WSL_V1_ONLY' && !wslStatus?.isOutdated;
+  const isStep2Ready = state === 'WSL2_READY';
+  const isFullyReady = isStep1Ready && isStep2Ready;
 
   const isBiosDisabled = wslStatus?.errorCode === 'BIOS_VIRTUALIZATION_DISABLED' ||
     strContains(wslStatus?.errorMessage, 'virtual machine platform') ||
@@ -385,31 +388,6 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
             </div>
           )}
 
-          {/* Outdated WSL Notice */}
-          {wslStatus?.isOutdated && state !== 'WSL2_READY' && !isDistroNotFound && (
-            <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-amber-500/30 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="font-semibold text-xs text-amber-300">
-                    WSL Version Update Recommended ({wslStatus.wslVersion ? `v${wslStatus.wslVersion}` : 'Inbox / Legacy'})
-                  </span>
-                </div>
-                <button
-                  onClick={handleUpdateWSL}
-                  disabled={isUpdatingWSL}
-                  className="px-2.5 py-1 bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 rounded-lg text-[11px] font-semibold transition-all flex items-center space-x-1.5"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
-                  <span>Update WSL Subsystem</span>
-                </button>
-              </div>
-              <p className="text-[11px] text-zinc-400 leading-relaxed">
-                Older WSL releases lack direct catalog support for Ubuntu-22.04 LTS. Updating WSL ensures clean installation without catalog errors.
-              </p>
-            </div>
-          )}
-
           {/* Active Process / Window Notification */}
           {updateMsg && (
             <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-300 flex items-center space-x-2.5 shadow-lg animate-fadeIn">
@@ -426,16 +404,16 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
             </div>
           )}
 
-          {/* Main State Panel */}
+          {/* Clean 2-Step Subsystem Setup Overview */}
           <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
                 <Layers className="w-4 h-4 text-indigo-400" />
-                <span className="font-semibold text-zinc-200">Subsystem Status</span>
+                <span className="font-semibold text-zinc-200">Subsystem Setup Overview</span>
               </div>
               <button
                 onClick={onRefreshStatus}
-                className="text-xs text-zinc-400 hover:text-indigo-400 flex items-center space-x-1 transition-colors"
+                className="text-xs text-zinc-400 hover:text-indigo-400 flex items-center space-x-1.5 transition-colors"
                 title="Refresh Status"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -443,167 +421,213 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
               </button>
             </div>
 
-            {state === 'WSL_NOT_INSTALLED' && (
-              <div className="space-y-3">
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  The Windows Subsystem for Linux (WSL2) is not yet active. ProximaX Sirius runs the C++ Sirius engine inside WSL2 to achieve native ext4 RocksDB throughput with zero Docker overhead.
-                </p>
-                <div className="pt-1">
-                  <button
-                    onClick={handleEnableWSL}
-                    disabled={isInstalling}
-                    className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
-                  >
-                    {isInstalling ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Enabling Blockchain Subsystem...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Cpu className="w-4 h-4" />
-                        <span>Enable Blockchain Subsystem</span>
-                      </>
-                    )}
-                  </button>
-                  <p className="text-[11px] text-zinc-500 text-center mt-2">
-                    Windows will display a User Account Control (UAC) prompt to allow enabling the virtualization feature.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {state === 'WSL_V1_ONLY' && (
-              <div className="space-y-3">
-                <p className="text-xs text-amber-300/90 leading-relaxed">
-                  WSL Version 1 is detected. Sirius requires WSL Version 2 for Linux ext4 file system performance and memory-mapped consensus storage.
-                </p>
-                <button
-                  onClick={handleSetupDistro}
-                  disabled={isInstalling}
-                  className="w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-semibold text-xs shadow transition-all flex items-center justify-center space-x-2"
-                >
-                  {isInstalling ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Layers className="w-4 h-4" />
-                  )}
-                  <span>Upgrade to WSL2 Subsystem</span>
-                </button>
-              </div>
-            )}
-
-            {state === 'WSL2_NO_DISTRO' && (
-              <div className="space-y-3">
-                {distroInstalling ? (
-                  <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/40 space-y-3 animate-fadeIn">
-                    <div className="flex items-start space-x-3">
-                      <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin flex-shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="font-semibold text-indigo-300">
-                          Downloading & Initializing Linux Subsystem...
-                        </h4>
-                        <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
-                          Windows is downloading and initializing the distribution in an elevated terminal window (~500 MB). This may take a few minutes depending on your internet connection.
-                        </p>
-                      </div>
-                    </div>
-
-                    {wslStatus?.installLog && (
-                      <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-24 overflow-y-auto whitespace-pre-wrap">
-                        {wslStatus.installLog}
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between pt-1 text-[11px] text-zinc-400">
-                      <span>Status: Waiting for distribution setup to complete...</span>
-                      <div className="flex items-center space-x-3">
-                        <button
-                          onClick={onRefreshStatus}
-                          className="text-indigo-400 hover:text-indigo-300 font-medium underline"
-                        >
-                          Check now
-                        </button>
-                        <button
-                          onClick={() => {
-                            sessionStorage.removeItem('sirius_wsl_distro_installing');
-                            setDistroInstalling(false);
-                          }}
-                          className="text-zinc-500 hover:text-zinc-400 underline"
-                        >
-                          Reset status
-                        </button>
-                      </div>
-                    </div>
+            {/* STEP 1 CARD: WSL2 Core Engine */}
+            <div className={`p-4 rounded-xl border transition-all ${
+              isStep1Ready
+                ? 'bg-zinc-900/50 border-emerald-500/30'
+                : wslStatus?.isOutdated || state === 'WSL_V1_ONLY'
+                ? 'bg-zinc-900/50 border-amber-500/40'
+                : 'bg-zinc-900/50 border-zinc-800'
+            }`}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 mt-0.5 ${
+                    isStep1Ready
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                  }`}>
+                    1
                   </div>
-                ) : (
-                  <>
-                    <p className="text-xs text-zinc-300 leading-relaxed">
-                      WSL2 core is active! The isolated Linux subsystem environment (Ubuntu-22.04) needs to be initialized to execute the Sirius node engine.
-                    </p>
-
-                    {wslStatus?.installLog && (
-                      <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-24 overflow-y-auto whitespace-pre-wrap">
-                        {wslStatus.installLog}
-                      </div>
-                    )}
-
-                    <div className="space-y-2 pt-1">
-                      <button
-                        onClick={handleSetupDistro}
-                        disabled={isInstalling}
-                        className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
-                      >
-                        {isInstalling ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>Initiating Distro Setup...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Cpu className="w-4 h-4" />
-                            <span>Install Sirius Linux Subsystem (Ubuntu-22.04)</span>
-                          </>
-                        )}
-                      </button>
-
-                      {wslStatus?.isOutdated && (
-                        <button
-                          onClick={handleUpdateWSL}
-                          disabled={isUpdatingWSL}
-                          className="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-semibold text-xs border border-zinc-700 transition-colors flex items-center justify-center space-x-2"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
-                          <span>Update WSL First (wsl --update)</span>
-                        </button>
+                  <div>
+                    <div className="font-semibold text-xs text-zinc-200 flex items-center space-x-2 flex-wrap gap-y-1">
+                      <span>Windows Subsystem for Linux (WSL2)</span>
+                      {isStep1Ready ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-medium flex items-center space-x-1">
+                          <Check className="w-3 h-3" />
+                          <span>Ready</span>
+                        </span>
+                      ) : wslStatus?.isOutdated ? (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center space-x-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>Update Recommended</span>
+                        </span>
+                      ) : state === 'WSL_V1_ONLY' ? (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 text-[10px] font-medium">
+                          WSL1 (Upgrade Needed)
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700 text-[10px] font-medium">
+                          Not Enabled
+                        </span>
                       )}
                     </div>
-                  </>
-                )}
-              </div>
-            )}
+                    <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                      {isStep1Ready
+                        ? `WSL2 Core Engine active (${wslStatus?.wslVersion ? `WSL v${wslStatus.wslVersion}` : 'WSL2 Default'}). Linux ext4 RocksDB consensus storage enabled.`
+                        : wslStatus?.isOutdated
+                        ? `Installed WSL version (${wslStatus?.wslVersion ? `v${wslStatus.wslVersion}` : 'Inbox / Legacy'}) requires update to support the modern Ubuntu-22.04 LTS catalog.`
+                        : state === 'WSL_V1_ONLY'
+                        ? 'WSL version 1 is active. Sirius requires WSL Version 2 for Linux ext4 RocksDB performance.'
+                        : 'Virtual Machine Platform and Windows Subsystem for Linux optional features must be enabled.'}
+                    </p>
+                  </div>
+                </div>
 
-            {state === 'WSL2_READY' && (
-              <div className="space-y-3">
-                <div className="flex items-center space-x-3 p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/30">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                <div className="flex items-center space-x-2 flex-shrink-0">
+                  {state === 'WSL_NOT_INSTALLED' && (
+                    <button
+                      onClick={handleEnableWSL}
+                      disabled={isInstalling}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow transition-all flex items-center space-x-1.5"
+                    >
+                      <Cpu className={`w-3.5 h-3.5 ${isInstalling ? 'animate-spin' : ''}`} />
+                      <span>Enable WSL2</span>
+                    </button>
+                  )}
+
+                  {(wslStatus?.isOutdated || state === 'WSL_V1_ONLY') && (
+                    <button
+                      onClick={handleUpdateWSL}
+                      disabled={isUpdatingWSL}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow transition-all flex items-center space-x-1.5"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
+                      <span>Update WSL Subsystem</span>
+                    </button>
+                  )}
+
+                  {isStep1Ready && (
+                    <button
+                      onClick={handleUpdateWSL}
+                      disabled={isUpdatingWSL}
+                      title="Re-check or force update WSL kernel"
+                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-[11px] font-medium border border-zinc-700 transition-colors flex items-center space-x-1"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
+                      <span>Check / Update</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* STEP 2 CARD: Sirius Linux Subsystem (Ubuntu 22.04 LTS) */}
+            <div className={`p-4 rounded-xl border transition-all ${
+              isStep2Ready
+                ? 'bg-zinc-900/50 border-emerald-500/30'
+                : distroInstalling
+                ? 'bg-zinc-900/50 border-indigo-500/40'
+                : 'bg-zinc-900/50 border-zinc-800'
+            }`}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 mt-0.5 ${
+                    isStep2Ready
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                  }`}>
+                    2
+                  </div>
                   <div>
-                    <div className="font-semibold text-emerald-300 text-xs">
+                    <div className="font-semibold text-xs text-zinc-200 flex items-center space-x-2 flex-wrap gap-y-1">
+                      <span>Sirius Linux Subsystem (Ubuntu 22.04 LTS)</span>
+                      {isStep2Ready ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-medium flex items-center space-x-1">
+                          <Check className="w-3 h-3" />
+                          <span>Installed & Ready</span>
+                        </span>
+                      ) : distroInstalling ? (
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 text-[10px] font-medium flex items-center space-x-1">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>Installing...</span>
+                        </span>
+                      ) : !isStep1Ready ? (
+                        <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700 text-[10px] font-medium">
+                          Waiting for Step 1
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 text-[10px] font-medium">
+                          Not Installed
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                      {isStep2Ready
+                        ? `Distro: ${wslStatus?.distroName || 'Ubuntu-22.04'} (WSL2) • FastFinality runtime (libatomic1) verified.`
+                        : distroInstalling
+                        ? 'Downloading distribution package (~500 MB) and configuring libatomic1 in terminal window...'
+                        : 'Runs the C++ Sirius Catapult engine ELF binary with RocksDB and libatomic1 dependencies.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 flex-shrink-0">
+                  {distroInstalling ? (
+                    <span className="px-3 py-1.5 bg-indigo-900/40 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center space-x-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Installing...</span>
+                    </span>
+                  ) : isStep2Ready ? (
+                    <div className="flex items-center space-x-1.5 text-emerald-400 text-xs font-semibold px-3 py-1.5 bg-emerald-950/30 border border-emerald-500/20 rounded-lg">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Configured</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleSetupDistro}
+                      disabled={isInstalling || !isStep1Ready}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow transition-all flex items-center space-x-1.5"
+                    >
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span>Install Ubuntu 22.04</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* FULLY OPERATIONAL PROCEED BANNER */}
+            {isFullyReady && (
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/50 via-zinc-900 to-zinc-950 border border-emerald-500/40 flex items-center justify-between gap-4 animate-fadeIn">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 flex-shrink-0">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
                       Subsystem is Fully Operational
-                    </div>
-                    <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
-                      Distro: {wslStatus?.distroName || 'Ubuntu-22.04'} • Mode: WSL{wslStatus?.defaultVersion || 2}
-                      {wslStatus?.wslVersion ? ` • WSL v${wslStatus.wslVersion}` : ''}
-                    </div>
+                    </h4>
+                    <p className="text-xs text-zinc-300 mt-0.5">
+                      WSL2 and Ubuntu 22.04 LTS (with libatomic1) are ready to start the Sirius Node engine.
+                    </p>
                   </div>
                 </div>
                 <button
                   onClick={handleDismiss}
-                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30 transition-all flex items-center space-x-2 flex-shrink-0"
                 >
                   <span>Proceed to Node Manager</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
+              </div>
+            )}
+
+            {/* Collapsible Install Log Drawer if present */}
+            {wslStatus?.installLog && (
+              <div className="pt-1">
+                <button
+                  onClick={() => setShowLogDetails(!showLogDetails)}
+                  className="text-[11px] text-zinc-400 hover:text-zinc-200 flex items-center space-x-1 transition-colors"
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>{showLogDetails ? 'Hide' : 'View'} Recent Subsystem Log</span>
+                  {showLogDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+                {showLogDetails && (
+                  <div className="mt-2 p-2.5 bg-zinc-950 rounded-lg border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                    {wslStatus.installLog}
+                  </div>
+                )}
               </div>
             )}
           </div>
