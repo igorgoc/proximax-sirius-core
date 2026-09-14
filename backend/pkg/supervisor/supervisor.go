@@ -2633,6 +2633,8 @@ func (dc *ProcessSupervisor) EnsureNemesisSeed(targetDataDir string) error {
 
 	defaultNemesisDat := filepath.Join(dc.chainConfigPath, "data", "00000", "00001.dat")
 	defaultNemesisHashes := filepath.Join(dc.chainConfigPath, "data", "00000", "hashes.dat")
+	seedNemesisDat := filepath.Join(dc.chainConfigPath, "genesis_seed", "00000", "00001.dat")
+	seedNemesisHashes := filepath.Join(dc.chainConfigPath, "genesis_seed", "00000", "hashes.dat")
 
 	_ = os.MkdirAll(filepath.Join(targetDataDir, "00000"), 0755)
 
@@ -2648,6 +2650,8 @@ func (dc *ProcessSupervisor) EnsureNemesisSeed(targetDataDir string) error {
 	if needs00001 {
 		if fi, err := os.Stat(defaultNemesisDat); err == nil && fi.Size() > 0 {
 			_ = copyFile(defaultNemesisDat, genesisDat)
+		} else if fi, err := os.Stat(seedNemesisDat); err == nil && fi.Size() > 0 {
+			_ = copyFile(seedNemesisDat, genesisDat)
 		} else {
 			dc.broadcastLog("[Supervisor] Fetching nemesis 00001.dat from official GitHub repository...")
 			if err := downloadFile(Nemesis00001Url, genesisDat); err != nil {
@@ -2662,6 +2666,8 @@ func (dc *ProcessSupervisor) EnsureNemesisSeed(targetDataDir string) error {
 	if needsHashes {
 		if fi, err := os.Stat(defaultNemesisHashes); err == nil && fi.Size() > 0 {
 			_ = copyFile(defaultNemesisHashes, genesisHashes)
+		} else if fi, err := os.Stat(seedNemesisHashes); err == nil && fi.Size() > 0 {
+			_ = copyFile(seedNemesisHashes, genesisHashes)
 		} else {
 			dc.broadcastLog("[Supervisor] Fetching nemesis hashes.dat from official GitHub repository...")
 			if err := downloadFile(NemesisHashesUrl, genesisHashes); err != nil {

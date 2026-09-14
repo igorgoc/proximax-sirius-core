@@ -133,6 +133,12 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	apiToken := configMgr.GetOrCreateApiToken()
 	log.Printf("[Sirius Core] Secure API token initialized (%d chars)", len(apiToken))
 
+	// Pre-seed Genesis Nemesis block into configured data directory immediately so data folder is ready before first start
+	initialDataPath := configMgr.GetDataPath()
+	go func() {
+		_ = supervisor.EnsureNemesisSeed(initialDataPath)
+	}()
+
 	return &Server{
 		configMgr:        configMgr,
 		supervisor:       supervisor,
@@ -671,6 +677,18 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if savedCfg, err := s.configMgr.LoadNodeConfig(); err == nil && savedCfg.HarvestPublicKey != "" {
 			s.harvesterTracker.SetHarvestPublicKey(savedCfg.HarvestPublicKey)
 		}
+
+		// Pre-seed Genesis Nemesis block into configured data directory immediately so data folder is ready before first start
+		dataPath := s.configMgr.GetDataPath()
+		_ = s.supervisor.EnsureNemesisSeed(dataPath)
+
+		// Auto-sync official network configuration files if missing or out-of-sync
+		go func() {
+			diff, err := s.updateMgr.CheckConfigsDiff()
+			if err == nil && diff != nil && diff.HasDifferences {
+				_ = s.updateMgr.ApplyOfficialUpdate(dataPath)
+			}
+		}()
 
 		jsonResponse(w, map[string]string{"status": "success", "message": "Configuration saved successfully"})
 		return

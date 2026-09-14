@@ -10,7 +10,8 @@ import {
   Play,
   ExternalLink,
   Users,
-  DownloadCloud
+  DownloadCloud,
+  Zap
 } from 'lucide-react';
 import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats, EngineUpdateStatus } from '../types';
 import { getExplorerBlockUrl, getExplorerAddressUrl } from '../utils/explorer';
@@ -295,6 +296,30 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               <span>Tip: {formatNumber(networkHeight || blockHeight)}</span>
             </div>
           </div>
+
+          {/* Fast-Sync Recommendation Banner when syncing from block 0 */}
+          {isRunning && blocksBehind > 50000 && (
+            <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-start space-x-2.5">
+                <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <div className="font-medium text-amber-300">Fast-Sync Snapshot Recommended</div>
+                  <div className="text-slate-400 text-[11px] mt-0.5">
+                    Node is {formatNumber(blocksBehind)} blocks behind tip. Syncing block-by-block from genesis uses 100% CPU and takes days. Restore snapshot in ~2 minutes.
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setActiveTab('maintenance');
+                  window.dispatchEvent(new CustomEvent('switch-tab', { detail: { tab: 'maintenance', subtab: 'snapshots' } }));
+                }}
+                className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-medium text-xs rounded transition-colors shrink-0"
+              >
+                Fast-Sync Now
+              </button>
+            </div>
+          )}
         </section>
 
         {/* Right Column: Validator State */}

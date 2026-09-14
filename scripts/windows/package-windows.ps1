@@ -199,10 +199,27 @@ Copy-Item (Join-Path $RootDir "chainconfig\resources\config-harvesting.propertie
 Copy-Item (Join-Path $RootDir "chainconfig\resources\config-storage.properties.template") (Join-Path $TargetResources "config-storage.properties")
 Copy-Item (Join-Path $RootDir "chainconfig\resources\config-user.properties.template") (Join-Path $TargetResources "config-user.properties")
 
-# Genesis bootstrap data
-if (Test-Path (Join-Path $RootDir "chainconfig\data\00000\00001.dat")) {
-    Copy-Item (Join-Path $RootDir "chainconfig\data\00000\00001.dat") $TargetData
-    Copy-Item (Join-Path $RootDir "chainconfig\data\00000\hashes.dat") $TargetData
+# Genesis bootstrap data & seed package
+$GenesisSeedDir = Join-Path $RootDir "chainconfig\genesis_seed"
+$TargetGenesisSeed = Join-Path $BuildDir "chainconfig\genesis_seed"
+if (Test-Path $GenesisSeedDir) {
+    Copy-Item -Recurse $GenesisSeedDir $TargetGenesisSeed -Force
+    if (Test-Path (Join-Path $GenesisSeedDir "00000\00001.dat")) {
+        Copy-Item (Join-Path $GenesisSeedDir "00000\00001.dat") $TargetData -Force
+        Copy-Item (Join-Path $GenesisSeedDir "00000\hashes.dat") $TargetData -Force
+    }
+    if (Test-Path (Join-Path $GenesisSeedDir "index.dat")) {
+        Copy-Item (Join-Path $GenesisSeedDir "index.dat") (Join-Path $BuildDir "chainconfig\data\index.dat") -Force
+    }
+} elseif (Test-Path (Join-Path $RootDir "chainconfig\data\00000\00001.dat")) {
+    Copy-Item (Join-Path $RootDir "chainconfig\data\00000\00001.dat") $TargetData -Force
+    Copy-Item (Join-Path $RootDir "chainconfig\data\00000\hashes.dat") $TargetData -Force
+}
+
+# Ensure index.dat (height 1 genesis state) is present
+$TargetIndex = Join-Path $BuildDir "chainconfig\data\index.dat"
+if (-not (Test-Path $TargetIndex)) {
+    [System.IO.File]::WriteAllBytes($TargetIndex, [byte[]]@(1, 0, 0, 0, 0, 0, 0, 0))
 }
 
 # Copy launchers and helper scripts (both at root of zip and in scripts\windows for maximum flexibility)
