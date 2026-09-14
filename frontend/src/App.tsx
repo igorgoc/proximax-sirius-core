@@ -185,7 +185,8 @@ export function App() {
         if (typeof data.autoRecovery === 'boolean') setAutoRecovery(data.autoRecovery);
         if (data.wslStatus) {
           setWslStatus(data.wslStatus);
-          if (data.wslStatus.isWindows && data.wslStatus.state !== 'WSL2_READY' && !sessionStorage.getItem('wsl_setup_dismissed')) {
+          const isConfiguringWizard = (!data.config?.isConfigured && !sessionStorage.getItem('wizard_dismissed')) || wizardOpen;
+          if (data.wslStatus.isWindows && data.wslStatus.state !== 'WSL2_READY' && !sessionStorage.getItem('wsl_setup_dismissed') && !isConfiguringWizard) {
             setWslModalOpen(true);
           }
         }

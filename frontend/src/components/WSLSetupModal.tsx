@@ -48,6 +48,9 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [showManual, setShowManual] = useState(false);
   const [showLogDetails, setShowLogDetails] = useState(false);
+  const [distroInstalling, setDistroInstalling] = useState(() => {
+    return sessionStorage.getItem('sirius_wsl_distro_installing') === 'true';
+  });
 
   // Poll WSL status while modal is open and WSL is not ready
   useEffect(() => {
@@ -60,6 +63,13 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
 
     return () => clearInterval(timer);
   }, [isOpen, wslStatus?.state, onRefreshStatus]);
+
+  useEffect(() => {
+    if (wslStatus?.state === 'WSL2_READY') {
+      sessionStorage.removeItem('sirius_wsl_distro_installing');
+      setDistroInstalling(false);
+    }
+  }, [wslStatus?.state]);
 
   if (!isOpen) return null;
 
@@ -90,17 +100,6 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
     strContains(installError, 'DISTRO_NOT_FOUND') ||
     strContains(wslStatus?.errorMessage, 'not found') ||
     strContains(wslStatus?.installLog, 'not found');
-
-  const [distroInstalling, setDistroInstalling] = useState(() => {
-    return sessionStorage.getItem('sirius_wsl_distro_installing') === 'true';
-  });
-
-  useEffect(() => {
-    if (wslStatus?.state === 'WSL2_READY') {
-      sessionStorage.removeItem('sirius_wsl_distro_installing');
-      setDistroInstalling(false);
-    }
-  }, [wslStatus?.state]);
 
   const handleEnableWSL = async () => {
     setIsInstalling(true);
@@ -670,8 +669,11 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
   );
 };
 
-export const WSLSetupModal: React.FC<WSLSetupModalProps> = (props) => (
-  <ErrorBoundary fallbackTitle="WSL Subsystem Modal Error">
-    <WSLSetupModalContent {...props} />
-  </ErrorBoundary>
-);
+export const WSLSetupModal: React.FC<WSLSetupModalProps> = (props) => {
+  if (!props.isOpen) return null;
+  return (
+    <ErrorBoundary fallbackTitle="WSL Subsystem Modal Error">
+      <WSLSetupModalContent {...props} />
+    </ErrorBoundary>
+  );
+};
