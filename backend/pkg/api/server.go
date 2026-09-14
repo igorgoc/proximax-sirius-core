@@ -2254,7 +2254,7 @@ func (s *Server) handleSystemWSLInstall(w http.ResponseWriter, r *http.Request) 
 	}
 	jsonResponse(w, map[string]interface{}{
 		"status":  "initiated",
-		"message": "WSL installation initiated. Please complete any administrator prompts.",
+		"message": "WSL subsystem installation initiated. Please check the elevated PowerShell window on your screen.",
 	})
 }
 
@@ -2270,7 +2270,7 @@ func (s *Server) handleSystemWSLUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, map[string]interface{}{
 		"status":  "initiated",
-		"message": "WSL update initiated. Please allow administrator permissions if prompted.",
+		"message": "WSL update initiated. Please check the elevated PowerShell window on your screen.",
 	})
 }
 
@@ -2291,8 +2291,8 @@ func (s *Server) handleSystemWSLSetupDistro(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	jsonResponse(w, map[string]interface{}{
-		"status":  "ok",
-		"message": "WSL distribution setup completed.",
+		"status":  "initiated",
+		"message": "WSL distribution setup initiated. Please check the elevated PowerShell window on your screen.",
 	})
 }
 

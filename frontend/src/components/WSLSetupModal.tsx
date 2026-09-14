@@ -104,6 +104,7 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
   const handleEnableWSL = async () => {
     setIsInstalling(true);
     setInstallError(null);
+    setUpdateMsg(null);
     try {
       const res = await fetch('/api/system/wsl/install', {
         method: 'POST',
@@ -113,6 +114,7 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
       if (!res.ok) {
         setInstallError(data.error || 'Failed to initiate subsystem installation');
       } else {
+        setUpdateMsg(data.message || 'WSL subsystem installation initiated. Please check the elevated PowerShell window on your screen.');
         onRefreshStatus();
       }
     } catch (e: any) {
@@ -135,7 +137,7 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
       if (!res.ok) {
         setInstallError(data.error || 'Failed to initiate WSL update');
       } else {
-        setUpdateMsg(data.message || 'WSL update initiated. Check the opened terminal window.');
+        setUpdateMsg(data.message || 'WSL update initiated. Please check the elevated PowerShell window on your screen.');
         onRefreshStatus();
       }
     } catch (e: any) {
@@ -150,6 +152,7 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
     setDistroInstalling(true);
     sessionStorage.setItem('sirius_wsl_distro_installing', 'true');
     setInstallError(null);
+    setUpdateMsg(null);
     try {
       const res = await fetch('/api/system/wsl/setup-distro', {
         method: 'POST',
@@ -162,6 +165,7 @@ const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
         sessionStorage.removeItem('sirius_wsl_distro_installing');
         setDistroInstalling(false);
       } else {
+        setUpdateMsg(data.message || 'WSL distribution setup initiated. Please check the elevated PowerShell window on your screen.');
         onRefreshStatus();
       }
     } catch (e: any) {
@@ -403,11 +407,14 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
               <p className="text-[11px] text-zinc-400 leading-relaxed">
                 Older WSL releases lack direct catalog support for Ubuntu-22.04 LTS. Updating WSL ensures clean installation without catalog errors.
               </p>
-              {updateMsg && (
-                <div className="text-[11px] text-emerald-400 font-medium">
-                  {updateMsg}
-                </div>
-              )}
+            </div>
+          )}
+
+          {/* Active Process / Window Notification */}
+          {updateMsg && (
+            <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-300 flex items-center space-x-2.5 shadow-lg animate-fadeIn">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400 animate-pulse" />
+              <div className="flex-1 font-medium">{updateMsg}</div>
             </div>
           )}
 

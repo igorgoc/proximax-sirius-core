@@ -138,6 +138,8 @@ Copy-Item (Join-Path $WinScriptDir "start-node.ps1") $BuildDir
 Copy-Item (Join-Path $WinScriptDir "stop-node.ps1") $BuildDir
 Copy-Item (Join-Path $WinScriptDir "restart-node.ps1") $BuildDir
 Copy-Item (Join-Path $WinScriptDir "pick-directory.ps1") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "setup-wsl.ps1") $BuildDir
+Copy-Item (Join-Path $WinScriptDir "setup-wsl.bat") $BuildDir
 Copy-Item (Join-Path $WinScriptDir "WINDOWS_DEFENDER_NOTES.md") $BuildDir
 
 if (Test-Path (Join-Path $RootDir "WINDOWS_HANDOVER.md")) {

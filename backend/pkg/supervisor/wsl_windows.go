@@ -465,27 +465,79 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	return status
 }
 
-func (dc *ProcessSupervisor) InitiateWSLInstall() error {
+func (dc *ProcessSupervisor) resolveWSLSetupScript() (string, error) {
+	candidates := []string{
+		filepath.Join(dc.chainConfigPath, "..", "scripts", "windows", "setup-wsl.ps1"),
+		filepath.Join(dc.chainConfigPath, "..", "setup-wsl.ps1"),
+	}
+
+	if execPath, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(execPath)
+		candidates = append(candidates,
+			filepath.Join(execDir, "scripts", "windows", "setup-wsl.ps1"),
+			filepath.Join(execDir, "setup-wsl.ps1"),
+		)
+	}
+
+	for _, cand := range candidates {
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand, nil
+		}
+	}
+
+	// Auto-provision fallback: write out embedded script to chainconfig/scripts/setup-wsl.ps1
+	targetDir := filepath.Join(dc.chainConfigPath, "scripts")
+	_ = os.MkdirAll(targetDir, 0755)
+	targetPath := filepath.Join(targetDir, "setup-wsl.ps1")
+	if err := os.WriteFile(targetPath, []byte(embeddedSetupWSLScript), 0644); err == nil {
+		return targetPath, nil
+	}
+
+	return "", fmt.Errorf("could not locate or provision setup-wsl.ps1")
+}
+
+func (dc *ProcessSupervisor) runWSLSetupScript(action string, distro string) error {
+	scriptPath, err := dc.resolveWSLSetupScript()
+	if err != nil {
+		return fmt.Errorf("failed to locate WSL setup script: %w", err)
+	}
+
+	absScript, err := filepath.Abs(scriptPath)
+	if err != nil {
+		absScript = scriptPath
+	}
+
 	logDir := filepath.Join(dc.chainConfigPath, "logs")
 	_ = os.MkdirAll(logDir, 0755)
 	logPath := filepath.Join(logDir, "wsl_install.log")
+	absLog, _ := filepath.Abs(logPath)
 
-	// Launch elevated PowerShell command to enable WSL2 without immediate distribution
-	psScript := fmt.Sprintf(`$ErrorActionPreference = 'Continue'; Write-Host '=== ProximaX Sirius - Enabling Windows Subsystem for Linux (WSL2) ===' -ForegroundColor Cyan; wsl.exe --install --no-distribution *>&1 | Tee-Object -FilePath '%s'; if ($LASTEXITCODE -ne 0) { Write-Host 'WSL enable encountered an error. Exit code:' $LASTEXITCODE -ForegroundColor Red; Write-Host 'Press any key to close this window...' -ForegroundColor Yellow; $host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }`, logPath)
+	// Note: We use -NoExit so that the console window stays open after execution,
+	// allowing the user to review the exact step-by-step progress and any messages.
+	var psArgs []string
+	psArgs = append(psArgs, "'-NoExit'", "'-NoProfile'", "'-ExecutionPolicy'", "'Bypass'", "'-File'", fmt.Sprintf("'%s'", absScript))
+	psArgs = append(psArgs, "'-Action'", fmt.Sprintf("'%s'", action))
+	if distro != "" {
+		psArgs = append(psArgs, "'-Distro'", fmt.Sprintf("'%s'", distro))
+	}
+	psArgs = append(psArgs, "'-LogFile'", fmt.Sprintf("'%s'", absLog))
 
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		fmt.Sprintf("Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', \"%s\" -Verb RunAs", strings.ReplaceAll(psScript, `"`, `\"`)))
+	startCmd := fmt.Sprintf("Start-Process powershell.exe -ArgumentList %s -Verb RunAs", strings.Join(psArgs, ", "))
 
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", startCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		outStr := string(out) + " " + extractExitHex(err)
 		outLower := strings.ToLower(outStr)
 		if strings.Contains(outStr, "1223") || strings.Contains(outLower, "canceled by the user") || strings.Contains(outLower, "access is denied") {
-			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined. ProximaX Sirius requires permission once to enable the Windows virtualization feature.")
+			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined. ProximaX Sirius requires permission to configure Windows Subsystem for Linux.")
 		}
-		return fmt.Errorf("failed to initiate WSL install: %v (%s)", err, strings.TrimSpace(outStr))
+		return fmt.Errorf("failed to launch WSL setup: %v (%s)", err, strings.TrimSpace(outStr))
 	}
+	return nil
+}
 
+func (dc *ProcessSupervisor) InitiateWSLInstall() error {
 	// Persist local state marker in chainconfig/cache.json
 	cache := dc.readCache()
 	cache.WSLInstallInitiated = true
@@ -493,108 +545,424 @@ func (dc *ProcessSupervisor) InitiateWSLInstall() error {
 
 	dc.wslCacheMu.Lock()
 	dc.wslCacheTime = time.Time{}
+	dc.wslOnlineDistrosTime = time.Time{}
 	dc.wslCacheMu.Unlock()
 
-	return nil
+	return dc.runWSLSetupScript("EnableWSL", "")
 }
 
 func (dc *ProcessSupervisor) UpdateWSL() error {
-	logDir := filepath.Join(dc.chainConfigPath, "logs")
-	_ = os.MkdirAll(logDir, 0755)
-	logPath := filepath.Join(logDir, "wsl_install.log")
-
 	// Invalidate cache
 	dc.wslCacheMu.Lock()
 	dc.wslCacheTime = time.Time{}
 	dc.wslOnlineDistrosTime = time.Time{}
 	dc.wslCacheMu.Unlock()
 
-	psScript := fmt.Sprintf(`$ErrorActionPreference = 'Continue'; Write-Host '=== ProximaX Sirius - Updating Windows Subsystem for Linux (WSL2) ===' -ForegroundColor Cyan; wsl.exe --update --web-download *>&1 | Tee-Object -FilePath '%s'; if ($LASTEXITCODE -ne 0) { wsl.exe --update *>&1 | Tee-Object -FilePath '%s' -Append }; if ($LASTEXITCODE -ne 0) { Write-Host 'WSL Update encountered an error. Exit code:' $LASTEXITCODE -ForegroundColor Red; Write-Host 'Press any key to close this window...' -ForegroundColor Yellow; $host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }`, logPath, logPath)
-
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		fmt.Sprintf("Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', \"%s\" -Verb RunAs", strings.ReplaceAll(psScript, `"`, `\"`)))
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		outStr := string(out) + " " + extractExitHex(err)
-		outLower := strings.ToLower(outStr)
-		if strings.Contains(outStr, "1223") || strings.Contains(outLower, "canceled by the user") || strings.Contains(outLower, "access is denied") {
-			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined.")
-		}
-		return fmt.Errorf("failed to initiate WSL update: %v (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return dc.runWSLSetupScript("Update", "")
 }
 
 func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
-	logDir := filepath.Join(dc.chainConfigPath, "logs")
-	_ = os.MkdirAll(logDir, 0755)
-	logPath := filepath.Join(logDir, "wsl_install.log")
-
 	// Invalidate cache
 	dc.wslCacheMu.Lock()
 	dc.wslCacheTime = time.Time{}
+	dc.wslOnlineDistrosTime = time.Time{}
 	dc.wslCacheMu.Unlock()
 
-	// 1. Ensure WSL2 default version
-	_ = exec.Command("wsl.exe", "--set-default-version", "2").Run()
-
-	wslExe, _ := exec.LookPath("wsl.exe")
-	if wslExe == "" {
-		wslExe = filepath.Join(os.Getenv("SystemRoot"), "System32", "wsl.exe")
+	if distroName == "" {
+		distroName = "Ubuntu-22.04"
 	}
-
-	targetDistro := distroName
-	if targetDistro == "" {
-		targetDistro = "Ubuntu-22.04"
-	}
-
-	// 2. Query online distros to resolve exact catalog name
-	onlineDistros := dc.getOnlineDistrosCached(wslExe)
-	hasTarget := false
-	hasGenericUbuntu := false
-	for _, d := range onlineDistros {
-		if strings.EqualFold(d, targetDistro) {
-			hasTarget = true
-		}
-		if strings.EqualFold(d, "Ubuntu") {
-			hasGenericUbuntu = true
-		}
-	}
-
-	// If Ubuntu-22.04 requested but not found in catalog, and generic Ubuntu is available, fallback to Ubuntu
-	if !hasTarget && len(onlineDistros) > 0 {
-		if strings.Contains(strings.ToLower(targetDistro), "ubuntu") && hasGenericUbuntu {
-			targetDistro = "Ubuntu"
-		}
-	}
-
-	// 3. Launch installation with log capture and error pause so it never silently vanishes
-	psScript := fmt.Sprintf(`$ErrorActionPreference = 'Continue'; Write-Host '=== ProximaX Sirius - Installing Linux Subsystem (%s) ===' -ForegroundColor Cyan; Write-Host 'Downloading distribution package (~500 MB). Please keep this window open...' -ForegroundColor Yellow; wsl.exe --install -d %s --no-launch *>&1 | Tee-Object -FilePath '%s'; if ($LASTEXITCODE -ne 0) { Write-Host 'Distribution setup encountered an error. Exit code:' $LASTEXITCODE -ForegroundColor Red; Write-Host 'Press any key to close this window...' -ForegroundColor Yellow; $host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }`, targetDistro, targetDistro, logPath)
-
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		fmt.Sprintf("Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', \"%s\" -Verb RunAs", strings.ReplaceAll(psScript, `"`, `\"`)))
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		outStr := string(out) + " " + extractExitHex(err)
-		outLower := strings.ToLower(outStr)
-		if strings.Contains(outStr, "1223") || strings.Contains(outLower, "canceled by the user") || strings.Contains(outLower, "access is denied") {
-			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined.")
-		}
-		if strings.Contains(outLower, "0x80370102") || strings.Contains(outLower, "80370102") {
-			return fmt.Errorf("BIOS_VIRTUALIZATION_DISABLED: Hardware Virtualization is disabled or a system restart is required.")
-		}
-		if strings.Contains(outLower, "0x80072ee7") || strings.Contains(outLower, "80072ee7") {
-			return fmt.Errorf("NETWORK_TIMEOUT: Network connection to Microsoft Store / WSL CDN timed out.")
-		}
-		if strings.Contains(outLower, "0x8024500c") || strings.Contains(outLower, "8024500c") {
-			return fmt.Errorf("GROUP_POLICY_BLOCKED: Windows Update / Store is blocked by Group Policy.")
-		}
-		return fmt.Errorf("failed to install distribution %s: %v (%s)", distroName, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return dc.runWSLSetupScript("InstallDistro", distroName)
 }
+
+const embeddedSetupWSLScript = `<#
+.SYNOPSIS
+    ProximaX Sirius Mainnet - Windows Subsystem for Linux (WSL2) Setup & Update Manager
+.DESCRIPTION
+    Configures Windows virtualization features, updates WSL2 to the latest kernel & MSI package,
+    and installs the Sirius Linux distribution (Ubuntu-22.04 LTS).
+    Runs in an elevated, persistent console window with detailed step-by-step progress logging.
+#>
+
+param(
+    [ValidateSet("Update", "InstallDistro", "EnableWSL", "All")]
+    [string]$Action = "Update",
+    [string]$Distro = "Ubuntu-22.04",
+    [string]$LogFile = ""
+)
+
+# Output encoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$host.UI.RawUI.WindowTitle = "ProximaX Sirius - WSL Subsystem Manager ($Action)"
+
+# Self-Elevation: Ensure running as Administrator
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "[!] Administrator permissions are required to configure Windows Subsystem for Linux." -ForegroundColor Yellow
+    Write-Host "    Requesting UAC elevation..." -ForegroundColor Yellow
+    $argList = @("-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, "-Action", $Action, "-Distro", $Distro)
+    if ($LogFile) { $argList += @("-LogFile", $LogFile) }
+    Start-Process powershell.exe -ArgumentList $argList -Verb RunAs
+    exit
+}
+
+# Resolve Log File
+if (-not $LogFile) {
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    $LogFile = Join-Path $scriptDir "..\..\chainconfig\logs\wsl_install.log"
+}
+try {
+    $logDir = Split-Path -Parent $LogFile
+    if ($logDir -and (-not (Test-Path $logDir))) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+} catch {}
+
+function Log-Message {
+    param(
+        [string]$Message,
+        [string]$Color = "White"
+    )
+    Write-Host $Message -ForegroundColor $Color
+    if ($LogFile) {
+        $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Add-Content -Path $LogFile -Value "[$ts] $Message" -ErrorAction SilentlyContinue
+    }
+}
+
+function Clean-WSLString {
+    param([string]$InputStr)
+    if (-not $InputStr) { return "" }
+    return ($InputStr -replace '\0', '').Trim()
+}
+
+function Invoke-StepCommand {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList,
+        [string]$Description = ""
+    )
+    if ($Description) {
+        Log-Message "-> $Description..." "Cyan"
+    }
+    Log-Message "   [Command] $FilePath $($ArgumentList -join ' ')" "DarkGray"
+    
+    $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -NoNewWindow -Wait -PassThru
+    $ec = $proc.ExitCode
+    $color = if ($ec -eq 0 -or $ec -eq 3010) { "Green" } else { "Red" }
+    Log-Message "   [Exit Code] $ec" $color
+    return $ec
+}
+
+function Get-InstalledWSLVersion {
+    try {
+        $raw = & wsl.exe --version 2>&1 | Out-String
+        $clean = Clean-WSLString $raw
+        foreach ($line in ($clean -split '\r?\n')) {
+            if ($line -match 'WSL\s*version:\s*([0-9\.]+)') {
+                return $matches[1]
+            }
+        }
+    } catch {}
+    return ""
+}
+
+function Test-WSLOutdated {
+    param([string]$ver)
+    if (-not $ver) { return $true }
+    $parts = $ver.Split('.')
+    if ($parts.Length -eq 0) { return $true }
+    $major = 0
+    [int]::TryParse($parts[0], [ref]$major) | Out-Null
+    if ($major -lt 2) { return $true }
+    $minor = 0
+    if ($parts.Length -gt 1) {
+        [int]::TryParse($parts[1], [ref]$minor) | Out-Null
+    }
+    if ($major -eq 2 -and $minor -lt 3) { return $true }
+    return $false
+}
+
+function Enable-WSLFeatures {
+    Log-Message ""
+    Log-Message "==========================================================================" "Cyan"
+    Log-Message " STEP: Enabling Windows Optional Virtualization Features..." "Cyan"
+    Log-Message "==========================================================================" "Cyan"
+
+    # Enable Microsoft-Windows-Subsystem-Linux
+    $c1 = Invoke-StepCommand -FilePath "dism.exe" -ArgumentList @("/online", "/enable-feature", "/featurename:Microsoft-Windows-Subsystem-Linux", "/all", "/norestart") -Description "Enabling Windows Subsystem for Linux"
+
+    # Enable VirtualMachinePlatform
+    $c2 = Invoke-StepCommand -FilePath "dism.exe" -ArgumentList @("/online", "/enable-feature", "/featurename:VirtualMachinePlatform", "/all", "/norestart") -Description "Enabling Virtual Machine Platform"
+
+    if ($c1 -eq 3010 -or $c2 -eq 3010) {
+        Log-Message "-> [NOTICE] A system reboot will be required by Windows to fully activate Hyper-V / Virtual Machine Platform." "Yellow"
+    }
+
+    # Configure default version 2
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-default-version", "2") -Description "Setting WSL default version to 2"
+}
+
+function Update-WSLSubsystem {
+    Log-Message ""
+    Log-Message "==========================================================================" "Cyan"
+    Log-Message " STEP: Updating Windows Subsystem for Linux (WSL2)..." "Cyan"
+    Log-Message "==========================================================================" "Cyan"
+
+    $curVer = Get-InstalledWSLVersion
+    if ($curVer) {
+        Log-Message "-> Detected WSL version: $curVer" "White"
+    } else {
+        Log-Message "-> No modern WSL version reported by 'wsl.exe --version'." "Yellow"
+    }
+
+    # First attempt standard wsl.exe --update
+    Log-Message "-> Running standard wsl.exe --update..." "Cyan"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--update") -Description "Checking Windows Update for WSL update"
+
+    $afterVer = Get-InstalledWSLVersion
+    $isOutdated = Test-WSLOutdated $afterVer
+
+    if ($isOutdated) {
+        Log-Message ""
+        Log-Message "-> Windows Update WSL version ($afterVer) is older than required (>= 2.3.0)." "Yellow"
+        Log-Message "-> Fetching latest official Microsoft WSL MSI package from GitHub..." "Cyan"
+
+        $msiUrl = ""
+        $tag = ""
+
+        # Method 1: Query GitHub API
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/WSL/releases/latest" -Headers @{"User-Agent"="PowerShell"} -TimeoutSec 10
+            $asset = $rel.assets | Where-Object { $_.name -like "*x64.msi" } | Select-Object -First 1
+            if ($asset) {
+                $msiUrl = $asset.browser_download_url
+                $tag = $rel.tag_name
+            }
+        } catch {
+            Log-Message "   Notice: GitHub API check: $_" "DarkGray"
+        }
+
+        # Method 2: GitHub Releases latest redirect
+        if (-not $msiUrl) {
+            try {
+                $req = [System.Net.HttpWebRequest]::Create("https://github.com/microsoft/WSL/releases/latest")
+                $req.AllowAutoRedirect = $false
+                $req.UserAgent = "Mozilla/5.0"
+                $req.Timeout = 10000
+                $resp = $req.GetResponse()
+                $loc = $resp.GetResponseHeader("Location")
+                $resp.Close()
+                if ($loc) {
+                    $tag = $loc.Split('/')[-1]
+                    $cleanTag = $tag -replace '^v',''
+                    $msiUrl = "https://github.com/microsoft/WSL/releases/download/$tag/wsl.$cleanTag.0.x64.msi"
+                }
+            } catch {
+                Log-Message "   Notice: GitHub redirect check: $_" "DarkGray"
+            }
+        }
+
+        $tempMsi = Join-Path $env:TEMP "wsl-package-x64.msi"
+        if (Test-Path $tempMsi) { Remove-Item -Force $tempMsi -ErrorAction SilentlyContinue }
+        $downloadSuccess = $false
+
+        if ($msiUrl) {
+            Log-Message "-> Downloading Microsoft WSL $tag ($msiUrl)..." "Green"
+            Log-Message "   Package size is ~240 MB. Please wait..." "Yellow"
+            try {
+                Start-BitsTransfer -Source $msiUrl -Destination $tempMsi -DisplayName "Downloading Microsoft WSL" -ErrorAction Stop
+                if (Test-Path $tempMsi) {
+                    $sizeMB = [math]::Round((Get-Item $tempMsi).Length / 1MB, 2)
+                    if ($sizeMB -gt 10) {
+                        Log-Message "-> Downloaded $sizeMB MB successfully." "Green"
+                        $downloadSuccess = $true
+                    }
+                }
+            } catch {
+                Log-Message "   BITS download failed ($_); falling back to WebClient..." "Yellow"
+                try {
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+                    $wc.DownloadFile($msiUrl, $tempMsi)
+                    if (Test-Path $tempMsi) {
+                        $sizeMB = [math]::Round((Get-Item $tempMsi).Length / 1MB, 2)
+                        if ($sizeMB -gt 10) {
+                            Log-Message "-> Downloaded $sizeMB MB successfully." "Green"
+                            $downloadSuccess = $true
+                        }
+                    }
+                } catch {
+                    Log-Message "   WebClient download error: $_" "Red"
+                }
+            }
+        }
+
+        if (-not $downloadSuccess) {
+            # Method 3: Fallback to Microsoft Kernel update blob
+            $fallbackUrl = "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
+            Log-Message "-> Falling back to Microsoft WSL Kernel Update: $fallbackUrl" "Yellow"
+            try {
+                $wc = New-Object System.Net.WebClient
+                $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+                $wc.DownloadFile($fallbackUrl, $tempMsi)
+                if (Test-Path $tempMsi) {
+                    $sizeMB = [math]::Round((Get-Item $tempMsi).Length / 1MB, 2)
+                    if ($sizeMB -gt 5) {
+                        Log-Message "-> Downloaded fallback kernel ($sizeMB MB) successfully." "Green"
+                        $downloadSuccess = $true
+                    }
+                }
+            } catch {
+                Log-Message "   Fallback download error: $_" "Red"
+            }
+        }
+
+        if ($downloadSuccess) {
+            Log-Message "-> Installing WSL MSI package via msiexec (quiet mode)..." "Cyan"
+            $msiCode = Invoke-StepCommand -FilePath "msiexec.exe" -ArgumentList @("/i", $tempMsi, "/qn", "/norestart") -Description "Installing WSL MSI package"
+            Remove-Item -Force $tempMsi -ErrorAction SilentlyContinue
+
+            Start-Sleep -Seconds 2
+            $finalVer = Get-InstalledWSLVersion
+            if ($finalVer) {
+                Log-Message "-> [OK] WSL is now upgraded to version: $finalVer" "Green"
+            } else {
+                Log-Message "-> WSL MSI installation completed (exit code: $msiCode)." "Green"
+            }
+        } else {
+            Log-Message "-> [!] Could not download WSL MSI package. Check internet connection to github.com." "Red"
+        }
+    } else {
+        Log-Message "-> [OK] WSL is already running modern release: $afterVer" "Green"
+    }
+
+    # Ensure default version 2
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-default-version", "2") -Description "Setting WSL default version to 2"
+}
+
+function Install-WSLDistro {
+    param([string]$targetDistro)
+
+    Log-Message ""
+    Log-Message "==========================================================================" "Cyan"
+    Log-Message " STEP: Installing Sirius Linux Distribution ($targetDistro)..." "Cyan"
+    Log-Message "==========================================================================" "Cyan"
+
+    # Pre-check: Ensure WSL version is modern enough to list and install distros
+    $curVer = Get-InstalledWSLVersion
+    if (Test-WSLOutdated $curVer) {
+        Log-Message "-> WSL is outdated ($curVer). Performing update first to ensure distro availability..." "Yellow"
+        Update-WSLSubsystem
+    }
+
+    # Check if already installed
+    $listRaw = & wsl.exe -l -v 2>&1 | Out-String
+    $cleanList = Clean-WSLString $listRaw
+    $alreadyInstalled = $false
+    $installedDistroName = ""
+
+    foreach ($line in ($cleanList -split '\r?\n')) {
+        $trimmed = $line.Trim()
+        if ($trimmed -and -not ($trimmed -like "---*") -and -not ($trimmed -like "NAME*")) {
+            $parts = $trimmed -split '\s+'
+            if ($parts.Length -gt 0) {
+                $name = $parts[0]
+                if ($name -eq "*" -and $parts.Length -gt 1) { $name = $parts[1] }
+                if ($name -ieq $targetDistro -or ($targetDistro -ieq "Ubuntu-22.04" -and $name -ieq "Ubuntu")) {
+                    $alreadyInstalled = $true
+                    $installedDistroName = $name
+                    break
+                }
+            }
+        }
+    }
+
+    if ($alreadyInstalled) {
+        Log-Message "-> Distribution '$installedDistroName' is already installed!" "Green"
+    } else {
+        # Check online catalog
+        Log-Message "-> Checking available distributions in online catalog..." "Cyan"
+        $onlineRaw = & wsl.exe --list --online 2>&1 | Out-String
+        $cleanOnline = Clean-WSLString $onlineRaw
+
+        $distroToInstall = $targetDistro
+        $hasExact = $false
+        $hasGenericUbuntu = $false
+
+        foreach ($line in ($cleanOnline -split '\r?\n')) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match '^\s*([A-Za-z0-9\._\-]+)') {
+                $cand = $matches[1]
+                if ($cand -ieq $targetDistro) { $hasExact = $true }
+                if ($cand -ieq "Ubuntu") { $hasGenericUbuntu = $true }
+            }
+        }
+
+        if (-not $hasExact -and $targetDistro -ieq "Ubuntu-22.04" -and $hasGenericUbuntu) {
+            Log-Message "-> 'Ubuntu-22.04' not listed in online catalog. Selecting 'Ubuntu' LTS fallback..." "Yellow"
+            $distroToInstall = "Ubuntu"
+        }
+
+        Log-Message "-> Installing $distroToInstall from Microsoft Store / Canonical CDN..." "Green"
+        Log-Message "   Downloading distribution package (~500 MB). Please keep this window open..." "Yellow"
+
+        $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--install", "-d", $distroToInstall, "--no-launch") -Description "Installing $distroToInstall"
+
+        if ($instCode -eq 0) {
+            Log-Message "-> [OK] Distribution $distroToInstall installed successfully!" "Green"
+            $installedDistroName = $distroToInstall
+        } else {
+            Log-Message "-> [!] Distribution installation exited with code $instCode." "Red"
+        }
+    }
+
+    # Ensure distribution is on WSL version 2
+    if ($installedDistroName) {
+        Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-version", $installedDistroName, "2") -Description "Verifying WSL2 version for $installedDistroName"
+    }
+
+    # List current installed distributions
+    $finalList = & wsl.exe -l -v 2>&1 | Out-String
+    Log-Message ""
+    Log-Message "-> Installed WSL Distributions:" "White"
+    Log-Message (Clean-WSLString $finalList) "DarkGray"
+}
+
+# Main Execution Flow
+Log-Message "==========================================================================" "Cyan"
+Log-Message "        PROXIMAX SIRIUS CORE - WSL2 SUBSYSTEM MANAGER" "Cyan"
+Log-Message "==========================================================================" "Cyan"
+Log-Message " Action: $Action | Distro: $Distro" "White"
+Log-Message " Log: $LogFile" "DarkGray"
+Log-Message " Window will remain open when finished so you can inspect results." "DarkGray"
+Log-Message "==========================================================================" "Cyan"
+
+switch ($Action) {
+    "EnableWSL" {
+        Enable-WSLFeatures
+    }
+    "Update" {
+        Update-WSLSubsystem
+    }
+    "InstallDistro" {
+        Install-WSLDistro -targetDistro $Distro
+    }
+    "All" {
+        Enable-WSLFeatures
+        Update-WSLSubsystem
+        Install-WSLDistro -targetDistro $Distro
+    }
+}
+
+Log-Message ""
+Log-Message "==========================================================================" "Cyan"
+Log-Message "  Setup operations completed!" "Green"
+Log-Message "  You can now return to the ProximaX Sirius Cockpit in your browser." "Green"
+Log-Message "==========================================================================" "Cyan"
+Log-Message "Press Enter to close this window (or close it manually at any time)..." "White"
+Read-Host
+`
 
 // executeWSL executes the Sirius Catapult engine inside WSL2, streaming logs and orchestrating processes
 func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, chainConfigPath string, localDataDir string, libEnvList []string) error {
