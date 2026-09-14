@@ -28,6 +28,10 @@ func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
 	return nil
 }
 
+func (dc *ProcessSupervisor) UpdateWSL() error {
+	return nil
+}
+
 func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, chainConfigPath string, localDataDir string, libEnvList []string) error {
 	return nil
 }

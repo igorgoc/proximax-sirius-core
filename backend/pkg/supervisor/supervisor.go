@@ -193,9 +193,11 @@ type ProcessSupervisor struct {
 	lastLogPurgeFreedMB float64
 
 	// WSL state cache
-	wslCacheMu      sync.RWMutex
-	wslCachedStatus WSLStatus
-	wslCacheTime    time.Time
+	wslCacheMu           sync.RWMutex
+	wslCachedStatus      WSLStatus
+	wslCacheTime         time.Time
+	wslOnlineDistros     []string
+	wslOnlineDistrosTime time.Time
 
 	currentDataDir string
 }

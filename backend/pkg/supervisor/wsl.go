@@ -52,6 +52,11 @@ type WSLStatus struct {
 	DefaultVersion      int      `json:"defaultVersion"`
 	DistroName          string   `json:"distroName"`
 	WSLInstallInitiated bool     `json:"wslInstallInitiated"`
+	WSLVersion          string   `json:"wslVersion,omitempty"`
+	KernelVersion       string   `json:"kernelVersion,omitempty"`
+	IsOutdated          bool     `json:"isOutdated,omitempty"`
+	OnlineDistros       []string `json:"onlineDistros,omitempty"`
+	InstallLog          string   `json:"installLog,omitempty"`
 	ErrorCode           string   `json:"errorCode,omitempty"`
 	ErrorMessage        string   `json:"errorMessage,omitempty"`
 	RawStatus           string   `json:"rawStatus,omitempty"`

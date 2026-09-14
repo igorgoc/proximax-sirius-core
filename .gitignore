@@ -9,6 +9,7 @@ backend/dist/
 
 # OS and IDE files
 .DS_Store
+.vs/
 *.log
 .env
 .env.*

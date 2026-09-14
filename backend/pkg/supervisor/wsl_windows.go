@@ -131,6 +131,98 @@ func (dc *ProcessSupervisor) isWSLEngineRunning() bool {
 	return dc.getWSLEnginePid() > 0
 }
 
+func parseWSLVersionInfo(output string) (wslVer string, kernelVer string) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		lineLower := strings.ToLower(line)
+		if strings.Contains(lineLower, "wsl") && strings.Contains(lineLower, "version") && !strings.Contains(lineLower, "wslg") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				wslVer = strings.TrimSpace(parts[1])
+			}
+		} else if strings.Contains(lineLower, "kernel") && strings.Contains(lineLower, "version") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				kernelVer = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return wslVer, kernelVer
+}
+
+func isWSLVersionOutdated(verStr string) bool {
+	if verStr == "" {
+		return true
+	}
+	parts := strings.Split(verStr, ".")
+	if len(parts) == 0 {
+		return true
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return true
+	}
+	if major < 2 {
+		return true
+	}
+	minor := 0
+	if len(parts) > 1 {
+		minor, _ = strconv.Atoi(parts[1])
+	}
+	if major == 2 && minor < 3 {
+		return true
+	}
+	return false
+}
+
+func (dc *ProcessSupervisor) getOnlineDistrosCached(wslExe string) []string {
+	dc.wslCacheMu.RLock()
+	if time.Since(dc.wslOnlineDistrosTime) < 60*time.Second && len(dc.wslOnlineDistros) > 0 {
+		cached := dc.wslOnlineDistros
+		dc.wslCacheMu.RUnlock()
+		return cached
+	}
+	dc.wslCacheMu.RUnlock()
+
+	distros := dc.queryOnlineDistros(wslExe)
+	if len(distros) > 0 {
+		dc.wslCacheMu.Lock()
+		dc.wslOnlineDistros = distros
+		dc.wslOnlineDistrosTime = time.Now()
+		dc.wslCacheMu.Unlock()
+	}
+	return distros
+}
+
+func (dc *ProcessSupervisor) queryOnlineDistros(wslExe string) []string {
+	cmd := exec.Command(wslExe, "--list", "--online")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	cleaned := cleanWSLOutput(out)
+	lines := strings.Split(cleaned, "\n")
+	var distros []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		upper := strings.ToUpper(trimmed)
+		if strings.Contains(upper, "NAME") || strings.Contains(upper, "VALID DISTRIBUTIONS") || strings.Contains(upper, "INSTALL USING") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 0 {
+			name := fields[0]
+			if !strings.HasPrefix(name, "-") && !strings.EqualFold(name, "NAME") {
+				distros = append(distros, name)
+			}
+		}
+	}
+	return distros
+}
+
 func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	dc.wslCacheMu.RLock()
 	if time.Since(dc.wslCacheTime) < 5*time.Second && dc.wslCachedStatus.State == WSL2Ready {
@@ -168,13 +260,38 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 		}
 	}
 
-	// 2. Query wsl.exe --status
+	// 2. Query wsl.exe --version to inspect installed WSL version
+	cmdVer := exec.Command(wslExe, "--version")
+	outVer, errVer := cmdVer.CombinedOutput()
+	if errVer == nil {
+		cleanedVer := cleanWSLOutput(outVer)
+		wslVer, kernelVer := parseWSLVersionInfo(cleanedVer)
+		status.WSLVersion = wslVer
+		status.KernelVersion = kernelVer
+		status.IsOutdated = isWSLVersionOutdated(wslVer)
+	} else {
+		status.IsOutdated = true
+	}
+
+	// 3. Check recent installation logs
+	installLogPath := filepath.Join(dc.chainConfigPath, "logs", "wsl_install.log")
+	if logData, err := os.ReadFile(installLogPath); err == nil && len(logData) > 0 {
+		cleanedLog := cleanWSLOutput(logData)
+		logLines := strings.Split(strings.TrimSpace(cleanedLog), "\n")
+		startIdx := 0
+		if len(logLines) > 8 {
+			startIdx = len(logLines) - 8
+		}
+		status.InstallLog = strings.Join(logLines[startIdx:], "\n")
+	}
+
+	// 4. Query wsl.exe --status
 	cmdStatus := exec.Command(wslExe, "--status")
 	outStatus, errStatus := cmdStatus.CombinedOutput()
 	cleanedStatus := cleanWSLOutput(outStatus)
 	status.RawStatus = cleanedStatus
 
-	statusCombined := cleanedStatus + " " + extractExitHex(errStatus)
+	statusCombined := cleanedStatus + " " + extractExitHex(errStatus) + " " + status.InstallLog
 	statusLower := strings.ToLower(statusCombined)
 
 	// Check for known error codes / HRESULTs first (locale-independent)
@@ -206,7 +323,6 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	}
 
 	// Locale-independent guard: If wsl.exe --status fails with non-zero exit, WSL is NOT ready/installed!
-	// We do NOT rely on English text like "optional component". Any error from --status means WSL optional component is disabled.
 	if errStatus != nil {
 		status.State = WSLNotInstalled
 		status.ErrorCode = "WSL_NOT_INSTALLED"
@@ -218,7 +334,6 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 	status.DefaultVersion = 2
 	for _, line := range strings.Split(cleanedStatus, "\n") {
 		lineLower := strings.ToLower(strings.TrimSpace(line))
-		// Check for Version: 1 in English, German (Standardversion), French (Version par défaut), Russian, Chinese, etc.
 		if (strings.Contains(lineLower, "version") || strings.Contains(lineLower, "версия") || strings.Contains(lineLower, "版本")) &&
 			strings.Contains(lineLower, "1") && !strings.Contains(lineLower, "2") {
 			status.DefaultVersion = 1
@@ -226,7 +341,7 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 		}
 	}
 
-	// 3. Query installed distributions with wsl.exe -l -v
+	// 5. Query installed distributions with wsl.exe -l -v
 	cmdList := exec.Command(wslExe, "-l", "-v")
 	outList, errList := cmdList.CombinedOutput()
 	cleanedList := cleanWSLOutput(outList)
@@ -264,13 +379,10 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 			continue
 		}
 		fields := strings.Fields(trimmed)
-		// A valid distro row in `wsl -l -v` always has at least 3 fields, with the last field being the VERSION ("1" or "2")
 		if len(fields) < 3 {
 			continue
 		}
 		verStr := fields[len(fields)-1]
-		// Locale-independent guard: Header rows (NAME STATE VERSION, NOM ÉTAT VERSION, ИМЯ СОСТОЯНИЕ ВЕРСИЯ, etc.)
-		// NEVER have "1" or "2" as the last field! This skips headers across all Windows languages.
 		if verStr != "1" && verStr != "2" {
 			continue
 		}
@@ -301,6 +413,32 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 			status.State = WSL2NoDistro
 			status.ErrorMessage = "WSL2 kernel is ready, but no Sirius Linux distribution is installed."
 		}
+
+		// When no distro is installed, query online distros to check if Ubuntu-22.04 is available
+		onlineDistros := dc.getOnlineDistrosCached(wslExe)
+		status.OnlineDistros = onlineDistros
+		if len(onlineDistros) > 0 {
+			hasUbuntu2204 := false
+			for _, d := range onlineDistros {
+				if strings.EqualFold(d, "Ubuntu-22.04") {
+					hasUbuntu2204 = true
+					break
+				}
+			}
+			if !hasUbuntu2204 {
+				status.IsOutdated = true
+			}
+		}
+
+		// Check if recent install log reported distro not found
+		if status.InstallLog != "" {
+			logLower := strings.ToLower(status.InstallLog)
+			if strings.Contains(logLower, "not found") || strings.Contains(logLower, "keine verteilung") || strings.Contains(logLower, "introuvable") {
+				status.ErrorCode = "DISTRO_NOT_FOUND"
+				status.ErrorMessage = "Distribution 'Ubuntu-22.04' was not found in your WSL distribution catalog. Updating WSL is recommended."
+			}
+		}
+
 		return status
 	}
 
@@ -328,14 +466,21 @@ func (dc *ProcessSupervisor) ProbeWSLStatus() (status WSLStatus) {
 }
 
 func (dc *ProcessSupervisor) InitiateWSLInstall() error {
+	logDir := filepath.Join(dc.chainConfigPath, "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, "wsl_install.log")
+
 	// Launch elevated PowerShell command to enable WSL2 without immediate distribution
-	const psScript = `Start-Process wsl -ArgumentList '--install --no-distribution' -Verb RunAs`
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	psScript := fmt.Sprintf(`$ErrorActionPreference = 'Continue'; Write-Host '=== ProximaX Sirius - Enabling Windows Subsystem for Linux (WSL2) ===' -ForegroundColor Cyan; wsl.exe --install --no-distribution *>&1 | Tee-Object -FilePath '%s'; if ($LASTEXITCODE -ne 0) { Write-Host 'WSL enable encountered an error. Exit code:' $LASTEXITCODE -ForegroundColor Red; Write-Host 'Press any key to close this window...' -ForegroundColor Yellow; $host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }`, logPath)
+
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		fmt.Sprintf("Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', \"%s\" -Verb RunAs", strings.ReplaceAll(psScript, `"`, `\"`)))
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		outStr := string(out)
-		// Check for UAC cancellation (Win32 1223)
-		if strings.Contains(outStr, "1223") || strings.Contains(strings.ToLower(outStr), "canceled by the user") || strings.Contains(strings.ToLower(outStr), "access is denied") {
+		outStr := string(out) + " " + extractExitHex(err)
+		outLower := strings.ToLower(outStr)
+		if strings.Contains(outStr, "1223") || strings.Contains(outLower, "canceled by the user") || strings.Contains(outLower, "access is denied") {
 			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined. ProximaX Sirius requires permission once to enable the Windows virtualization feature.")
 		}
 		return fmt.Errorf("failed to initiate WSL install: %v (%s)", err, strings.TrimSpace(outStr))
@@ -353,10 +498,38 @@ func (dc *ProcessSupervisor) InitiateWSLInstall() error {
 	return nil
 }
 
-func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
-	if distroName == "" {
-		distroName = "Ubuntu-22.04"
+func (dc *ProcessSupervisor) UpdateWSL() error {
+	logDir := filepath.Join(dc.chainConfigPath, "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, "wsl_install.log")
+
+	// Invalidate cache
+	dc.wslCacheMu.Lock()
+	dc.wslCacheTime = time.Time{}
+	dc.wslOnlineDistrosTime = time.Time{}
+	dc.wslCacheMu.Unlock()
+
+	psScript := fmt.Sprintf(`$ErrorActionPreference = 'Continue'; Write-Host '=== ProximaX Sirius - Updating Windows Subsystem for Linux (WSL2) ===' -ForegroundColor Cyan; wsl.exe --update --web-download *>&1 | Tee-Object -FilePath '%s'; if ($LASTEXITCODE -ne 0) { wsl.exe --update *>&1 | Tee-Object -FilePath '%s' -Append }; if ($LASTEXITCODE -ne 0) { Write-Host 'WSL Update encountered an error. Exit code:' $LASTEXITCODE -ForegroundColor Red; Write-Host 'Press any key to close this window...' -ForegroundColor Yellow; $host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }`, logPath, logPath)
+
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		fmt.Sprintf("Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', \"%s\" -Verb RunAs", strings.ReplaceAll(psScript, `"`, `\"`)))
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := string(out) + " " + extractExitHex(err)
+		outLower := strings.ToLower(outStr)
+		if strings.Contains(outStr, "1223") || strings.Contains(outLower, "canceled by the user") || strings.Contains(outLower, "access is denied") {
+			return fmt.Errorf("UAC_DENIED: Administrator permissions were declined.")
+		}
+		return fmt.Errorf("failed to initiate WSL update: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
+	return nil
+}
+
+func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
+	logDir := filepath.Join(dc.chainConfigPath, "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, "wsl_install.log")
 
 	// Invalidate cache
 	dc.wslCacheMu.Lock()
@@ -366,9 +539,42 @@ func (dc *ProcessSupervisor) SetupWSLDistro(distroName string) error {
 	// 1. Ensure WSL2 default version
 	_ = exec.Command("wsl.exe", "--set-default-version", "2").Run()
 
-	// 2. Install requested distribution
+	wslExe, _ := exec.LookPath("wsl.exe")
+	if wslExe == "" {
+		wslExe = filepath.Join(os.Getenv("SystemRoot"), "System32", "wsl.exe")
+	}
+
+	targetDistro := distroName
+	if targetDistro == "" {
+		targetDistro = "Ubuntu-22.04"
+	}
+
+	// 2. Query online distros to resolve exact catalog name
+	onlineDistros := dc.getOnlineDistrosCached(wslExe)
+	hasTarget := false
+	hasGenericUbuntu := false
+	for _, d := range onlineDistros {
+		if strings.EqualFold(d, targetDistro) {
+			hasTarget = true
+		}
+		if strings.EqualFold(d, "Ubuntu") {
+			hasGenericUbuntu = true
+		}
+	}
+
+	// If Ubuntu-22.04 requested but not found in catalog, and generic Ubuntu is available, fallback to Ubuntu
+	if !hasTarget && len(onlineDistros) > 0 {
+		if strings.Contains(strings.ToLower(targetDistro), "ubuntu") && hasGenericUbuntu {
+			targetDistro = "Ubuntu"
+		}
+	}
+
+	// 3. Launch installation with log capture and error pause so it never silently vanishes
+	psScript := fmt.Sprintf(`$ErrorActionPreference = 'Continue'; Write-Host '=== ProximaX Sirius - Installing Linux Subsystem (%s) ===' -ForegroundColor Cyan; Write-Host 'Downloading distribution package (~500 MB). Please keep this window open...' -ForegroundColor Yellow; wsl.exe --install -d %s --no-launch *>&1 | Tee-Object -FilePath '%s'; if ($LASTEXITCODE -ne 0) { Write-Host 'Distribution setup encountered an error. Exit code:' $LASTEXITCODE -ForegroundColor Red; Write-Host 'Press any key to close this window...' -ForegroundColor Yellow; $host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }`, targetDistro, targetDistro, logPath)
+
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		fmt.Sprintf("Start-Process wsl -ArgumentList '--install -d %s --no-launch' -Verb RunAs", distroName))
+		fmt.Sprintf("Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', \"%s\" -Verb RunAs", strings.ReplaceAll(psScript, `"`, `\"`)))
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		outStr := string(out) + " " + extractExitHex(err)

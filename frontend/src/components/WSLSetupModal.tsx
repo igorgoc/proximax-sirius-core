@@ -15,9 +15,12 @@ import {
   ShieldCheck,
   Layers,
   ArrowRight,
-  Globe
+  Globe,
+  ArrowUpCircle,
+  FileText
 } from 'lucide-react';
 import { WSLStatus } from '../types';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface WSLSetupModalProps {
   isOpen: boolean;
@@ -26,16 +29,25 @@ interface WSLSetupModalProps {
   onRefreshStatus: () => void;
 }
 
-export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
+// Safe string matching helper: returns false for non-string / null / undefined without throwing
+const strContains = (haystack: unknown, needle: string): boolean => {
+  if (typeof haystack !== 'string') return false;
+  return haystack.toLowerCase().includes(needle.toLowerCase());
+};
+
+const WSLSetupModalContent: React.FC<WSLSetupModalProps> = ({
   isOpen,
   onClose,
   wslStatus,
   onRefreshStatus,
 }) => {
   const [isInstalling, setIsInstalling] = useState(false);
+  const [isUpdatingWSL, setIsUpdatingWSL] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [showManual, setShowManual] = useState(false);
+  const [showLogDetails, setShowLogDetails] = useState(false);
 
   // Poll WSL status while modal is open and WSL is not ready
   useEffect(() => {
@@ -52,23 +64,32 @@ export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
   if (!isOpen) return null;
 
   const state = wslStatus?.state || 'WSL_NOT_INSTALLED';
-  const isBiosDisabled = wslStatus?.errorCode === 'BIOS_VIRTUALIZATION_DISABLED' ||
-    wslStatus?.errorMessage?.toLowerCase().includes('virtual machine platform') ||
-    wslStatus?.rawStatus?.includes('0x80370102');
 
-  const isUacDenied = installError?.includes('UAC_DENIED') ||
-    wslStatus?.errorMessage?.includes('UAC_DENIED') ||
-    installError?.toLowerCase().includes('canceled by the user');
+  const isBiosDisabled = wslStatus?.errorCode === 'BIOS_VIRTUALIZATION_DISABLED' ||
+    strContains(wslStatus?.errorMessage, 'virtual machine platform') ||
+    strContains(wslStatus?.rawStatus, '0x80370102') ||
+    strContains(wslStatus?.installLog, '0x80370102');
+
+  const isUacDenied = strContains(installError, 'UAC_DENIED') ||
+    strContains(wslStatus?.errorMessage, 'UAC_DENIED') ||
+    strContains(installError, 'canceled by the user');
 
   const isNetworkTimeout = wslStatus?.errorCode === 'NETWORK_TIMEOUT' ||
-    installError?.includes('NETWORK_TIMEOUT') ||
-    installError?.toLowerCase().includes('0x80072ee7') ||
-    wslStatus?.rawStatus?.toLowerCase().includes('0x80072ee7');
+    strContains(installError, 'NETWORK_TIMEOUT') ||
+    strContains(installError, '0x80072ee7') ||
+    strContains(wslStatus?.rawStatus, '0x80072ee7') ||
+    strContains(wslStatus?.installLog, '0x80072ee7');
 
   const isGroupPolicyBlocked = wslStatus?.errorCode === 'GROUP_POLICY_BLOCKED' ||
-    installError?.includes('GROUP_POLICY_BLOCKED') ||
-    installError?.toLowerCase().includes('0x8024500c') ||
-    wslStatus?.rawStatus?.toLowerCase().includes('0x8024500c');
+    strContains(installError, 'GROUP_POLICY_BLOCKED') ||
+    strContains(installError, '0x8024500c') ||
+    strContains(wslStatus?.rawStatus, '0x8024500c') ||
+    strContains(wslStatus?.installLog, '0x8024500c');
+
+  const isDistroNotFound = wslStatus?.errorCode === 'DISTRO_NOT_FOUND' ||
+    strContains(installError, 'DISTRO_NOT_FOUND') ||
+    strContains(wslStatus?.errorMessage, 'not found') ||
+    strContains(wslStatus?.installLog, 'not found');
 
   const [distroInstalling, setDistroInstalling] = useState(() => {
     return sessionStorage.getItem('sirius_wsl_distro_installing') === 'true';
@@ -99,6 +120,29 @@ export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
       setInstallError(e.message || 'Network error occurred while requesting subsystem setup');
     } finally {
       setIsInstalling(false);
+    }
+  };
+
+  const handleUpdateWSL = async () => {
+    setIsUpdatingWSL(true);
+    setInstallError(null);
+    setUpdateMsg(null);
+    try {
+      const res = await fetch('/api/system/wsl/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setInstallError(data.error || 'Failed to initiate WSL update');
+      } else {
+        setUpdateMsg(data.message || 'WSL update initiated. Check the opened terminal window.');
+        onRefreshStatus();
+      }
+    } catch (e: any) {
+      setInstallError(e.message || 'Network error occurred while requesting WSL update');
+    } finally {
+      setIsUpdatingWSL(false);
     }
   };
 
@@ -133,6 +177,7 @@ export const WSLSetupModal: React.FC<WSLSetupModalProps> = ({
   const manualScript = `dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
 dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
 wsl --set-default-version 2
+wsl --update
 wsl --install -d Ubuntu-22.04 --no-launch`;
 
   const handleCopyCmd = () => {
@@ -162,11 +207,21 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
               {state === 'WSL2_READY' ? <ShieldCheck className="w-5 h-5" /> : <Cpu className="w-5 h-5" />}
             </div>
             <div>
-              <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+              <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2 flex-wrap">
                 <span>High-Performance Blockchain Subsystem</span>
                 {state === 'WSL2_READY' && (
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold">
                     Ready
+                  </span>
+                )}
+                {wslStatus?.wslVersion && (
+                  <span className="px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">
+                    WSL v{wslStatus.wslVersion}
+                  </span>
+                )}
+                {wslStatus?.isOutdated && state !== 'WSL2_READY' && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-semibold">
+                    Update Recommended
                   </span>
                 )}
               </h2>
@@ -249,6 +304,33 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
             </div>
           )}
 
+          {/* Distro Not Found in Catalog Alert */}
+          {isDistroNotFound && (
+            <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/50 space-y-3 animate-fadeIn">
+              <div className="flex items-start space-x-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-amber-300">
+                    Distribution Catalog Requires WSL Update
+                  </h4>
+                  <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
+                    Ubuntu-22.04 is not listed in your system's current WSL catalog. Updating WSL enables the modern Microsoft distribution catalog containing Ubuntu-22.04 LTS.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3 pt-1">
+                <button
+                  onClick={handleUpdateWSL}
+                  disabled={isUpdatingWSL}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold shadow transition-all flex items-center space-x-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
+                  <span>Update WSL (wsl --update)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Network Timeout Card */}
           {isNetworkTimeout && (
             <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-3 animate-fadeIn">
@@ -300,8 +382,38 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
             </div>
           )}
 
+          {/* Outdated WSL Notice */}
+          {wslStatus?.isOutdated && state !== 'WSL2_READY' && !isDistroNotFound && (
+            <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-amber-500/30 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="font-semibold text-xs text-amber-300">
+                    WSL Version Update Recommended ({wslStatus.wslVersion ? `v${wslStatus.wslVersion}` : 'Inbox / Legacy'})
+                  </span>
+                </div>
+                <button
+                  onClick={handleUpdateWSL}
+                  disabled={isUpdatingWSL}
+                  className="px-2.5 py-1 bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 rounded-lg text-[11px] font-semibold transition-all flex items-center space-x-1.5"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
+                  <span>Update WSL Subsystem</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Older WSL releases lack direct catalog support for Ubuntu-22.04 LTS. Updating WSL ensures clean installation without catalog errors.
+              </p>
+              {updateMsg && (
+                <div className="text-[11px] text-emerald-400 font-medium">
+                  {updateMsg}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* General Install Error */}
-          {installError && !isUacDenied && !isBiosDisabled && !isNetworkTimeout && !isGroupPolicyBlocked && (
+          {installError && !isUacDenied && !isBiosDisabled && !isNetworkTimeout && !isGroupPolicyBlocked && !isDistroNotFound && (
             <div className="p-3.5 rounded-xl bg-red-950/30 border border-red-500/30 text-xs text-red-300 flex items-center space-x-2">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>{installError}</span>
@@ -383,15 +495,22 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
                       <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin flex-shrink-0 mt-0.5" />
                       <div>
                         <h4 className="font-semibold text-indigo-300">
-                          Downloading & Installing Ubuntu-22.04...
+                          Downloading & Initializing Linux Subsystem...
                         </h4>
                         <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
-                          Windows is downloading and initializing the Linux environment in the background (~500 MB). This may take a few minutes depending on your internet connection.
+                          Windows is downloading and initializing the distribution in an elevated terminal window (~500 MB). This may take a few minutes depending on your internet connection.
                         </p>
                       </div>
                     </div>
+
+                    {wslStatus?.installLog && (
+                      <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-24 overflow-y-auto whitespace-pre-wrap">
+                        {wslStatus.installLog}
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between pt-1 text-[11px] text-zinc-400">
-                      <span>Status: Waiting for distribution installation...</span>
+                      <span>Status: Waiting for distribution setup to complete...</span>
                       <div className="flex items-center space-x-3">
                         <button
                           onClick={onRefreshStatus}
@@ -416,23 +535,43 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
                     <p className="text-xs text-zinc-300 leading-relaxed">
                       WSL2 core is active! The isolated Linux subsystem environment (Ubuntu-22.04) needs to be initialized to execute the Sirius node engine.
                     </p>
-                    <button
-                      onClick={handleSetupDistro}
-                      disabled={isInstalling}
-                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
-                    >
-                      {isInstalling ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Initiating Distro Setup...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cpu className="w-4 h-4" />
-                          <span>Install Sirius Linux Subsystem (Ubuntu-22.04)</span>
-                        </>
+
+                    {wslStatus?.installLog && (
+                      <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-24 overflow-y-auto whitespace-pre-wrap">
+                        {wslStatus.installLog}
+                      </div>
+                    )}
+
+                    <div className="space-y-2 pt-1">
+                      <button
+                        onClick={handleSetupDistro}
+                        disabled={isInstalling}
+                        className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
+                      >
+                        {isInstalling ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Initiating Distro Setup...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Cpu className="w-4 h-4" />
+                            <span>Install Sirius Linux Subsystem (Ubuntu-22.04)</span>
+                          </>
+                        )}
+                      </button>
+
+                      {wslStatus?.isOutdated && (
+                        <button
+                          onClick={handleUpdateWSL}
+                          disabled={isUpdatingWSL}
+                          className="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-semibold text-xs border border-zinc-700 transition-colors flex items-center justify-center space-x-2"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingWSL ? 'animate-spin' : ''}`} />
+                          <span>Update WSL First (wsl --update)</span>
+                        </button>
                       )}
-                    </button>
+                    </div>
                   </>
                 )}
               </div>
@@ -448,6 +587,7 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
                     </div>
                     <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
                       Distro: {wslStatus?.distroName || 'Ubuntu-22.04'} • Mode: WSL{wslStatus?.defaultVersion || 2}
+                      {wslStatus?.wslVersion ? ` • WSL v${wslStatus.wslVersion}` : ''}
                     </div>
                   </div>
                 </div>
@@ -514,7 +654,9 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
         {/* Footer */}
         <div className="p-4 border-t border-zinc-800 bg-zinc-950/80 flex items-center justify-between text-xs">
           <span className="text-zinc-500 text-[11px]">
-            {wslStatus?.rawStatus ? `System: ${wslStatus.rawStatus.split('\n')[0]}` : 'Windows 10/11 Architecture'}
+            {typeof wslStatus?.rawStatus === 'string' && wslStatus.rawStatus.trim()
+              ? `System: ${wslStatus.rawStatus.trim().split('\n')[0]}`
+              : `Windows 10/11 Architecture${wslStatus?.wslVersion ? ` • WSL v${wslStatus.wslVersion}` : ''}`}
           </span>
           <button
             onClick={handleDismiss}
@@ -527,3 +669,9 @@ wsl --install -d Ubuntu-22.04 --no-launch`;
     </div>
   );
 };
+
+export const WSLSetupModal: React.FC<WSLSetupModalProps> = (props) => (
+  <ErrorBoundary fallbackTitle="WSL Subsystem Modal Error">
+    <WSLSetupModalContent {...props} />
+  </ErrorBoundary>
+);

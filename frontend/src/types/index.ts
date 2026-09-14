@@ -402,6 +402,11 @@ export interface WSLStatus {
   defaultVersion: number;
   distroName: string;
   wslInstallInitiated: boolean;
+  wslVersion?: string;
+  kernelVersion?: string;
+  isOutdated?: boolean;
+  onlineDistros?: string[];
+  installLog?: string;
   errorCode?: string;
   errorMessage?: string;
   rawStatus?: string;

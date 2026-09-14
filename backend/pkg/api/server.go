@@ -222,6 +222,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/console/query", s.handleConsoleQuery)
 	mux.HandleFunc("/api/system/wsl/status", s.handleSystemWSLStatus)
 	mux.HandleFunc("/api/system/wsl/install", s.handleSystemWSLInstall)
+	mux.HandleFunc("/api/system/wsl/update", s.handleSystemWSLUpdate)
 	mux.HandleFunc("/api/system/wsl/setup-distro", s.handleSystemWSLSetupDistro)
 
 	// Storage & Replicator (DFMS) Routes
@@ -2254,6 +2255,22 @@ func (s *Server) handleSystemWSLInstall(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, map[string]interface{}{
 		"status":  "initiated",
 		"message": "WSL installation initiated. Please complete any administrator prompts.",
+	})
+}
+
+func (s *Server) handleSystemWSLUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	err := s.supervisor.UpdateWSL()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"status":  "initiated",
+		"message": "WSL update initiated. Please allow administrator permissions if prompted.",
 	})
 }
 
