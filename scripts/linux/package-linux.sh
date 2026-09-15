@@ -67,13 +67,18 @@ rm -f "$TARGET_OPT/chainconfig/resources/config-manager.properties"
 rm -f "$TARGET_OPT/chainconfig/resources/.sirius-token"
 rm -f "$TARGET_OPT/chainconfig/resources/harvest-stats.json"
 
-# Populate from templates
+# Populate clean non-template properties
 [ -f "chainconfig/resources/config-harvesting.properties.template" ] && \
     cp "chainconfig/resources/config-harvesting.properties.template" "$TARGET_OPT/chainconfig/resources/config-harvesting.properties"
 [ -f "chainconfig/resources/config-storage.properties.template" ] && \
     cp "chainconfig/resources/config-storage.properties.template" "$TARGET_OPT/chainconfig/resources/config-storage.properties"
 [ -f "chainconfig/resources/config-user.properties.template" ] && \
     cp "chainconfig/resources/config-user.properties.template" "$TARGET_OPT/chainconfig/resources/config-user.properties"
+[ -f "chainconfig/resources/config-manager.properties.template" ] && \
+    cp "chainconfig/resources/config-manager.properties.template" "$TARGET_OPT/chainconfig/resources/config-manager.properties"
+
+# Remove all .template files from bundle package so only non-template configuration files remain
+rm -f "$TARGET_OPT/chainconfig/resources"/*.template
 
 # Genesis bootstrap data & seed package
 if [ -d "chainconfig/genesis_seed" ]; then

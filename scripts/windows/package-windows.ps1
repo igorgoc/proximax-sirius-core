@@ -197,10 +197,16 @@ foreach ($sf in $SensitiveFiles) {
     if (Test-Path $p) { Remove-Item -Force $p }
 }
 
-# Copy clean starter templates
+# Populate clean non-template properties
 Copy-Item (Join-Path $RootDir "chainconfig\resources\config-harvesting.properties.template") (Join-Path $TargetResources "config-harvesting.properties")
 Copy-Item (Join-Path $RootDir "chainconfig\resources\config-storage.properties.template") (Join-Path $TargetResources "config-storage.properties")
 Copy-Item (Join-Path $RootDir "chainconfig\resources\config-user.properties.template") (Join-Path $TargetResources "config-user.properties")
+if (Test-Path (Join-Path $RootDir "chainconfig\resources\config-manager.properties.template")) {
+    Copy-Item (Join-Path $RootDir "chainconfig\resources\config-manager.properties.template") (Join-Path $TargetResources "config-manager.properties")
+}
+
+# Remove all .template files from bundle package so only non-template configuration files remain
+Get-ChildItem -Path $TargetResources -Filter "*.template" | Remove-Item -Force
 
 # Genesis bootstrap data & seed package
 $GenesisSeedDir = Join-Path $RootDir "chainconfig\genesis_seed"
