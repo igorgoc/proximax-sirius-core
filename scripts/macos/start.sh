@@ -18,10 +18,26 @@ if [ "$(uname)" = "Darwin" ]; then
     xattr -cr "$DIR" 2>/dev/null || true
 fi
 
-# 2. Free port 8080 if already held by an existing instance
-OLD_PID=$(lsof -ti :8080 2>/dev/null || true)
+# 2. Check if already running or free port if occupied by stale process
+PORT="${PORT:-8080}"
+STOP_CMD="./scripts/macos/stop.sh"
+[ -f "$DIR/stop.sh" ] && STOP_CMD="./stop.sh"
+
+if curl -s -f "http://127.0.0.1:$PORT/api/status" >/dev/null 2>&1; then
+    echo "========================================================="
+    echo "  Sirius Core Web Manager is ALREADY RUNNING on port $PORT!"
+    echo "  Web Dashboard: http://localhost:$PORT"
+    echo "  To stop:       $STOP_CMD"
+    echo "========================================================="
+    if [ "$(uname)" = "Darwin" ]; then
+        open "http://localhost:$PORT" 2>/dev/null || true
+    fi
+    exit 0
+fi
+
+OLD_PID=$(lsof -ti :$PORT 2>/dev/null || true)
 if [ -n "$OLD_PID" ]; then
-    echo "-> Stopping existing instance on port 8080 (PID $OLD_PID)..."
+    echo "-> Freeing occupied port $PORT (PID $OLD_PID)..."
     kill -INT "$OLD_PID" 2>/dev/null || true
     sleep 1
     if kill -0 "$OLD_PID" 2>/dev/null; then
@@ -86,13 +102,57 @@ chmod +x "$SIRIUS_CORE_BIN" 2>/dev/null || true
 export DYLD_LIBRARY_PATH="$DIR/bin:${DYLD_LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="$DIR/bin:${LD_LIBRARY_PATH:-}"
 
-echo "========================================================="
-echo "  ProximaX Sirius Core Standalone Node Manager (macOS)"
-echo "  Architecture: $(uname -s) $(uname -m)"
-echo "========================================================="
-echo "-> Starting Sirius Core Web Manager on port 8080..."
-echo "-> Web Dashboard: http://localhost:8080"
-echo "-> To stop: Press Ctrl+C or run ./scripts/macos/stop.sh"
-echo "========================================================="
+FOREGROUND=false
+for arg in "$@"; do
+    if [ "$arg" = "--foreground" ] || [ "$arg" = "-f" ]; then
+        FOREGROUND=true
+        break
+    fi
+done
 
-exec "$SIRIUS_CORE_BIN" -port 8080 -chainconfig "$DIR/chainconfig" "$@"
+if [ "$FOREGROUND" = true ]; then
+    echo "========================================================="
+    echo "  ProximaX Sirius Core Standalone Node Manager (macOS)"
+    echo "  Architecture: $(uname -s) $(uname -m) (Foreground Mode)"
+    echo "========================================================="
+    echo "-> Starting Sirius Core Web Manager on port $PORT..."
+    echo "-> Web Dashboard: http://localhost:$PORT"
+    echo "-> To stop: Press Ctrl+C or run $STOP_CMD"
+    echo "========================================================="
+    exec "$SIRIUS_CORE_BIN" -port "$PORT" -chainconfig "$DIR/chainconfig" "$@"
+else
+    LOGS_DIR="$DIR/chainconfig/logs"
+    mkdir -p "$LOGS_DIR"
+    LOG_FILE="$LOGS_DIR/manager.log"
+
+    echo "-> Starting Sirius Core Web Manager in background on port $PORT..."
+    nohup "$SIRIUS_CORE_BIN" -port "$PORT" -chainconfig "$DIR/chainconfig" "$@" >> "$LOG_FILE" 2>&1 &
+    NEW_PID=$!
+    echo "$NEW_PID" > "$DIR/.sirius-core.pid"
+
+    # Wait for Web Dashboard readiness
+    READY=false
+    for i in {1..30}; do
+        if curl -s -f -o /dev/null "http://127.0.0.1:$PORT/api/status" 2>/dev/null || curl -s -f -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
+            READY=true
+            break
+        fi
+        if ! kill -0 "$NEW_PID" 2>/dev/null; then
+            echo "ERROR: Sirius Core failed to start. Check logs: tail -n 25 $LOG_FILE" >&2
+            tail -n 25 "$LOG_FILE" >&2
+            rm -f "$DIR/.sirius-core.pid"
+            exit 1
+        fi
+        sleep 0.2
+    done
+
+    echo "========================================================="
+    echo "  ProximaX Sirius Core Node Manager is ONLINE (PID: $NEW_PID)!"
+    echo "  Architecture: $(uname -s) $(uname -m) (Background Task)"
+    echo ""
+    echo "  Web Dashboard: http://localhost:$PORT"
+    echo "  View Logs:     tail -f $LOG_FILE"
+    echo "  Stop Node:     $STOP_CMD"
+    echo "========================================================="
+    exit 0
+fi

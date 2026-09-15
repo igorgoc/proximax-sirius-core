@@ -212,16 +212,15 @@ if ! pgrep -f "sirius.bc" >/dev/null 2>&1; then
             STORAGE_HEIGHT=$(od -An -j0 -N8 -t u8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo 0)
             CACHE_HEIGHT=$(od -An -j32 -N8 -t u8 "$SUPP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
             if [ -n "$STORAGE_HEIGHT" ] && [ -n "$CACHE_HEIGHT" ]; then
-                if [ "$STORAGE_HEIGHT" -gt 1 ] || [ "$CACHE_HEIGHT" -gt 1 ]; then
-                    if [ "$STORAGE_HEIGHT" -eq "$CACHE_HEIGHT" ]; then
-                        echo "✓ Shutdown integrity verified: Storage Height ($STORAGE_HEIGHT) == Cache Height ($CACHE_HEIGHT)."
-                    else
-                        echo "<warning> Height divergence detected: Storage Height ($STORAGE_HEIGHT) != Cache Height ($CACHE_HEIGHT)!"
-                        if [ -x "$DIR/bin/catapult.recovery" ]; then
-                            echo "-> Running catapult.recovery to reconcile..."
-                            "$DIR/bin/catapult.recovery" "$DIR/chainconfig" 2>&1 || true
-                            sync 2>/dev/null || true
-                        fi
+                if [ "$STORAGE_HEIGHT" -eq "$CACHE_HEIGHT" ]; then
+                    echo "✓ Shutdown integrity verified: Storage Height ($STORAGE_HEIGHT) == Cache Height ($CACHE_HEIGHT)."
+                elif [ "$STORAGE_HEIGHT" -gt 1 ]; then
+                    echo "<warning> Height divergence detected: Storage Height ($STORAGE_HEIGHT) != Cache Height ($CACHE_HEIGHT)!"
+                    if [ -x "$DIR/bin/catapult.recovery" ]; then
+                        echo "-> Running catapult.recovery to reconcile..."
+                        ulimit -n 65536 2>/dev/null || true
+                        DYLD_LIBRARY_PATH="$DIR/bin:${DYLD_LIBRARY_PATH:-}" LD_LIBRARY_PATH="$DIR/bin:${LD_LIBRARY_PATH:-}" "$DIR/bin/catapult.recovery" "$DIR/chainconfig" 2>&1 || true
+                        sync 2>/dev/null || true
                     fi
                 fi
             fi
