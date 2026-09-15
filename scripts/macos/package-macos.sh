@@ -90,10 +90,10 @@ fi
 
 # Include launcher helper scripts (both in release root and in scripts/macos)
 cp scripts/macos/start.sh scripts/macos/start.command scripts/macos/stop.sh scripts/macos/restart.sh "$BUILD_DIR/"
-[ -f "scripts/linux/start-node.sh" ] && cp scripts/linux/start-node.sh "$BUILD_DIR/"
 
 mkdir -p "$BUILD_DIR/scripts/macos"
 cp -R scripts/macos/* "$BUILD_DIR/scripts/macos/"
+rm -f "$BUILD_DIR/scripts/macos/package-macos.sh" "$BUILD_DIR/scripts/macos/bundle_dylib_deps.py" "$BUILD_DIR/scripts/macos/sign_app.py"
 chmod +x "$BUILD_DIR"/*.sh "$BUILD_DIR"/*.command "$BUILD_DIR/sirius-core" "$BUILD_DIR/scripts/macos"/* 2>/dev/null || true
 
 # Set strict permissions on properties

@@ -29,12 +29,18 @@ if defined PS_SCRIPT (
     exit /b !EXIT_CODE!
 )
 
-REM 2. Restart via WSL
-where wsl.exe >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    wsl.exe --cd "!ROOT_DIR!" -u root -- ./scripts/linux/restart.sh %*
+REM 2. Restart via Windows batch scripts
+if exist "%~dp0stop.bat" (
+    call "%~dp0stop.bat" %*
+    timeout /t 2 >nul 2>&1
+    call "%~dp0start.bat" %*
+    exit /b !ERRORLEVEL!
+) else if exist "!ROOT_DIR!\stop.bat" (
+    call "!ROOT_DIR!\stop.bat" %*
+    timeout /t 2 >nul 2>&1
+    call "!ROOT_DIR!\start.bat" %*
     exit /b !ERRORLEVEL!
 )
 
-echo Error: Neither native sirius.exe nor WSL found!
+echo Error: Neither restart-node.ps1 nor start.bat/stop.bat found!
 exit /b 1

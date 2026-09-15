@@ -99,6 +99,7 @@ cp scripts/linux/start.sh scripts/linux/stop.sh scripts/linux/restart.sh scripts
 
 mkdir -p "$TARGET_OPT/scripts/linux"
 cp -R scripts/linux/* "$TARGET_OPT/scripts/linux/"
+rm -f "$TARGET_OPT/scripts/linux/package-linux.sh" "$TARGET_OPT/scripts/linux/test_"*.sh
 
 chmod +x "$TARGET_OPT"/*.sh "$TARGET_OPT/sirius-core" "$TARGET_OPT/scripts/linux"/*.sh 2>/dev/null || true
 

@@ -64,20 +64,6 @@ go build -ldflags="-s -w" -o $BackendOut .
 $BuildWinBin = Join-Path $BuildDir "bin\windows"
 New-Item -ItemType Directory -Path $BuildWinBin -Force | Out-Null
 Copy-Item $BackendOut (Join-Path $BuildWinBin "sirius-core.exe")
-
-# Also build Linux binary for WSL execution
-Write-Host "-> Compiling Go backend for Linux (WSL engine)..." -ForegroundColor Green
-$env:GOOS = "linux"
-$env:GOARCH = "amd64"
-$LinuxBackendOut = Join-Path $BuildDir "sirius-core"
-go build -ldflags="-s -w" -o $LinuxBackendOut .
-
-$BuildLinuxBin = Join-Path $BuildDir "bin\linux"
-New-Item -ItemType Directory -Path $BuildLinuxBin -Force | Out-Null
-Copy-Item $LinuxBackendOut (Join-Path $BuildLinuxBin "sirius-core")
-
-$env:GOOS = "windows"
-$env:GOARCH = "amd64"
 Set-Location $RootDir
 
 # 3. Stage directories
@@ -164,9 +150,10 @@ foreach ($alias in $SymlinkAliases.Keys) {
 }
 
 if (Test-Path $SourceBin) {
-    # Copy all real files (binaries, materialized .so libraries) into TargetBin, skipping directory trees like bin\linux or bin\macos
+    # Copy all real files (binaries, materialized .so libraries) into TargetBin, skipping directory trees like bin\linux or bin\macos and foreign macOS .dylib files
     Get-ChildItem -Path $SourceBin -File | Where-Object {
-        $_.Length -gt 0 -and (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint))
+        $_.Length -gt 0 -and (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) -and
+        $_.Name -notmatch '\.dylib$' -and $_.Name -ne '.DS_Store'
     } | Copy-Item -Destination $TargetBin -Force -ErrorAction SilentlyContinue
 
     # Ensure all symlink aliases are also mirrored into TargetBin
@@ -231,11 +218,13 @@ if (-not (Test-Path $TargetIndex)) {
     [System.IO.File]::WriteAllBytes($TargetIndex, [byte[]]@(1, 0, 0, 0, 0, 0, 0, 0))
 }
 
-# Copy launchers and helper scripts (both at root of zip and in scripts\windows for maximum flexibility)
+# Copy Windows launchers and helper scripts (both at root of zip and in scripts\windows for maximum flexibility)
 $WinScriptDir = Join-Path $RootDir "scripts\windows"
 $BuildWinScripts = Join-Path $BuildDir "scripts\windows"
 New-Item -ItemType Directory -Path $BuildWinScripts -Force | Out-Null
 Copy-Item (Join-Path $WinScriptDir "*") $BuildWinScripts -Force
+# Remove developer packaging script from the release bundle
+Remove-Item -Force (Join-Path $BuildWinScripts "package-windows.ps1") -ErrorAction SilentlyContinue
 
 # Stage top-level launchers in release root
 Copy-Item (Join-Path $WinScriptDir "start.bat") $BuildDir
@@ -252,29 +241,6 @@ Copy-Item (Join-Path $WinScriptDir "WINDOWS_DEFENDER_NOTES.md") $BuildDir
 
 if (Test-Path (Join-Path $RootDir "WINDOWS_HANDOVER.md")) {
     Copy-Item (Join-Path $RootDir "WINDOWS_HANDOVER.md") $BuildDir
-}
-
-# Stage Linux scripts for WSL execution support
-$LinuxScriptDir = Join-Path $RootDir "scripts\linux"
-$BuildLinuxScripts = Join-Path $BuildDir "scripts\linux"
-New-Item -ItemType Directory -Path $BuildLinuxScripts -Force | Out-Null
-if (Test-Path $LinuxScriptDir) {
-    Copy-Item (Join-Path $LinuxScriptDir "*") $BuildLinuxScripts -Recurse -Force
-}
-if (Test-Path (Join-Path $LinuxScriptDir "start.sh")) {
-    Copy-Item (Join-Path $LinuxScriptDir "start.sh") $BuildDir
-    Copy-Item (Join-Path $LinuxScriptDir "stop.sh") $BuildDir
-    Copy-Item (Join-Path $LinuxScriptDir "restart.sh") $BuildDir
-}
-if (Test-Path (Join-Path $LinuxScriptDir "run.sh")) {
-    Copy-Item (Join-Path $LinuxScriptDir "run.sh") $BuildDir
-}
-
-# Ensure all staged shell scripts have strict Unix LF line endings
-Get-ChildItem -Path $BuildDir -Filter "*.sh" -Recurse | ForEach-Object {
-    $text = [System.IO.File]::ReadAllText($_.FullName)
-    $text = $text.Replace("`r`n", "`n")
-    [System.IO.File]::WriteAllText($_.FullName, $text, [System.Text.UTF8Encoding]::new($false))
 }
 
 # 4. Create ZIP distribution
