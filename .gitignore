@@ -1,5 +1,10 @@
-# Blockchain state & logs
-chainconfig/data/
+# Blockchain state & logs (keep genesis block 1 files tracked for releases)
+chainconfig/data/*
+!chainconfig/data/00000/
+chainconfig/data/00000/*
+!chainconfig/data/00000/00001.dat
+!chainconfig/data/00000/hashes.dat
+!chainconfig/data/index.dat
 chainconfig/logs/
 chainconfig/replicator_service_logs/
 

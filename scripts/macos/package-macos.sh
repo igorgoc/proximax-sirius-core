@@ -70,10 +70,17 @@ rm -f "$BUILD_DIR/chainconfig/resources/harvest-stats.json"
 [ -f "chainconfig/resources/config-user.properties.template" ] && \
     cp "chainconfig/resources/config-user.properties.template" "$BUILD_DIR/chainconfig/resources/config-user.properties"
 
-# Genesis bootstrap data
+# Genesis bootstrap data & seed package
+if [ -d "chainconfig/genesis_seed" ]; then
+    cp -R chainconfig/genesis_seed "$BUILD_DIR/chainconfig/"
+    cp "chainconfig/genesis_seed/00000/00001.dat" "$BUILD_DIR/chainconfig/data/00000/" 2>/dev/null || true
+    cp "chainconfig/genesis_seed/00000/hashes.dat" "$BUILD_DIR/chainconfig/data/00000/" 2>/dev/null || true
+    [ -f "chainconfig/genesis_seed/index.dat" ] && cp "chainconfig/genesis_seed/index.dat" "$BUILD_DIR/chainconfig/data/"
+fi
 if [ -f "chainconfig/data/00000/00001.dat" ]; then
     cp "chainconfig/data/00000/00001.dat" "$BUILD_DIR/chainconfig/data/00000/"
     cp "chainconfig/data/00000/hashes.dat" "$BUILD_DIR/chainconfig/data/00000/"
+    [ -f "chainconfig/data/index.dat" ] && cp "chainconfig/data/index.dat" "$BUILD_DIR/chainconfig/data/"
 fi
 
 # Include launcher helper scripts (both in release root and in scripts/macos)

@@ -42,6 +42,17 @@ if [ "$(uname -s)" = "Darwin" ]; then
     fi
 fi
 
+# 3.1 Ensure genesis nemesis block exists and has valid size
+mkdir -p "$DIR/chainconfig/data/00000"
+if [ ! -s "$DIR/chainconfig/data/00000/00001.dat" ] || [ ! -s "$DIR/chainconfig/data/00000/hashes.dat" ]; then
+    if [ -s "$DIR/chainconfig/genesis_seed/00000/00001.dat" ] && [ -s "$DIR/chainconfig/genesis_seed/00000/hashes.dat" ]; then
+        echo "-> Seeding official genesis block from genesis_seed..."
+        cp -p "$DIR/chainconfig/genesis_seed/00000/00001.dat" "$DIR/chainconfig/data/00000/00001.dat"
+        cp -p "$DIR/chainconfig/genesis_seed/00000/hashes.dat" "$DIR/chainconfig/data/00000/hashes.dat"
+        [ -s "$DIR/chainconfig/genesis_seed/index.dat" ] && cp -p "$DIR/chainconfig/genesis_seed/index.dat" "$DIR/chainconfig/data/index.dat"
+    fi
+fi
+
 # 4. Resolve or build the sirius-core binary
 SIRIUS_CORE_BIN=""
 if [ -f "$DIR/bin/macos/sirius-core" ]; then

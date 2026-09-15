@@ -84,6 +84,7 @@ if [ -d "chainconfig/genesis_seed" ]; then
 elif [ -f "chainconfig/data/00000/00001.dat" ]; then
     cp "chainconfig/data/00000/00001.dat" "$TARGET_OPT/chainconfig/data/00000/"
     cp "chainconfig/data/00000/hashes.dat" "$TARGET_OPT/chainconfig/data/00000/"
+    [ -f "chainconfig/data/index.dat" ] && cp "chainconfig/data/index.dat" "$TARGET_OPT/chainconfig/data/"
 fi
 
 # Include launcher helper scripts (both at root of package and in scripts/linux)
