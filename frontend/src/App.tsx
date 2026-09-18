@@ -1,0 +1,524 @@
+import { useState, useEffect, lazy, Suspense } from 'react';
+import { Header } from './components/Header';
+import { NavigationTabs } from './components/NavigationTabs';
+import { StatusBar } from './components/StatusBar';
+import { OverviewTab } from './components/OverviewTab';
+import { EngineUpdateBanner } from './components/EngineUpdateBanner';
+import { NodeMetrics, NodeConfig, HarvestStats, StorageStatus, PortCheckResult, NetworkValidatorStats, EngineUpdateStatus, WSLStatus } from './types';
+
+// Dynamic code-split tabs & modals
+const ValidatorTab = lazy(() => import('./components/ValidatorTab').then(m => ({ default: m.ValidatorTab })));
+const NetworkTab = lazy(() => import('./components/NetworkTab').then(m => ({ default: m.NetworkTab })));
+const StorageTab = lazy(() => import('./components/StorageTab').then(m => ({ default: m.StorageTab })));
+const LogsTab = lazy(() => import('./components/LogsTab').then(m => ({ default: m.LogsTab })));
+const ConfigTab = lazy(() => import('./components/ConfigTab').then(m => ({ default: m.ConfigTab })));
+const MaintenanceTab = lazy(() => import('./components/MaintenanceTab').then(m => ({ default: m.MaintenanceTab })));
+const SetupWizard = lazy(() => import('./components/SetupWizard').then(m => ({ default: m.SetupWizard })));
+const AboutModal = lazy(() => import('./components/AboutModal').then(m => ({ default: m.AboutModal })));
+const EngineUpdateModal = lazy(() => import('./components/EngineUpdateModal').then(m => ({ default: m.EngineUpdateModal })));
+const WSLSetupModal = lazy(() => import('./components/WSLSetupModal').then(m => ({ default: m.WSLSetupModal })));
+
+function TabLoadingFallback() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+      <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+      <p className="text-xs uppercase tracking-widest font-mono text-slate-500">Loading module...</p>
+    </div>
+  );
+}
+
+export function App() {
+  const [activeTab, setActiveTab] = useState(() => {
+    const param = new URLSearchParams(window.location.search).get('tab');
+    if (param) return param;
+    const hash = window.location.hash.replace('#', '');
+    if (hash === 'storage' || hash.startsWith('storage-')) return 'validator';
+    if (hash === 'snapshots' || hash === 'settings') return 'config';
+    if (hash) return hash;
+    return 'overview';
+  });
+
+  useEffect(() => {
+    if (activeTab === 'validator' && (window.location.hash === '#storage' || window.location.hash.startsWith('#storage-'))) {
+      return;
+    }
+    if (window.location.hash !== `#${activeTab}`) {
+      window.history.replaceState(null, '', `#${activeTab}`);
+    }
+  }, [activeTab]);
+  const [darkMode, setDarkMode] = useState(true);
+  const [metrics, setMetrics] = useState<NodeMetrics | null>(null);
+  const [config, setConfig] = useState<NodeConfig | null>(() => {
+    try {
+      const cached = localStorage.getItem('sirius_node_config');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return null;
+  });
+  const [harvestStats, setHarvestStats] = useState<HarvestStats | null>(null);
+  const [networkValidatorStats, setNetworkValidatorStats] = useState<NetworkValidatorStats | null>(null);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
+  const [portCheck, setPortCheck] = useState<PortCheckResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+
+  // Sync dark mode class
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
+  // Periodic status poll
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [engineStatus, setEngineStatus] = useState<EngineUpdateStatus | null>(() => {
+    const testView = new URLSearchParams(window.location.search).get('test_view');
+    if (testView === 'banner' || testView === 'modal') {
+      return {
+        currentVersion: 'v1.9.7',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
+        releaseUrl: 'https://github.com/igorgoc/cpp-xpx-chain/releases/tag/v1.9.8',
+        isApplying: false,
+        state: 'idle',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'progress') {
+      return {
+        currentVersion: 'v1.9.7',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
+        isApplying: true,
+        state: 'swapping',
+        message: 'Stopping engine gracefully, creating sirius.bc.bak backup, and performing atomic binary swap...',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'initial_setup') {
+      return {
+        currentVersion: 'none',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        isInstalled: false,
+        isInitialSetup: true,
+        releaseNotes: 'Official Sirius Engine v1.9.8 release with native consensus performance and P2P fast-sync improvements.',
+        releaseUrl: 'https://github.com/igorgoc/cpp-xpx-chain/releases/tag/v1.9.8',
+        isApplying: true,
+        state: 'verifying',
+        message: 'Downloading Sirius Engine v1.9.8 (verified, signed)...',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'initial_setup_failed') {
+      return {
+        currentVersion: 'none',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        isInstalled: false,
+        isInitialSetup: true,
+        releaseNotes: 'Official Sirius Engine v1.9.8 release with native consensus performance and P2P fast-sync improvements.',
+        releaseUrl: 'https://github.com/igorgoc/cpp-xpx-chain/releases/tag/v1.9.8',
+        isApplying: false,
+        state: 'failed',
+        message: 'Internet connection required for initial engine setup: dial tcp: lookup api.github.com: no such host',
+        rollbackOccurred: false,
+      };
+    }
+    if (testView === 'rollback') {
+      return {
+        currentVersion: 'v1.9.7',
+        targetVersion: 'v1.9.8',
+        hasUpdate: true,
+        isInstalled: true,
+        releaseNotes: 'Engine consensus performance enhancements, RocksDB memory cache optimization, and P2P fast-sync resilience improvements.',
+        isApplying: false,
+        state: 'rolled_back',
+        rollbackOccurred: true,
+        message: 'Post-update healthcheck failed: process crashed on boot (SIGSEGV). Automated rollback restored previous binary (v1.9.7) and restarted the node cleanly.',
+      };
+    }
+    return null;
+  });
+  const [engineModalOpen, setEngineModalOpen] = useState(() => {
+    const testView = new URLSearchParams(window.location.search).get('test_view');
+    return testView === 'modal' || testView === 'progress' || testView === 'rollback' || testView === 'initial_setup' || testView === 'initial_setup_failed';
+  });
+  const [autoRecovery, setAutoRecovery] = useState(true);
+
+  // Global event listener to open engine update modal from anywhere
+  useEffect(() => {
+    const handler = () => setEngineModalOpen(true);
+    window.addEventListener('open-engine-updater', handler);
+    return () => window.removeEventListener('open-engine-updater', handler);
+  }, []);
+
+  const [wslStatus, setWslStatus] = useState<WSLStatus | null>(null);
+  const [wslModalOpen, setWslModalOpen] = useState(false);
+
+  // Global event listener to open WSL setup modal
+  useEffect(() => {
+    const handler = () => setWslModalOpen(true);
+    window.addEventListener('open-wsl-setup', handler);
+    return () => window.removeEventListener('open-wsl-setup', handler);
+  }, []);
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/status');
+      if (res.ok) {
+        const data = await res.json();
+        setMetrics(data.metrics || null);
+        setHarvestStats(data.harvestStats || null);
+        if (data.networkValidatorStats) setNetworkValidatorStats(data.networkValidatorStats);
+        if (data.storageStatus) setStorageStatus(data.storageStatus);
+        if (data.portCheck) setPortCheck(data.portCheck);
+        if (data.updateInfo) setUpdateInfo(data.updateInfo);
+        if (data.engineStatus) {
+          setEngineStatus(prev => {
+            const testView = new URLSearchParams(window.location.search).get('test_view');
+            if (testView) return prev;
+            return data.engineStatus;
+          });
+
+          // Auto open engine setup modal on first load if engine is not installed or currently applying
+          if ((!data.engineStatus.isInstalled || data.engineStatus.isApplying) && !sessionStorage.getItem('engine_setup_dismissed')) {
+            setEngineModalOpen(true);
+          }
+        }
+        if (typeof data.autoRecovery === 'boolean') setAutoRecovery(data.autoRecovery);
+        if (data.wslStatus) {
+          setWslStatus(data.wslStatus);
+          const isConfiguringWizard = (!data.config?.isConfigured && !sessionStorage.getItem('wizard_dismissed')) || wizardOpen;
+          if (data.wslStatus.isWindows && data.wslStatus.state !== 'WSL2_READY' && !sessionStorage.getItem('wsl_setup_dismissed') && !isConfiguringWizard) {
+            setWslModalOpen(true);
+          }
+        }
+
+        setConfig((prev) => {
+          if (!prev || JSON.stringify(prev) !== JSON.stringify(data.config)) {
+            if (data.config) {
+              try { localStorage.setItem('sirius_node_config', JSON.stringify(data.config)); } catch {}
+            }
+            return data.config || null;
+          }
+          return prev;
+        });
+
+        // Auto open setup wizard if not configured yet on first load
+        if (data.config && !data.config.isConfigured && !sessionStorage.getItem('wizard_dismissed')) {
+          setWizardOpen(true);
+          sessionStorage.setItem('wizard_dismissed', 'true');
+        }
+      }
+    } catch (e) {
+      console.warn('Polling status error:', e);
+    }
+  };
+
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch(`/api/config?_t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data === 'object') {
+          setConfig((prev) => {
+            if (!prev || JSON.stringify(prev) !== JSON.stringify(data)) {
+              return data;
+            }
+            return prev;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Config fetch error:', e);
+    }
+  };
+
+  useEffect(() => {
+    let intervalId: any = null;
+
+    const getPollingInterval = () => {
+      if (document.hidden) {
+        return 30000; // 30s when browser tab is in background
+      }
+      if (activeTab === 'overview') {
+        return 4000; // 4s active on main dashboard
+      }
+      return 10000; // 10s on static tabs (config, storage, maintenance, logs)
+    };
+
+    const restartPolling = () => {
+      if (intervalId) clearInterval(intervalId);
+      intervalId = setInterval(fetchStatus, getPollingInterval());
+    };
+
+    fetchConfig();
+    fetchStatus();
+    restartPolling();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchStatus();
+      }
+      restartPolling();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeTab]);
+
+  const handleToggleAutoRecovery = async (enabled: boolean) => {
+    try {
+      const res = await fetch('/api/node/watchdog/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        setAutoRecovery(enabled);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleStartNode = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/node/start', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start node');
+      await fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStopNode = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/node/stop', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to stop node');
+      await fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestartNode = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/node/restart', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to restart node');
+      await fetchStatus();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleWizardFinished = (startImmediately: boolean) => {
+    setWizardOpen(false);
+    fetchStatus();
+    if (startImmediately) {
+      handleStartNode();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden bg-[#090d16] text-slate-100 font-sans">
+      {/* Top Operator Top Bar */}
+      <Header
+        metrics={metrics}
+        config={config}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        onStart={handleStartNode}
+        onStop={handleStopNode}
+        onRestart={handleRestartNode}
+        onOpenWizard={() => setWizardOpen(true)}
+        onOpenAbout={() => setAboutOpen(true)}
+        setActiveTab={setActiveTab}
+        loading={loading}
+      />
+
+      {/* Sirius Engine Update Available Banner */}
+      <EngineUpdateBanner
+        engineStatus={engineStatus}
+        onOpenModal={() => setEngineModalOpen(true)}
+      />
+
+      {/* WSL2 Subsystem Configuration Banner (Windows only when not ready) */}
+      {wslStatus?.isWindows && wslStatus.state !== 'WSL2_READY' && (
+        <div className="bg-gradient-to-r from-amber-950/90 via-zinc-900 to-zinc-950 border-b border-amber-500/50 px-4 py-2.5 text-xs text-amber-200 flex flex-col sm:flex-row items-center justify-between gap-2 shadow-lg">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span>
+              <strong>Windows Blockchain Subsystem (WSL2) Setup Required:</strong> Virtualization subsystem is not yet configured to run Sirius consensus.
+            </span>
+          </div>
+          <button
+            onClick={() => setWslModalOpen(true)}
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg shadow text-xs transition-colors flex items-center space-x-1.5 flex-shrink-0"
+          >
+            <span>Configure Subsystem</span>
+          </button>
+        </div>
+      )}
+
+      {/* Tabs navigation */}
+      <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+
+      {/* Main Operator Content Viewport */}
+      <main className="flex-1 bg-[#0F1115] overflow-y-auto">
+        {activeTab === 'overview' && (
+          <OverviewTab
+            metrics={metrics}
+            config={config}
+            harvestStats={harvestStats}
+            networkValidatorStats={networkValidatorStats}
+            storageStatus={storageStatus}
+            portCheck={portCheck}
+            updateInfo={updateInfo}
+            engineStatus={engineStatus}
+            autoRecovery={autoRecovery}
+            onStart={handleStartNode}
+            onStop={handleStopNode}
+            onRestart={handleRestartNode}
+            onOpenWizard={() => setWizardOpen(true)}
+            setActiveTab={setActiveTab}
+            loading={loading}
+            onRefresh={fetchStatus}
+            onToggleAutoRecovery={handleToggleAutoRecovery}
+          />
+        )}
+
+        <Suspense fallback={<TabLoadingFallback />}>
+          {activeTab === 'validator' && (
+            <ValidatorTab
+              metrics={metrics}
+              config={config}
+              harvestStats={harvestStats}
+              networkValidatorStats={networkValidatorStats}
+              storageStatus={storageStatus}
+              portCheck={portCheck}
+              loading={loading}
+              onOpenSettings={() => setActiveTab('config')}
+              onStartNode={handleStartNode}
+              onRefresh={fetchStatus}
+            />
+          )}
+
+          {activeTab === 'network' && (
+            <NetworkTab
+              metrics={metrics}
+              config={config}
+              storageStatus={storageStatus}
+              portCheck={portCheck}
+              onRefresh={fetchStatus}
+              loading={loading}
+            />
+          )}
+
+          {activeTab === 'config' && (
+            <ConfigTab config={config} harvestStats={harvestStats} metrics={metrics} onRefreshConfig={fetchStatus} />
+          )}
+
+          {activeTab === 'storage' && (
+            <StorageTab
+              storageStatus={storageStatus}
+              portCheck={portCheck}
+              onRefresh={fetchStatus}
+              loading={loading}
+            />
+          )}
+
+          {activeTab === 'maintenance' && (
+            <MaintenanceTab
+              metrics={metrics}
+              onOpenSettings={(subtab = 'snapshots') => {
+                window.location.hash = `#${subtab}`;
+                setActiveTab('config');
+              }}
+            />
+          )}
+
+          {activeTab === 'logs' && <LogsTab />}
+        </Suspense>
+      </main>
+
+      {/* High-density operator telemetry status bar */}
+      <StatusBar
+        metrics={metrics}
+        config={config}
+        onOpenWizard={() => setWizardOpen(true)}
+        onOpenAbout={() => setAboutOpen(true)}
+      />
+
+      <Suspense fallback={null}>
+        {/* First-run / Configuration Wizard Modal */}
+        {wizardOpen && (
+          <SetupWizard
+            isOpen={wizardOpen}
+            onClose={() => setWizardOpen(false)}
+            config={config}
+            onFinished={handleWizardFinished}
+          />
+        )}
+
+        {/* About Modal */}
+        {aboutOpen && (
+          <AboutModal
+            isOpen={aboutOpen}
+            onClose={() => setAboutOpen(false)}
+            version={metrics?.image || engineStatus?.currentVersion || 'v1.9.8'}
+          />
+        )}
+
+        {/* Sirius Engine Update Modal */}
+        {engineModalOpen && (
+          <EngineUpdateModal
+            isOpen={engineModalOpen}
+            onClose={() => {
+              setEngineModalOpen(false);
+              sessionStorage.setItem('engine_setup_dismissed', 'true');
+            }}
+            engineStatus={engineStatus}
+            onRefreshStatus={fetchStatus}
+          />
+        )}
+
+        {/* WSL2 Subsystem Modal */}
+        {wslModalOpen && (
+          <WSLSetupModal
+            isOpen={wslModalOpen}
+            onClose={() => {
+              setWslModalOpen(false);
+              sessionStorage.setItem('wsl_setup_dismissed', 'true');
+            }}
+            wslStatus={wslStatus}
+            onRefreshStatus={fetchStatus}
+          />
+        )}
+      </Suspense>
+    </div>
+  );
+};
+
+export default App;

@@ -1,0 +1,9 @@
+{
+  "archiveName": "sirius-data-backup-2026-09-10-131735.tar.zst",
+  "blockHeight": 13885000,
+  "compressedBytes": 21598386829,
+  "downloadUrl": "https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst",
+  "format": "tar.zst",
+  "sha256": "b2751d3fce1402d2de5df28689c1cd465d0ae0fabe1be85979bff6c2e036ae6d",
+  "uncompressedGB": 48
+}
