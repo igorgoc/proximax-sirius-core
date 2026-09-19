@@ -54,7 +54,7 @@ func NewNetworkManager() *NetworkManager {
 		nm.DiscoverAndMapUPnP()
 		nm.CheckPortReachability()
 
-		ticker := time.NewTicker(8 * time.Second)
+		ticker := time.NewTicker(60 * time.Second)
 		for range ticker.C {
 			nm.CheckPortReachability()
 		}
@@ -217,18 +217,32 @@ func getOutboundIP() string {
 }
 
 func isPortListening(port int) bool {
-	targets := []string{
-		fmt.Sprintf("sirius-mainnet-peer:%d", port),
-		fmt.Sprintf("127.0.0.1:%d", port),
-		fmt.Sprintf("host.docker.internal:%d", port),
+	// 1. Passive local bind check:
+	// Attempt to bind to 127.0.0.1:port and 0.0.0.0:port.
+	// If the port is already in use by sirius.bc (or another service), net.Listen fails with EADDRINUSE.
+	// This is 100% passive, sending ZERO TCP packets to sirius.bc and completely avoiding
+	// "Connection reset by peer / Io_Error_ServerChallengeResponse / Verify_Error" log spam in Catapult.
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return true
 	}
-	for _, target := range targets {
-		conn, err := net.DialTimeout("tcp", target, 300*time.Millisecond)
+	_ = ln.Close()
+
+	lnZero, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		return true
+	}
+	_ = lnZero.Close()
+
+	// 2. Container fallback: only if sirius-mainnet-peer resolves to an external address
+	if addrs, err := net.LookupHost("sirius-mainnet-peer"); err == nil && len(addrs) > 0 {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("sirius-mainnet-peer:%d", port), 300*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
 			return true
 		}
 	}
+
 	return false
 }
 
