@@ -96,11 +96,14 @@ func TestCheckUpdate_Live(t *testing.T) {
 	if err != nil {
 		t.Skipf("Skipping live GitHub check due to network: %v", err)
 	}
-	if info.HasUpdate {
-		t.Errorf("Expected HasUpdate=false when running on v1.9.8 against igorgoc/cpp-xpx-chain latest, got true (latest: %s, current: %s)", info.LatestVersion, info.CurrentVersion)
+	if info.LatestVersion == "" {
+		t.Errorf("Expected non-empty LatestVersion from live check")
 	}
-	if info.LatestVersion != "v1.9.8" {
-		t.Errorf("Expected LatestVersion to be v1.9.8, got %s", info.LatestVersion)
+	if info.ReleaseUrl == "" {
+		t.Errorf("Expected non-empty ReleaseUrl from live check")
+	}
+	if info.HasUpdate {
+		t.Errorf("Expected HasUpdate=false when running on %s against igorgoc/cpp-xpx-chain latest, got true (latest: %s, current: %s)", CurrentVersion, info.LatestVersion, info.CurrentVersion)
 	}
 }
 
