@@ -1,9 +1,9 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-debian:bookworm
+ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-ubuntu:24.04
 FROM ${BUILD_FROM}
 
 ENV LANG=C.UTF-8
 
-# Install runtime dependencies for Sirius Catapult engine
+# Install runtime dependencies for Sirius Catapult engine (Ubuntu 24.04 Noble with GLIBC 2.38+ & GCC 13+)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -13,8 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libatomic1 \
     libssl3 \
     libsnappy1v5 \
-    libgflags2.2 \
     procps \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y universe 2>/dev/null || true \
+    && apt-get update && apt-get install -y --no-install-recommends libgflags2.2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Stage configuration templates and assets

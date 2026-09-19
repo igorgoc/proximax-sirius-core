@@ -8,7 +8,7 @@
   - Generate `/data/chainconfig/resources/` properties with strict `0600` permissions
   - Implement automated Fast-Sync snapshot streaming decompression from Hugging Face
   - Clear stale lock files (`server.lock`, `statedb/*/LOCK`)
-  - Launch `sirius.bc -r /data/chainconfig/resources` with live log streaming
+  - Launch `sirius.bc /data/chainconfig` with live log streaming
 - [x] 3. Create Container Definition & Stage Engine Configuration <!-- id: 3 -->
   - Create `addon/Dockerfile` based on Debian 12 Bookworm with `curl`, `zstd`, `tar`, `libatomic1`, `libssl3`
   - Stage baseline `chainconfig/resources` templates into `addon/chainconfig/resources/`
