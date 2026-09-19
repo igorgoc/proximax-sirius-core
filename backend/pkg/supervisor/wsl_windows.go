@@ -656,7 +656,7 @@ function Invoke-StepCommand {
     foreach ($arg in $ArgumentList) {
         if ($arg -match '[\s"]' -and -not ($arg.StartsWith('\"') -and $arg.EndsWith('\"')) -and -not ($arg.StartsWith('"') -and $arg.EndsWith('"'))) {
             $escaped = $arg -replace '"', '\"'
-            $escapedArgs += "`"$escaped`""
+            $escapedArgs += ('"' + $escaped + '"')
         } else {
             $escapedArgs += $arg
         }
