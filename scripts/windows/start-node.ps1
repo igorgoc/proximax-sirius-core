@@ -48,26 +48,37 @@ if (Test-Path $BinDir) {
             Write-Host "-> Materialized RocksDB shared library: $(Split-Path -Leaf $RocksDbLib)" -ForegroundColor Gray
         } else {
             Write-Host "-> Missing RocksDB shared library for WSL engine. Restoring from official release..." -ForegroundColor Yellow
-            $TarUrl = "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz"
+            $CandidateUrls = @(
+                "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-linux-amd64.tar.gz",
+                "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-linux-amd64.tar.gz",
+                "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-amd64.tar.gz"
+            )
             $TempTar = Join-Path $RootDir "sirius-linux-amd64.tar.gz"
-            try {
-                if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-                    & curl.exe -f -sSL $TarUrl -o $TempTar
-                } else {
-                    Invoke-WebRequest -Uri $TarUrl -OutFile $TempTar -UseBasicParsing
-                }
-                if (Test-Path $TempTar) {
-                    if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
-                        & tar.exe -xzf $TempTar -C $RootDir
+            $restored = $false
+            foreach ($TarUrl in $CandidateUrls) {
+                Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
+                try {
+                    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                        & curl.exe -f -sSL $TarUrl -o $TempTar
+                    } else {
+                        Invoke-WebRequest -Uri $TarUrl -OutFile $TempTar -UseBasicParsing
                     }
-                    Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
-                    if (Test-Path $RocksDbTarget) {
-                        Copy-Item $RocksDbTarget $RocksDbLib -Force -ErrorAction SilentlyContinue
+                    if ((Test-Path $TempTar) -and (Get-Item $TempTar).Length -gt 1000000) {
+                        if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
+                            & tar.exe -xzf $TempTar -C $RootDir
+                        }
+                        Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
+                        if (Test-Path $RocksDbTarget) {
+                            Copy-Item $RocksDbTarget $RocksDbLib -Force -ErrorAction SilentlyContinue
+                        }
+                        Write-Host "-> Restored Linux engine dynamic libraries successfully from $TarUrl." -ForegroundColor Green
+                        $restored = $true
+                        break
                     }
-                    Write-Host "-> Restored Linux engine dynamic libraries successfully." -ForegroundColor Green
-                }
-            } catch {
-                Write-Warning "Could not auto-download Linux engine libraries: $_"
+                } catch {}
+            }
+            if (-not $restored) {
+                Write-Warning "Could not auto-download Linux engine libraries from any candidate URL."
             }
         }
     }

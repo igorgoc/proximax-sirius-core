@@ -52,16 +52,26 @@ if [ "$(uname -s)" = "Darwin" ]; then
         echo "-> Catapult macOS arm64 engine missing or invalid format. Downloading native binaries..."
         mkdir -p "$DIR/bin"
         if command -v curl >/dev/null 2>&1; then
-            curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-darwin-arm64.tar.gz" | tar -xz -C "$DIR"
+            (curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-darwin-arm64.tar.gz" || \
+             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-darwin-arm64.tar.gz" || \
+             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-darwin-arm64.tar.gz") | tar -xz -C "$DIR"
             echo "-> Sirius macOS engine unpacked successfully."
         fi
     fi
 elif [ "$(uname -s)" = "Linux" ]; then
+    ARCH="$(uname -m)"
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        ENGINE_PKG="sirius-linux-arm64.tar.gz"
+    else
+        ENGINE_PKG="sirius-linux-amd64.tar.gz"
+    fi
     if [ ! -f "$DIR/bin/sirius.bc" ] || ! file -b "$DIR/bin/sirius.bc" | grep -q "ELF"; then
-        echo "-> Catapult Linux engine missing or invalid format. Downloading precompiled Sirius Linux binaries..."
+        echo "-> Catapult Linux engine ($ARCH) missing or invalid format. Downloading precompiled Sirius Linux binaries..."
         mkdir -p "$DIR/bin"
         if command -v curl >/dev/null 2>&1; then
-            curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-linux-amd64.tar.gz" | tar -xz -C "$DIR"
+            (curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/${ENGINE_PKG}" || \
+             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/${ENGINE_PKG}" || \
+             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/${ENGINE_PKG}") | tar -xz -C "$DIR"
             echo "-> Catapult engine unpacked successfully."
         fi
     fi

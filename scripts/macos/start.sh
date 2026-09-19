@@ -52,7 +52,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
         echo "-> Catapult macOS arm64 engine missing or invalid format. Downloading native binaries..."
         mkdir -p "$DIR/bin"
         if command -v curl >/dev/null 2>&1; then
-            curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v1.9.8/sirius-darwin-arm64.tar.gz" | tar -xz -C "$DIR"
+            (curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-darwin-arm64.tar.gz" || \
+             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-darwin-arm64.tar.gz" || \
+             curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-darwin-arm64.tar.gz") | tar -xz -C "$DIR"
             echo "-> Sirius macOS engine unpacked successfully."
         fi
     fi

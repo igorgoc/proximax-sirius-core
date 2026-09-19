@@ -12,10 +12,10 @@ $ErrorActionPreference = "Stop"
 
 if (-not $Version) { $Version = $env:VERSION }
 if (-not $Version) { $Version = $env:GITHUB_REF_NAME }
-if (-not $Version) { $Version = "1.9.8" }
+if (-not $Version) { $Version = "1.9.9" }
 $Version = $Version -replace '^v', ''
 if (-not ($Version -match '^\d')) {
-    $Version = "1.9.8"
+    $Version = "1.9.9"
 }
 
 if ($PSScriptRoot) {
@@ -91,22 +91,73 @@ if (-not (Test-Path $RocksDbLib)) {
 
 if ($needsEngineFetch) {
     Write-Host "-> Fetching official Sirius Linux engine binaries & shared libraries for WSL..." -ForegroundColor Yellow
-    $TarUrl = "https://github.com/igorgoc/cpp-xpx-chain/releases/download/v$Version/sirius-linux-amd64.tar.gz"
-    $TempTar = Join-Path $BuildDir "sirius-linux-amd64.tar.gz"
-    try {
-        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -f -sSL $TarUrl -o $TempTar
-        } else {
-            Invoke-WebRequest -Uri $TarUrl -OutFile $TempTar -UseBasicParsing
-        }
-        if (Test-Path $TempTar) {
-            if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
-                & tar.exe -xzf $TempTar -C $RootDir
+
+    $CandidateUrls = [System.Collections.Generic.List[string]]::new()
+    if ($env:ENGINE_TAR_URL) {
+        $CandidateUrls.Add($env:ENGINE_TAR_URL)
+    }
+
+    # 1. Primary: Always check the latest official release endpoint first
+    $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-linux-amd64.tar.gz")
+
+    # 2. Add recommended version from engine.compat.json if present
+    $CompatFile = Join-Path $RootDir "chainconfig\engine.compat.json"
+    if (Test-Path $CompatFile) {
+        try {
+            $compat = Get-Content $CompatFile -Raw | ConvertFrom-Json
+            if ($compat.recommendedVersion) {
+                $recClean = $compat.recommendedVersion -replace '^v', ''
+                $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/$recClean/sirius-linux-amd64.tar.gz")
+                $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/v$recClean/sirius-linux-amd64.tar.gz")
             }
-            Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
+        } catch {}
+    }
+
+    # 3. Add explicit $Version candidates (both without and with 'v' prefix)
+    if ($Version) {
+        $cleanVer = $Version -replace '^v', ''
+        $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/$cleanVer/sirius-linux-amd64.tar.gz")
+        $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/v$cleanVer/sirius-linux-amd64.tar.gz")
+    }
+
+    # 4. Known fallback release tags
+    $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-linux-amd64.tar.gz")
+    $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-amd64.tar.gz")
+
+    $downloadSuccess = $false
+    $TempTar = Join-Path $BuildDir "sirius-linux-amd64.tar.gz"
+
+    foreach ($TarUrl in $CandidateUrls) {
+        Write-Host "   Attempting download from: $TarUrl" -ForegroundColor Gray
+        Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
+        try {
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -f -sSL $TarUrl -o $TempTar
+            } else {
+                Invoke-WebRequest -Uri $TarUrl -OutFile $TempTar -UseBasicParsing
+            }
+
+            if ((Test-Path $TempTar) -and (Get-Item $TempTar).Length -gt 1000000) {
+                $fileSizeMB = [math]::Round((Get-Item $TempTar).Length / 1MB, 2)
+                Write-Host "-> Successfully fetched Linux engine archive ($fileSizeMB MB) from: $TarUrl" -ForegroundColor Green
+
+                if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
+                    Write-Host "-> Unpacking Linux engine into $RootDir..." -ForegroundColor Green
+                    & tar.exe -xzf $TempTar -C $RootDir
+                } else {
+                    Write-Warning "tar.exe not found on system; cannot unpack Linux engine archive automatically."
+                }
+                Remove-Item -Force $TempTar -ErrorAction SilentlyContinue
+                $downloadSuccess = $true
+                break
+            }
+        } catch {
+            Write-Host "   URL not reachable ($TarUrl), trying next candidate..." -ForegroundColor DarkGray
         }
-    } catch {
-        Write-Warning "Could not pre-fetch Linux engine archive: $_"
+    }
+
+    if (-not $downloadSuccess) {
+        Write-Error "CRITICAL: Could not fetch official Sirius Linux engine archive from any candidate URL. The resulting Windows release package will be missing WSL engine binaries."
     }
 }
 
