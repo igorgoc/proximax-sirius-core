@@ -650,8 +650,19 @@ function Invoke-StepCommand {
         Log-Message "-> $Description..." "Cyan"
     }
     Log-Message "   [Command] $FilePath $($ArgumentList -join ' ')" "DarkGray"
+
+    # Properly escape arguments containing whitespace or quotes for Start-Process
+    $escapedArgs = @()
+    foreach ($arg in $ArgumentList) {
+        if ($arg -match '[\s"]' -and -not ($arg.StartsWith('\"') -and $arg.EndsWith('\"')) -and -not ($arg.StartsWith('"') -and $arg.EndsWith('"'))) {
+            $escaped = $arg -replace '"', '\"'
+            $escapedArgs += "`"$escaped`""
+        } else {
+            $escapedArgs += $arg
+        }
+    }
     
-    $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -NoNewWindow -Wait -PassThru
+    $proc = Start-Process -FilePath $FilePath -ArgumentList ($escapedArgs -join ' ') -NoNewWindow -Wait -PassThru
     $ec = $proc.ExitCode
     $color = if ($ec -eq 0 -or $ec -eq 3010) { "Green" } else { "Red" }
     Log-Message "   [Exit Code] $ec" $color
@@ -868,20 +879,28 @@ function Ensure-DistroRuntimePackages {
     Log-Message "==========================================================================" "Cyan"
 
     Log-Message "-> Updating Ubuntu package lists (apt-get update)..." "Yellow"
-    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get update -qq") -Description "Updating package lists"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update", "-qq") -Description "Updating package lists"
 
     Log-Message "-> Upgrading Ubuntu system packages (apt-get upgrade)..." "Yellow"
-    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq") -Description "Upgrading system packages"
+    Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "upgrade", "-y", "-qq") -Description "Upgrading system packages"
 
     Log-Message "-> Installing libatomic1 and essential tools (ca-certificates, curl, tar)..." "Yellow"
-    $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libatomic1 ca-certificates curl tar") -Description "Installing libatomic1 runtime"
+    $instCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-qq", "libatomic1", "ca-certificates", "curl", "tar") -Description "Installing libatomic1 runtime"
 
     # Verify libatomic1 is installed
     $checkAtomic = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "dpkg", "-s", "libatomic1") -NoNewWindow -Wait -PassThru
     if ($checkAtomic.ExitCode -eq 0) {
         Log-Message "-> [OK] Sirius runtime packages successfully installed and verified in $targetDistroName!" "Green"
     } else {
-        Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $($checkAtomic.ExitCode))." "Red"
+        # Retry with explicit apt-get install
+        Log-Message "-> Retrying libatomic1 installation..." "Yellow"
+        Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "apt-get", "install", "-y", "libatomic1") -Description "Retrying libatomic1"
+        $checkAtomic = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $targetDistroName, "-u", "root", "--", "dpkg", "-s", "libatomic1") -NoNewWindow -Wait -PassThru
+        if ($checkAtomic.ExitCode -eq 0) {
+            Log-Message "-> [OK] Sirius runtime packages successfully installed and verified in $targetDistroName!" "Green"
+        } else {
+            Log-Message "-> [!] Warning: Failed to install libatomic1 (exit code: $($checkAtomic.ExitCode))." "Yellow"
+        }
     }
 }
 
@@ -963,7 +982,29 @@ function Install-WSLDistro {
 
     # Ensure distribution is on WSL version 2
     if ($installedDistroName) {
-        Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-version", $installedDistroName, "2") -Description "Verifying WSL2 version for $installedDistroName"
+        $isV2 = $false
+        $listRaw = & wsl.exe -l -v 2>&1 | Out-String
+        $cleanList = Clean-WSLString $listRaw
+        foreach ($line in ($cleanList -split '\r?\n')) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match "^\*?\s*$([regex]::Escape($installedDistroName))\s+\w+\s+(\d+)") {
+                if ($matches[1] -eq "2") {
+                    $isV2 = $true
+                    break
+                }
+            }
+        }
+
+        if ($isV2) {
+            Log-Message "-> [OK] Distribution '$installedDistroName' is already running on WSL2." "Green"
+        } else {
+            $verCode = Invoke-StepCommand -FilePath "wsl.exe" -ArgumentList @("--set-version", $installedDistroName, "2") -Description "Setting WSL2 version for $installedDistroName"
+            if ($verCode -ne 0) {
+                # WSL CLI returns -1 / WSL_E_VM_MODE_INVALID_STATE if it is already version 2
+                Log-Message "   Note: If distribution was already on WSL2, exit code -1 is normal." "Gray"
+            }
+        }
+
         # Update package lists and install essential runtime dependencies
         Ensure-DistroRuntimePackages -targetDistroName $installedDistroName
     }
