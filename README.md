@@ -1,8 +1,8 @@
 # ProximaX Sirius Mainnet Peer Node (Native Cockpit & Node Manager)
 
-A high-performance, **Bitcoin Core-inspired** standalone desktop and web application for running, configuring, and managing a **ProximaX Sirius Chain Mainnet Peer Node, POS+ Block Harvester, and DFMS Storage Replicator**.
+A high-performance, **Bitcoin Core-inspired** standalone desktop, server, and IoT application for running, configuring, and managing a **ProximaX Sirius Chain Mainnet Peer Node, POS+ Block Harvester, and DFMS Storage Replicator**.
 
-Built as a lightweight native management engine (Go backend + React/TypeScript frontend) interfacing directly with the native C++ ProximaX Sirius Core blockchain binary (`cpp-xpx-chain`) on **macOS**, **Linux**, and **Windows** — with **zero Docker overhead and zero Electron bloat**.
+Built as a lightweight native management engine (Go backend + React/TypeScript frontend) interfacing directly with the native C++ ProximaX Sirius Core blockchain binary (`cpp-xpx-chain`) on **macOS**, **Linux**, **Windows**, and **Home Assistant OS (Raspberry Pi 4 / ARM64)** — with **zero Docker overhead on desktops and zero Electron bloat**.
 
 ---
 
@@ -33,9 +33,12 @@ Built as a lightweight native management engine (Go backend + React/TypeScript f
 | **macOS** (Apple Silicon & Intel) | Native Darwin binary (`sirius-core`) | Native Darwin C++ binary (`bin/sirius.bc`) with dyld RocksDB | Native APFS / External NVMe SSD |
 | **Linux** (Ubuntu / Debian x86_64) | Native Linux ELF binary (`sirius-core`) | Native Linux ELF binary (`bin/sirius.bc`) with glibc 2.35+ | Native ext4 / XFS filesystem |
 | **Windows** (Windows 10 / 11 x64) | Native Windows x64 binary (`sirius-core.exe`) | Linux ELF binary (`sirius.bc`) orchestrated via **WSL2** | Native ext4 (`/var/lib/sirius`) or NTFS |
+| **Home Assistant (HAOS / Supervised)** (RPi4 / ARM64 & x86_64) | Native Headless Add-on Container | Native Linux ARM64 / x86_64 ELF (`bin/sirius.bc`) | Native persistent SSD storage (`/data/chainconfig`) |
 
 - **Why WSL2 on Windows?**  
   Direct Windows MSVC ports for Catapult are deprecated upstream. Running the C++ engine inside WSL2 provides **100% binary compatibility** with the verified Linux consensus engine, POSIX signal handling, and native ext4 write speeds for RocksDB multi-gigabyte state flushes without Docker overhead.
+- **Why Home Assistant on Raspberry Pi 4?**  
+  Turns your existing 24/7 Home Assistant server into an energy-efficient (~5W) POS+ block validator and consensus node with direct streaming snapshot fast-sync and zero host OS pollution.
 
 ---
 
@@ -120,6 +123,54 @@ journalctl -u proximax-sirius -f
 - If WSL2 or Ubuntu is not yet installed, the Web Cockpit presents a **1-Click Subsystem Setup Wizard** with automatic elevation (`Start-Process wsl -ArgumentList '--install --no-distribution' -Verb RunAs`) and reboot-resume state persistence.
 
 > **Windows Defender SmartScreen**: If prompted with "Windows protected your PC", click **"More info"** → **"Run anyway"**.
+
+---
+
+### 4. Home Assistant OS / Supervised (Raspberry Pi 4 / ARM64 & x86_64)
+
+Turn your 24/7 Home Assistant server into an ultra-low-power (~5W on RPi4) ProximaX Sirius POS+ Mainnet Peer Validator. The add-on runs as an isolated, headless container with direct streaming snapshot fast-sync and zero host OS pollution.
+
+#### Prerequisites:
+- Home Assistant Operating System (HAOS) or Home Assistant Supervised (RPi4 4GB/8GB with SSD recommended).
+- *Note: Add-ons / Apps are not available on standalone Home Assistant Container or Core installations.*
+
+#### Step 1: Add the ProximaX Add-on Repository
+1. In Home Assistant, navigate to **Settings** → **Add-ons** (or **Apps** in newer Home Assistant versions).
+2. Click the **Add-on Store** button in the bottom-right corner.
+3. Click the **three dots menu (⋮)** in the top-right corner and select **Repositories**.
+4. Paste the repository URL into the field:
+   ```
+   https://github.com/igorgoc/proximax-sirius-core
+   ```
+5. Click **Add**, then click **Close**.
+
+*(Alternatively, if your browser has the My Home Assistant integration active, click below to add the repository directly)*:
+
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Figorgoc%2Fproximax-sirius-core)
+
+#### Step 2: Install "ProximaX Sirius Validator"
+1. In the Add-on Store, find the newly listed **ProximaX Sirius Validator** (under the "ProximaX Sirius Home Assistant Add-ons" section).
+2. Click on it and select **Install**.
+
+#### Step 3: Configure Validator Keys
+1. Once installed, switch to the **Configuration** tab.
+2. Enter your validator settings:
+   - `boot_key`: 64-character hexadecimal P2P transport key (identifies your node on the Sirius network).
+   - `harvest_key`: 64-character hexadecimal private key of your delegated remote harvesting account.
+   - `friendly_name`: Node nickname displayed on network explorers (e.g. `HomeAssistant-Validator`).
+   - `fast_sync`: `true` (Recommended: directly streams and decompresses the official Mainnet snapshot from height 13.8M+ to your SSD in ~15 minutes).
+   - `reset_data`: `false` (Toggle to `true` only if you wish to wipe local blockchain data and restart snapshot restore from scratch).
+3. Click **Save**.
+
+#### Step 4: Start and Monitor
+1. On the **Info** tab, enable **Start on boot** and **Watchdog** for 24/7 unattended block harvesting.
+2. Click **Start**.
+3. Open the **Log** tab to watch:
+   - Real-time streaming snapshot decompression progress onto your SSD.
+   - Pre-flight `catapult.recovery` state verification.
+   - Live block processing and POS+ consensus participation (`last consumer is 0 elements behind`).
+
+> **Important Update Tip**: When updating the add-on in Home Assistant, **uncheck "Make backup before update"**. Because blockchain data (~48 GB) is self-verifying and can be fast-synced from snapshot at any time, skipping the OS-level backup avoids 15–20 minutes of tar compression and saves ~25 GB of SSD disk space.
 
 ---
 
