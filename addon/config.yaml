@@ -1,0 +1,39 @@
+name: "ProximaX Sirius Validator"
+description: "Ultra-lightweight ProximaX Sirius Mainnet POS+ Peer Validator Node for Home Assistant (ARM64 / RPi4)"
+version: "1.9.9-2"
+slug: "proximax_sirius_validator"
+arch:
+  - aarch64
+  - amd64
+init: false
+homeassistant_api: false
+startup: services
+boot: auto
+ports:
+  7900/tcp: 7900
+  7901/tcp: 7901
+  7902/tcp: 7902
+  7903/tcp: 7903
+  7904/tcp: 7904
+ports_description:
+  7900/tcp: "Sirius P2P Network Port (block synchronization & gossip)"
+  7901/tcp: "Sirius Timesync Extension"
+  7902/tcp: "Sirius Transaction Sink Extension"
+  7903/tcp: "Sirius Block Synchronization Extension"
+  7904/tcp: "Sirius Fast Finality Extension"
+options:
+  boot_key: ""
+  harvest_key: ""
+  friendly_name: "HomeAssistant-Validator"
+  fast_sync: true
+  reset_data: false
+  custom_snapshot_url: ""
+schema:
+  boot_key: "password"
+  harvest_key: "password"
+  friendly_name: "str"
+  fast_sync: "bool"
+  reset_data: "bool?"
+  custom_snapshot_url: "str?"
+environment:
+  CHAINCONFIG_DIR: "/data/chainconfig"

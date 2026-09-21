@@ -1,0 +1,215 @@
+name: Cross-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.9.9)'
+        required: true
+        default: 'v1.9.9'
+
+permissions:
+  contents: write
+
+jobs:
+  build-frontend:
+    name: Build Frontend UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build React UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/dist/
+          retention-days: 1
+
+  package-posix:
+    name: Package (${{ matrix.platform.name }})
+    needs: build-frontend
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-amd64
+            # MUST use ubuntu-22.04 (Jammy, GLIBC 2.35), not ubuntu-latest, for backward and forward binary compatibility
+            os: ubuntu-22.04
+            goarch: amd64
+            script: ./scripts/linux/package-linux.sh amd64
+            dist_path: dist/linux-amd64/*
+          - name: macos-arm64
+            os: macos-latest
+            goarch: arm64
+            script: ./scripts/macos/package-macos.sh
+            dist_path: dist/macos-arm64/*
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/dist/
+
+      - name: Run Package Script
+        run: |
+          chmod +x ./scripts/linux/*.sh ./scripts/macos/*.sh ./scripts/macos/*.command 2>/dev/null || true
+          ${{ matrix.platform.script }}
+
+      - name: Upload Platform Package Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform.name }}
+          path: ${{ matrix.platform.dist_path }}
+          retention-days: 1
+
+  package-windows:
+    name: Package (windows-amd64)
+    needs: build-frontend
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/dist/
+
+      - name: Run Windows Packaging Script
+        shell: pwsh
+        run: .\scripts\windows\package-windows.ps1
+
+      - name: Upload Windows Package Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          path: dist/windows-amd64/*
+          retention-days: 1
+
+  publish-release:
+    name: Compute Hashes, Sign & Publish Release
+    needs: [package-posix, package-windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Build sign-release Utility
+        working-directory: backend
+        run: go build -ldflags="-s -w" -o ../sign-release ./cmd/sign-release
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Compute Checksums & Sign Release
+        env:
+          NODE_MANAGER_RELEASE_PRIVATE_KEY: ${{ secrets.NODE_MANAGER_RELEASE_PRIVATE_KEY }}
+        run: |
+          cd release-assets
+          ls -la
+
+          # Generate standard SHA256SUMS for all package archives
+          find . -maxdepth 1 -type f ! -name "SHA256SUMS*" ! -name "*.sig" -exec sha256sum {} + | sort -k 2 > SHA256SUMS
+          cat SHA256SUMS
+
+          # Enforce Fail-Closed Security Invariant:
+          # Refuse to publish unsigned release if NODE_MANAGER_RELEASE_PRIVATE_KEY is missing.
+          if [ -z "$NODE_MANAGER_RELEASE_PRIVATE_KEY" ]; then
+            echo "::error::CRITICAL SECURITY FAILURE: NODE_MANAGER_RELEASE_PRIVATE_KEY secret is not configured in repository secrets!"
+            echo "All release artifacts MUST be cryptographically signed with the official Ed25519 node manager release key."
+            echo "Refusing to publish unsigned release (Fail-Closed)."
+            exit 1
+          fi
+
+          echo "-> Cryptographically signing release artifacts with Ed25519 node manager release key..."
+          ../sign-release sign -key-env NODE_MANAGER_RELEASE_PRIVATE_KEY -dir .
+
+          # Verify signature immediately against the repository's public key in manager.compat.json
+          echo "-> Verifying generated signature against manager.compat.json..."
+          ../sign-release verify \
+            -pubkey ../chainconfig/manager.compat.json \
+            -checksums SHA256SUMS \
+            -sig SHA256SUMS.sig \
+            -dir .
+
+      - name: Determine Release Tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "val=$INPUT_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "val=$REF_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.val }}
+        run: |
+          echo "-> Target release tag: $TAG"
+          
+          # Check if the release already exists on GitHub
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "-> Release $TAG already exists on GitHub. Uploading updated assets with --clobber..."
+            gh release upload "$TAG" release-assets/* --clobber
+            gh release edit "$TAG" --title "ProximaX Sirius Core Native $TAG" --draft=false --prerelease=false
+            echo "-> Successfully updated existing release $TAG."
+          else
+            echo "-> Creating new GitHub release $TAG..."
+            gh release create "$TAG" release-assets/* \
+              --title "ProximaX Sirius Core Native $TAG" \
+              --generate-notes \
+              --draft=false \
+              --prerelease=false
+            echo "-> Successfully published new release $TAG."
+          fi

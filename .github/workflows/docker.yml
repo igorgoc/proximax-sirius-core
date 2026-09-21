@@ -1,0 +1,67 @@
+name: Build & Publish Docker Validator
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    paths:
+      - 'addon/**'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Docker image tag (e.g. v1.9.9 or latest)'
+        required: true
+        default: 'latest'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & Push Multi-Arch Image (amd64, arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (Multi-Arch Emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Docker Image Tags
+        id: meta
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/proximax-sirius-validator"
+          IMAGE_NAME=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          TAGS="${IMAGE_NAME}:latest"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAGS="${TAGS},${IMAGE_NAME}:${{ github.event.inputs.tag_name }}"
+          elif [ -n "${{ github.ref_name }}" ]; then
+            TAGS="${TAGS},${IMAGE_NAME}:${{ github.ref_name }}"
+          fi
+          
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./addon
+          file: ./addon/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            BUILD_FROM=ubuntu:24.04

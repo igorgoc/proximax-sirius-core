@@ -1,0 +1,21 @@
+# Tasks: Headless ProximaX Sirius Validator Add-on (RPi4 / ARM64)
+
+- [x] 1. Create Home Assistant Add-on Manifest & Documentation <!-- id: 1 -->
+  - Create `addon/config.yaml` with schema for masked `boot_key`, `harvest_key`, `friendly_name`, `fast_sync`, and port `7900/tcp`
+  - Create `addon/DOCS.md` with configuration instructions
+- [x] 2. Create Add-on Entrypoint Script (`addon/run.sh`) <!-- id: 2 -->
+  - Implement secure options extraction via `bashio` (or `jq` fallback)
+  - Generate `/data/chainconfig/resources/` properties with strict `0600` permissions
+  - Implement automated Fast-Sync snapshot streaming decompression from Hugging Face
+  - Clear stale lock files (`server.lock`, `statedb/*/LOCK`)
+  - Launch `sirius.bc /data/chainconfig` with live log streaming
+- [x] 3. Create Container Definition & Stage Engine Configuration <!-- id: 3 -->
+  - Create `addon/Dockerfile` based on Debian 12 Bookworm with `curl`, `zstd`, `tar`, `libatomic1`, `libssl3`
+  - Stage baseline `chainconfig/resources` templates into `addon/chainconfig/resources/`
+- [x] 4. Deploy & Validate on Raspberry Pi 4 via SSH (`192.168.1.14`) <!-- id: 4 -->
+  - Transfer `addon/` to `/addons/proximax_sirius/` on Home Assistant
+  - Install and start the add-on from the Home Assistant Add-on Store
+  - Verify logs, P2P connectivity on port 7900, and SSD block sync
+- [ ] 5. Future Pipeline: Pre-built Container Publishing (GHCR) <!-- id: 5 -->
+  - Create GitHub Actions workflow to build and push multi-arch (`linux/arm64`, `linux/amd64`) images to GitHub Container Registry (`ghcr.io`)
+  - Update `addon/config.yaml` with `image: "ghcr.io/igorgoc/proximax-sirius-validator:{arch}"` for instant 5-second one-click community installation
