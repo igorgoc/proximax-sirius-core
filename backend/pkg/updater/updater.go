@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	CurrentVersion     = "v1.9.9"
+	CurrentVersion     = "v1.9.10"
 	GitHubRepo         = "igorgoc/cpp-xpx-chain"
 	OfficialConfigBase = "https://raw.githubusercontent.com/igorgoc/proximax-sirius-core/main/chainconfig/resources"
 )
