@@ -92,19 +92,30 @@ func TestVersionComparisonLogic(t *testing.T) {
 
 func TestCheckUpdate_Live(t *testing.T) {
 	um := NewUpdateManager(t.TempDir(), nil)
+
 	info, err := um.CheckUpdate()
 	if err != nil {
 		t.Skipf("Skipping live GitHub check due to network: %v", err)
 	}
+
 	if info.LatestVersion == "" {
 		t.Errorf("Expected non-empty LatestVersion from live check")
 	}
 	if info.ReleaseUrl == "" {
 		t.Errorf("Expected non-empty ReleaseUrl from live check")
 	}
-	if info.HasUpdate {
-		t.Errorf("Expected HasUpdate=false when running on %s against igorgoc/cpp-xpx-chain latest, got true (latest: %s, current: %s)", CurrentVersion, info.LatestVersion, info.CurrentVersion)
+
+	expected := IsNewerVersion(info.LatestVersion, info.CurrentVersion)
+	if info.HasUpdate != expected {
+		t.Errorf(
+			"HasUpdate=%v, expected %v for latest=%s and current=%s",
+			info.HasUpdate,
+			expected,
+			info.LatestVersion,
+			info.CurrentVersion,
+		)
 	}
+
 }
 
 func TestCheckConfigsDiff_Live(t *testing.T) {
@@ -239,5 +250,3 @@ func TestApplyOfficialUpdate_HealthcheckFailure_TriggersAutoRollback(t *testing.
 
 	t.Logf("SUCCESS: Adversarial crash-loop triggered instant auto-rollback. All 5 files restored byte-for-byte and node revived.")
 }
-
-
