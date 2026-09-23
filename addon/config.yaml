@@ -1,6 +1,6 @@
 name: "ProximaX Sirius Validator"
 description: "Ultra-lightweight ProximaX Sirius Mainnet POS+ Peer Validator Node for Home Assistant (ARM64 / RPi4)"
-version: "1.9.9-2"
+version: "1.9.9-3"
 slug: "proximax_sirius_validator"
 arch:
   - aarch64
