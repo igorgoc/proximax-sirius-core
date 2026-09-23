@@ -24,10 +24,10 @@ import (
 
 // MockLifecycleController simulates supervisor engine lifecycle
 type MockLifecycleController struct {
-	mu        sync.Mutex
-	running   bool
-	startErr  error
-	stopCalls int
+	mu         sync.Mutex
+	running    bool
+	startErr   error
+	stopCalls  int
 	startCalls int
 }
 
@@ -544,14 +544,14 @@ func TestEngineUpdater_CheckUpdate_Live(t *testing.T) {
 
 	_, binaryName := PlatformAssetDescriptor()
 	_ = os.WriteFile(filepath.Join(binDir, binaryName), []byte("#!/bin/sh\nexit 0\n"), 0755)
-	_ = os.WriteFile(filepath.Join(binDir, "version.txt"), []byte("1.9.9\n"), 0644)
+	_ = os.WriteFile(filepath.Join(binDir, "version.txt"), []byte("1.9.10\n"), 0644)
 
 	manifestPath := filepath.Join(tmpDir, "engine.compat.json")
 	manifestContent := `{
 		"engineRepository": "igorgoc/cpp-xpx-chain",
 		"engineMinCompatible": "v1.9.0",
 		"engineMaxCompatible": "v1.9.99",
-		"recommendedVersion": "1.9.9",
+		"recommendedVersion": "1.9.10",
 		"releasePublicKeyHex": "538eefb498971db790422d53d24aa1ed2623e37298ef6c9dfd436b739cf5aa3c"
 	}`
 	_ = os.WriteFile(manifestPath, []byte(manifestContent), 0644)
@@ -562,14 +562,14 @@ func TestEngineUpdater_CheckUpdate_Live(t *testing.T) {
 		t.Skipf("Skipping live check due to network: %v", err)
 	}
 
-	if status.CurrentVersion != "1.9.9" {
-		t.Errorf("Expected CurrentVersion=1.9.9, got %s", status.CurrentVersion)
+	if status.CurrentVersion != "1.9.10" {
+		t.Errorf("Expected CurrentVersion=1.9.10, got %s", status.CurrentVersion)
 	}
 	if status.TargetVersion == "" {
 		t.Errorf("Expected non-empty TargetVersion from live check")
 	}
 	if status.HasUpdate {
-		t.Errorf("Expected HasUpdate=false when running on 1.9.9 against igorgoc/cpp-xpx-chain latest, got true (target: %s, current: %s)", status.TargetVersion, status.CurrentVersion)
+		t.Errorf("Expected HasUpdate=false when running on 1.9.10 against igorgoc/cpp-xpx-chain latest, got true (target: %s, current: %s)", status.TargetVersion, status.CurrentVersion)
 	}
 }
 
@@ -658,5 +658,3 @@ func TestLiveRelease_FetchAndSignatureVerify(t *testing.T) {
 
 	t.Logf("SUCCESS: Live GitHub release v1.9.8 Ed25519 signature verified OK against public key %s", pubKeyHex)
 }
-
-

@@ -12,10 +12,10 @@ $ErrorActionPreference = "Stop"
 
 if (-not $Version) { $Version = $env:VERSION }
 if (-not $Version) { $Version = $env:GITHUB_REF_NAME }
-if (-not $Version) { $Version = "1.9.9" }
+if (-not $Version) { $Version = "1.9.10" }
 $Version = $Version -replace '^v', ''
 if (-not ($Version -match '^\d')) {
-    $Version = "1.9.9"
+    $Version = "1.9.10"
 }
 
 if ($PSScriptRoot) {
@@ -121,7 +121,7 @@ if ($needsEngineFetch) {
     }
 
     # 4. Known fallback release tags
-    $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-linux-amd64.tar.gz")
+    $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.10/sirius-linux-amd64.tar.gz")
     $CandidateUrls.Add("https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-amd64.tar.gz")
 
     $downloadSuccess = $false

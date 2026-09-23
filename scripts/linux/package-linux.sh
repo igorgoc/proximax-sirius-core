@@ -4,10 +4,10 @@ set -euo pipefail
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$DIR"
 
-VERSION="${VERSION:-${GITHUB_REF_NAME:-1.9.9}}"
+VERSION="${VERSION:-${GITHUB_REF_NAME:-1.9.10}}"
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9] ]]; then
-    VERSION="1.9.9"
+    VERSION="1.9.10"
 fi
 ARCH="${1:-amd64}"
 DIST_DIR="$DIR/dist/linux-${ARCH}"
@@ -58,7 +58,7 @@ if [ ! -f "$TARGET_OPT/bin/sirius.bc" ] || [ ! -f "$TARGET_OPT/bin/libcatapult.p
     echo "-> Linux engine binaries or shared libraries missing in staging. Downloading official Linux engine..."
     if command -v curl >/dev/null 2>&1; then
         (curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-linux-${ARCH}.tar.gz" || \
-         curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-linux-${ARCH}.tar.gz" || \
+         curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.10/sirius-linux-${ARCH}.tar.gz" || \
          curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-${ARCH}.tar.gz") | tar -xz -C "$TARGET_OPT"
         echo "-> Official Linux engine unpacked into package successfully."
     fi
