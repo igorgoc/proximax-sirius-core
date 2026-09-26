@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-# Catapult's RocksDB caches open every live .sst file with no upper bound
-# (max_open_files defaults to -1/unbounded in RocksDatabase.cpp). As chain
-# height grows, the required FD count exceeds the container's default
-# ulimit. Raise it as high as the container's hard limit allows.
-ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null || ulimit -n 4096 2>/dev/null || true
-LOG_INFO "File descriptor limit set to: $(ulimit -n)"
-
-
 # Load Home Assistant bashio library if available
 if [ -f /usr/lib/bashio/bashio.sh ]; then
     source /usr/lib/bashio/bashio.sh
@@ -43,6 +35,13 @@ fi
 LOG_INFO "========================================================="
 LOG_INFO "  Starting ProximaX Sirius Validator (Home Assistant)    "
 LOG_INFO "========================================================="
+
+# Catapult's RocksDB caches open every live .sst file with no upper bound
+# (max_open_files defaults to -1/unbounded in RocksDatabase.cpp). As chain
+# height grows, the required FD count exceeds the container's default
+# ulimit. Raise it as high as the container's hard limit allows.
+ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+LOG_INFO "File descriptor limit set to: $(ulimit -n)"
 
 # 1. Read configuration options from Home Assistant
 BOOT_KEY=$(GET_CONFIG 'boot_key')
