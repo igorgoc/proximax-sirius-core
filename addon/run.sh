@@ -231,7 +231,7 @@ fi
 rm -f "$DATA_STORAGE"/*.lock "$DATA_STORAGE"/statedb/*/LOCK "$DATA_STORAGE"/statedb/LOCK 2>/dev/null || true
 
 # 6. Locate or auto-fetch Sirius Catapult engine binary
-TARGET_ENGINE_VERSION="1.9.9"
+TARGET_ENGINE_VERSION="1.9.10"
 VERSION_FILE="$DATA_DIR/bin/.engine_version"
 INSTALLED_ENGINE_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
 
