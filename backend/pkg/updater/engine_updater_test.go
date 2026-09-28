@@ -122,7 +122,7 @@ func setupTestEnvironment(t *testing.T) (string, string, ed25519.PublicKey, ed25
 		EngineRepository:    "igorgoc/cpp-xpx-chain",
 		EngineMinCompatible: "v1.9.0",
 		EngineMaxCompatible: "v1.9.99",
-		RecommendedVersion:  "v1.9.8",
+		RecommendedVersion:  "v1.9.10",
 		ReleasePublicKeyHex: hex.EncodeToString(pub),
 	}
 	manifestData, _ := json.Marshal(manifest)
@@ -458,7 +458,7 @@ func TestEngineUpdater_InitialSetup_WhenNoBinary(t *testing.T) {
 		EngineRepository:    "proximax-test/cpp-xpx-chain",
 		EngineMinCompatible: "v1.9.0",
 		EngineMaxCompatible: "v1.9.99",
-		RecommendedVersion:  "v1.9.8",
+		RecommendedVersion:  "v1.9.10",
 		ReleasePublicKeyHex: pubKeyHex,
 	}
 	mData, _ := json.Marshal(manifest)

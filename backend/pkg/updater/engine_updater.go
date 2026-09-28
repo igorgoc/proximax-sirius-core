@@ -25,11 +25,11 @@ import (
 )
 
 var (
-	ErrInvalidSignature  = errors.New("cryptographic signature verification failed for release manifest")
-	ErrChecksumMismatch   = errors.New("sha256 checksum mismatch on downloaded engine artifact")
+	ErrInvalidSignature    = errors.New("cryptographic signature verification failed for release manifest")
+	ErrChecksumMismatch    = errors.New("sha256 checksum mismatch on downloaded engine artifact")
 	ErrIncompatibleVersion = errors.New("engine version falls outside compatibility manifest range")
-	ErrHealthcheckFailed  = errors.New("engine failed post-update healthcheck probe, rolled back")
-	ErrMissingChecksum    = errors.New("release checksums file does not contain entry for platform asset")
+	ErrHealthcheckFailed   = errors.New("engine failed post-update healthcheck probe, rolled back")
+	ErrMissingChecksum     = errors.New("release checksums file does not contain entry for platform asset")
 )
 
 type CompatibilityManifest struct {
@@ -96,7 +96,7 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 		currentVer = "none"
 	}
 
-	targetVer := "v1.9.9"
+	targetVer := "v1.9.10"
 	if manifestData, err := os.ReadFile(manifestPath); err == nil {
 		var m CompatibilityManifest
 		if json.Unmarshal(manifestData, &m) == nil && m.RecommendedVersion != "" {
@@ -164,7 +164,6 @@ func (u *EngineUpdater) GetStatus() EngineUpdateStatus {
 	defer u.mu.RUnlock()
 	return u.status
 }
-
 
 func (u *EngineUpdater) LoadManifest() (*CompatibilityManifest, error) {
 	data, err := os.ReadFile(u.manifestPath)
@@ -287,7 +286,6 @@ func VerifySignature(pubKeyHex string, message, sigBytes []byte) error {
 	}
 	return nil
 }
-
 
 // ParseChecksums searches SHA256SUMS content for the hash belonging to targetFilename
 func ParseChecksums(checksumsData []byte, targetFilename string) (string, error) {

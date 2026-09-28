@@ -4,10 +4,10 @@ set -euo pipefail
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$DIR"
 
-VERSION="${VERSION:-${GITHUB_REF_NAME:-1.9.9}}"
+VERSION="${VERSION:-${GITHUB_REF_NAME:-1.9.10}}"
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9] ]]; then
-    VERSION="1.9.9"
+    VERSION="1.9.10"
 fi
 ARCH="$(uname -m)"
 if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
@@ -53,7 +53,7 @@ if [ ! -f "$BUILD_DIR/bin/sirius.bc" ] || [ ! -f "$BUILD_DIR/bin/libcatapult.plu
     echo "-> Engine binaries or dynamic libraries missing in staging. Downloading official macOS engine..."
     if command -v curl >/dev/null 2>&1; then
         (curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-darwin-${ARCH}.tar.gz" || \
-         curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-darwin-${ARCH}.tar.gz" || \
+         curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.10/sirius-darwin-${ARCH}.tar.gz" || \
          curl -f -sSL "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-darwin-${ARCH}.tar.gz") | tar -xz -C "$BUILD_DIR"
         echo "-> Official macOS engine unpacked into package successfully."
     fi

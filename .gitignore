@@ -21,6 +21,7 @@ backend/dist/
 
 # Build outputs & archives
 dist/
+backup/
 
 # Disaster Recovery Packages & backups
 *.drpkg

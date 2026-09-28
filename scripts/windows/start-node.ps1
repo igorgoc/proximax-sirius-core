@@ -50,7 +50,7 @@ if (Test-Path $BinDir) {
             Write-Host "-> Missing RocksDB shared library for WSL engine. Restoring from official release..." -ForegroundColor Yellow
             $CandidateUrls = @(
                 "https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-linux-amd64.tar.gz",
-                "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-linux-amd64.tar.gz",
+                "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.10/sirius-linux-amd64.tar.gz",
                 "https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-amd64.tar.gz"
             )
             $TempTar = Join-Path $RootDir "sirius-linux-amd64.tar.gz"

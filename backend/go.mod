@@ -8,6 +8,7 @@ require (
 	github.com/proximax-storage/go-xpx-chain-sdk v0.8.4
 	github.com/proximax-storage/go-xpx-crypto v0.1.0
 	golang.org/x/crypto v0.14.0
+	golang.org/x/sys v0.13.0
 )
 
 require (
@@ -19,7 +20,6 @@ require (
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/proximax-storage/go-xpx-utils v0.0.0-20190604083640-90d06ff8a19f // indirect
 	github.com/supranational/blst v0.3.14 // indirect
-	golang.org/x/sys v0.13.0 // indirect
 )
 
 // Security Invariant: Local fork of go-xpx-crypto with exported Destroy()/Zero() methods

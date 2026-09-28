@@ -29,10 +29,10 @@ import (
 
 const (
 	DefaultContainerName = "sirius-native-peer"
-	DefaultImageName     = "Native Sirius Core v1.9.9"
+	DefaultImageName     = "Native Sirius Core v1.9.10"
 	DefaultSnapshotUrl   = "https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst"
 
-	Nemesis00001Url = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/00001.dat"
+	Nemesis00001Url  = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/00001.dat"
 	NemesisHashesUrl = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/hashes.dat"
 	NemesisIndexUrl  = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/index.dat"
 )
@@ -203,15 +203,15 @@ type ProcessSupervisor struct {
 }
 
 type LogStats struct {
-	LogsDir          string   `json:"logsDir"`
-	LogCount         int      `json:"logCount"`
-	TotalBytes       int64    `json:"totalBytes"`
-	TotalMB          float64  `json:"totalMB"`
-	ServerLockFound  bool     `json:"serverLockFound"`
-	ActiveLogFound   bool     `json:"activeLogFound"`
-	RotatedCount     int      `json:"rotatedCount"`
-	LastPurgeTime    string   `json:"lastPurgeTime,omitempty"`
-	LastPurgeFreedMB float64  `json:"lastPurgeFreedMB,omitempty"`
+	LogsDir          string  `json:"logsDir"`
+	LogCount         int     `json:"logCount"`
+	TotalBytes       int64   `json:"totalBytes"`
+	TotalMB          float64 `json:"totalMB"`
+	ServerLockFound  bool    `json:"serverLockFound"`
+	ActiveLogFound   bool    `json:"activeLogFound"`
+	RotatedCount     int     `json:"rotatedCount"`
+	LastPurgeTime    string  `json:"lastPurgeTime,omitempty"`
+	LastPurgeFreedMB float64 `json:"lastPurgeFreedMB,omitempty"`
 }
 
 type ConnectedPeer struct {
@@ -1187,7 +1187,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 	dc.metricsMu.RUnlock()
 
 	status, _ := dc.GetStatus()
-	engineVer := "v1.9.9"
+	engineVer := "v1.9.10"
 	if verBytes, err := os.ReadFile(filepath.Join(dc.binPath, "version.txt")); err == nil {
 		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
 			engineVer = trimmed
@@ -2795,4 +2795,3 @@ func getSystemNetworkBytes() (int64, int64, error) {
 	}
 	return totalIn, totalOut, nil
 }
-

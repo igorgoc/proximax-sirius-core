@@ -1162,7 +1162,7 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	rocksDbLib := filepath.Join(dc.binPath, "librocksdb.so.8")
 	fastFinalityLib := filepath.Join(dc.binPath, "libextension.fastfinality.so")
 
-	engineVer := "1.9.9"
+	engineVer := "1.9.10"
 	if verBytes, err := os.ReadFile(filepath.Join(dc.binPath, "version.txt")); err == nil {
 		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
 			engineVer = trimmed
@@ -1210,7 +1210,7 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 		dc.broadcastLog(fmt.Sprintf("<warning> [Supervisor] Sirius engine binaries or required shared libraries (RocksDB/plugins) are missing or invalid in %s. Auto-healing Linux x86_64 binaries (%s)...", dc.binPath, engineVer))
 		wslRootDir := ToWSLPath(filepath.Dir(dc.binPath))
 		healCmd := exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
-			"sh", "-c", fmt.Sprintf("mkdir -p '%s/bin' && (curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-linux-amd64.tar.gz' || curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/%s/sirius-linux-amd64.tar.gz' || curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.9/sirius-linux-amd64.tar.gz' || curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-amd64.tar.gz') | tar -xz -C '%s' && rm -f '%s/bin/librocksdb.so' '%s/bin/librocksdb.so.8' && (cp -f '%s/bin/librocksdb.so.8.5.3' '%s/bin/librocksdb.so.8' 2>/dev/null || true) && (cp -f '%s/bin/librocksdb.so.8.5.3' '%s/bin/librocksdb.so' 2>/dev/null || true)", wslRootDir, engineVer, wslRootDir, wslRootDir, wslRootDir, wslRootDir, wslRootDir, wslRootDir, wslRootDir))
+			"sh", "-c", fmt.Sprintf("mkdir -p '%s/bin' && (curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/latest/download/sirius-linux-amd64.tar.gz' || curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/%s/sirius-linux-amd64.tar.gz' || curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.10/sirius-linux-amd64.tar.gz' || curl -f -sSL 'https://github.com/igorgoc/cpp-xpx-chain/releases/download/1.9.8/sirius-linux-amd64.tar.gz') | tar -xz -C '%s' && rm -f '%s/bin/librocksdb.so' '%s/bin/librocksdb.so.8' && (cp -f '%s/bin/librocksdb.so.8.5.3' '%s/bin/librocksdb.so.8' 2>/dev/null || true) && (cp -f '%s/bin/librocksdb.so.8.5.3' '%s/bin/librocksdb.so' 2>/dev/null || true)", wslRootDir, engineVer, wslRootDir, wslRootDir, wslRootDir, wslRootDir, wslRootDir, wslRootDir, wslRootDir))
 		if healOut, err := healCmd.CombinedOutput(); err != nil {
 			dc.broadcastLog(fmt.Sprintf("<error> [Supervisor] Failed to auto-heal Linux engine binaries: %v (%s)", err, strings.TrimSpace(cleanWSLOutput(healOut))))
 		} else {
