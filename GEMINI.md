@@ -55,3 +55,20 @@ always_on: true
     - When statedb and flat files diverge (`signer invalid`), wipe `data/` and perform a fast-sync restore from the official snapshot (`https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst`).
   - In WSL2, `catapult.recovery` only runs when block height > 1. At height ≤ 1, dirty partial `statedb` from aborted boots is cleared so `NemesisBlockLoader` boots cleanly.
   - Process liveness check in `GetStatus()` checks `dc.cmd.ProcessState == nil` on Windows (`proc.Signal(syscall.Signal(0))` is unsupported on Windows).
+
+## 6. Autonomous Local LLM Delegation (LAN 190k Context Model)
+- **Endpoint & Capability**: A local 27B model with a 196,608-token context window is hosted on LAN (`http://192.168.1.111:8080`) and accessible via `ask_remote`.
+- **Proactive Context-Saving Invariant**:
+  - Whenever reviewing or summarizing large files (>300 lines), multi-file modules, or bulk directories, DO NOT read the entire contents directly into the main Antigravity conversation context.
+  - Proactively execute `ask_remote <files...> "<instruction>"` or `ask_remote --dir <dir> "<instruction>"` via `run_command` to let the local LAN model perform the heavy lifting and first-pass analysis.
+  - For long logs (>100 lines) or raw terminal output, pipe them directly to `ask_remote`: e.g. `docker logs <container> | ask_remote "<instruction>"` or `ask_remote <log_file> "<instruction>"`.
+  - For drafting boilerplate code, test suites, or repetitive conversions, delegate the draft generation to `ask_remote` first, then review and refine the output before committing.
+  - Always verify and review the local model's output before applying critical logic or final architecture decisions. Only bring synthesized results or refined diffs into the AGY context to conserve Google Gemini quota and token bandwidth.
+- **Unavailability Fallback (Session Forget Rule)**:
+  - If `ask_remote` is unreachable or fails to connect (e.g., endpoint offline, connection refused, or network timeout), **immediately forget `ask_remote` for the remainder of the session**.
+  - Do NOT retry `ask_remote` or repeatedly attempt connection.
+  - Seamlessly fall back to processing all file inspections, code reviews, and instructions directly within Antigravity.
+- **Zero Token-Waste Waiting Invariant**:
+  - When `ask_remote` or any long-running command is pushed to a background task, **NEVER schedule timers or poll task status**.
+  - Call zero tools and end the turn immediately; let the system's reactive wakeup resume execution at zero token cost.
+
