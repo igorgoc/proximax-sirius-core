@@ -71,3 +71,7 @@ chainconfig/resources/.backup-configs-*/
 
 .aider*
 Modelfile
+
+# Snapshot signing scripts
+scripts/sign_snapshot*
+/sign_snapshot*

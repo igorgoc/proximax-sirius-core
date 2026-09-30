@@ -263,17 +263,22 @@ if [ ! -f "$SIRIUS_BIN" ] || [ "$INSTALLED_ENGINE_VERSION" != "$TARGET_ENGINE_VE
             ;;
     esac
     
-    ENGINE_URL="https://github.com/igorgoc/cpp-xpx-chain/releases/download/${TARGET_ENGINE_VERSION}/${ENGINE_ASSET}"
-    LOG_INFO "Checking/fetching precompiled Sirius engine v${TARGET_ENGINE_VERSION} for $ARCH from $ENGINE_URL..."
+    RELEASE_TAG="v${TARGET_ENGINE_VERSION#v}"
+    ENGINE_URL="https://github.com/igorgoc/cpp-xpx-chain/releases/download/${RELEASE_TAG}/${ENGINE_ASSET}"
+    LOG_INFO "Checking/fetching precompiled Sirius engine ${RELEASE_TAG} for $ARCH from $ENGINE_URL..."
     mkdir -p "$DATA_DIR/bin"
-    if curl -f -sSL "$ENGINE_URL" | tar -xz -C "$DATA_DIR"; then
-        LOG_INFO "Catapult engine v${TARGET_ENGINE_VERSION} unpacked successfully to $DATA_DIR/bin"
+    TMP_ENGINE_TAR="/tmp/${ENGINE_ASSET}"
+    if curl -f -sSL "$ENGINE_URL" -o "$TMP_ENGINE_TAR"; then
+        tar -xzf "$TMP_ENGINE_TAR" -C "$DATA_DIR"
+        rm -f "$TMP_ENGINE_TAR"
+        LOG_INFO "Catapult engine ${RELEASE_TAG} unpacked successfully to $DATA_DIR/bin"
         chmod +x "$DATA_DIR/bin/sirius.bc" "$DATA_DIR/bin/catapult.recovery" 2>/dev/null || true
-        echo "$TARGET_ENGINE_VERSION" > "$VERSION_FILE"
+        echo "$RELEASE_TAG" > "$VERSION_FILE"
         SIRIUS_BIN="$DATA_DIR/bin/sirius.bc"
         RECOVERY_BIN="$DATA_DIR/bin/catapult.recovery"
     else
-        LOG_WARN "Engine release v${TARGET_ENGINE_VERSION} not yet available from GitHub; keeping existing engine binary."
+        rm -f "$TMP_ENGINE_TAR"
+        LOG_WARN "Engine release ${RELEASE_TAG} not yet available from GitHub; keeping existing engine binary."
     fi
 fi
 
@@ -286,22 +291,113 @@ if [ ! -f "$SIRIUS_BIN" ]; then
     exit 1
 fi
 
-# 7. Run catapult.recovery pre-flight check if height > 1, or wipe partial statedb at height <= 1
+# 7. Check index & Nemesis block initialization
 if [ -f "$INDEX_FILE" ] && [ -s "$INDEX_FILE" ]; then
     HEIGHT=$(od -An -t u8 -N 8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo "0")
-    if [ -n "${HEIGHT:-}" ] && [ "${HEIGHT:-0}" -gt 1 ] 2>/dev/null; then
-        if [ -x "$RECOVERY_BIN" ]; then
-            LOG_INFO "Running pre-flight catapult.recovery reconciliation (detected block height ${HEIGHT})..."
-            cd "$DATA_DIR"
-            "$RECOVERY_BIN" "$DATA_DIR" || LOG_WARN "catapult.recovery completed with exit status $?; continuing..."
-            rm -f "$DATA_STORAGE"/*.lock "$DATA_STORAGE"/statedb/*/LOCK "$DATA_STORAGE"/statedb/LOCK 2>/dev/null || true
-        fi
-    else
+    if [ "${HEIGHT:-0}" -le 1 ] 2>/dev/null; then
         LOG_INFO "Block height is <= 1 (${HEIGHT:-0}). Clearing uncommitted partial statedb for clean Nemesis boot..."
         rm -rf "$DATA_STORAGE/statedb" 2>/dev/null || true
     fi
 fi
 
-LOG_INFO "Launching Sirius Catapult Engine ($SIRIUS_BIN) on P2P port 7900..."
+# 8. Engine Supervisor & Automated Sync Watchdog
+LOG_INFO "Starting Sirius Catapult Engine Supervisor with Automated Sync Watchdog..."
 cd "$DATA_DIR"
-exec "$SIRIUS_BIN" "$DATA_DIR"
+
+cleanup_and_exit() {
+    LOG_INFO "Shutdown signal received. Stopping sirius.bc gracefully..."
+    if [ -n "${ENGINE_PID:-}" ] && kill -0 "$ENGINE_PID" 2>/dev/null; then
+        kill -INT "$ENGINE_PID" 2>/dev/null || true
+        for i in $(seq 1 30); do
+            if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        if kill -0 "$ENGINE_PID" 2>/dev/null; then
+            LOG_WARN "Engine did not exit in 30s; sending SIGKILL..."
+            kill -KILL "$ENGINE_PID" 2>/dev/null || true
+        fi
+    fi
+    exit 0
+}
+
+trap cleanup_and_exit SIGTERM SIGINT
+
+# Maximum idle stall window before watchdog triggers recovery (8 minutes = 480 seconds)
+WATCHDOG_TIMEOUT_SEC=480
+
+while true; do
+    # Clear stale lock files before boot
+    rm -f "$DATA_STORAGE"/*.lock "$DATA_STORAGE"/statedb/*/LOCK "$DATA_STORAGE"/statedb/LOCK 2>/dev/null || true
+
+    # Run recovery if height > 1
+    if [ -f "$INDEX_FILE" ] && [ -s "$INDEX_FILE" ]; then
+        HEIGHT=$(od -An -t u8 -N 8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo "0")
+        if [ -n "${HEIGHT:-}" ] && [ "${HEIGHT:-0}" -gt 1 ] 2>/dev/null; then
+            if [ -x "$RECOVERY_BIN" ]; then
+                LOG_INFO "Running pre-flight catapult.recovery (detected block height ${HEIGHT})..."
+                "$RECOVERY_BIN" "$DATA_DIR" || LOG_WARN "catapult.recovery exit code $?; continuing..."
+                rm -f "$DATA_STORAGE"/*.lock "$DATA_STORAGE"/statedb/*/LOCK "$DATA_STORAGE"/statedb/LOCK 2>/dev/null || true
+            fi
+        fi
+    fi
+
+    # Start engine process in background
+    "$SIRIUS_BIN" "$DATA_DIR" &
+    ENGINE_PID=$!
+    LOG_INFO "sirius.bc started with PID $ENGINE_PID on P2P port 7900"
+
+    LAST_INDEX_MTIME=0
+    if [ -f "$INDEX_FILE" ]; then
+        LAST_INDEX_MTIME=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || echo "0")
+    fi
+    LAST_ACTIVITY_TIME=$(date +%s)
+
+    # Watchdog monitoring loop (checks every 30 seconds)
+    while kill -0 "$ENGINE_PID" 2>/dev/null; do
+        sleep 30
+
+        CURRENT_TIME=$(date +%s)
+        CURRENT_INDEX_MTIME=0
+        if [ -f "$INDEX_FILE" ]; then
+            CURRENT_INDEX_MTIME=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || echo "0")
+        fi
+
+        # If index.dat was modified, reset the activity timer
+        if [ "$CURRENT_INDEX_MTIME" -gt "$LAST_INDEX_MTIME" ]; then
+            LAST_INDEX_MTIME="$CURRENT_INDEX_MTIME"
+            LAST_ACTIVITY_TIME="$CURRENT_TIME"
+        fi
+
+        # Check for sync stall: no new committed block in WATCHDOG_TIMEOUT_SEC (8 minutes)
+        IDLE_SEC=$(( CURRENT_TIME - LAST_ACTIVITY_TIME ))
+        if [ "$IDLE_SEC" -ge "$WATCHDOG_TIMEOUT_SEC" ]; then
+            CURRENT_HEIGHT="unknown"
+            if [ -f "$INDEX_FILE" ]; then
+                CURRENT_HEIGHT=$(od -An -t u8 -N 8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo "unknown")
+            fi
+            LOG_WARN "[WATCHDOG] Sync stall detected: No block committed in ${IDLE_SEC}s (> ${WATCHDOG_TIMEOUT_SEC}s) at height ${CURRENT_HEIGHT}."
+            LOG_WARN "[WATCHDOG] Initiating automated graceful restart to recover peer connections..."
+
+            kill -INT "$ENGINE_PID" 2>/dev/null || true
+            for w in $(seq 1 30); do
+                if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            if kill -0 "$ENGINE_PID" 2>/dev/null; then
+                kill -KILL "$ENGINE_PID" 2>/dev/null || true
+            fi
+            wait "$ENGINE_PID" 2>/dev/null || true
+            break
+        fi
+    done
+
+    wait "$ENGINE_PID" 2>/dev/null || true
+    EXIT_CODE=$?
+    LOG_WARN "sirius.bc exited with status $EXIT_CODE. Restarting engine in 5 seconds..."
+    sleep 5
+done
+

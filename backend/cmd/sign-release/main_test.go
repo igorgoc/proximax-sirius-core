@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,4 +126,56 @@ func TestSignReleaseWithKeyEnv(t *testing.T) {
 		t.Fatal("Signature generated with -key-env failed verification")
 	}
 }
+
+func TestSignSingleFile(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sirius_sign_single_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey error: %v", err)
+	}
+	privHex := hex.EncodeToString(priv)
+	pubHex := hex.EncodeToString(pub)
+
+	snapshotFile := filepath.Join(tempDir, "sirius-snapshot.tar.zst")
+	_ = os.WriteFile(snapshotFile, []byte("snapshot-binary-payload-data"), 0644)
+
+	// Create another file in the same directory that should NOT be in SHA256SUMS
+	otherFile := filepath.Join(tempDir, "other.txt")
+	_ = os.WriteFile(otherFile, []byte("ignore me"), 0644)
+
+	cmdSign([]string{"-key", privHex, "-file", snapshotFile})
+
+	checksumsFile := filepath.Join(tempDir, "SHA256SUMS")
+	sigFile := filepath.Join(tempDir, "SHA256SUMS.sig")
+
+	if _, err := os.Stat(checksumsFile); os.IsNotExist(err) {
+		t.Fatalf("Expected %s to exist", checksumsFile)
+	}
+	if _, err := os.Stat(sigFile); os.IsNotExist(err) {
+		t.Fatalf("Expected %s to exist", sigFile)
+	}
+
+	checksumsData, _ := os.ReadFile(checksumsFile)
+	sigData, _ := os.ReadFile(sigFile)
+	pubKeyBytes, _ := resolvePublicKey(pubHex)
+
+	if !ed25519.Verify(pubKeyBytes, checksumsData, sigData) {
+		t.Fatal("Signature verification failed for single file")
+	}
+
+	// Verify SHA256SUMS only contains sirius-snapshot.tar.zst and not other.txt
+	contentStr := string(checksumsData)
+	if !strings.Contains(contentStr, "sirius-snapshot.tar.zst") {
+		t.Errorf("Expected checksums to contain snapshot filename, got: %s", contentStr)
+	}
+	if strings.Contains(contentStr, "other.txt") {
+		t.Errorf("Did not expect checksums to contain other.txt, got: %s", contentStr)
+	}
+}
+
 

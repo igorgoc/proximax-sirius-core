@@ -42,9 +42,9 @@ Usage:
   sign-release keygen [-out-dir <dir>]
       Generate a new Ed25519 release signing keypair.
 
-  sign-release sign -key-env <ENV_NAME> -dir <releaseDir> [-out <checksumsFile>]
-  sign-release sign -key <privKeyHex|path> -dir <releaseDir> [-out <checksumsFile>]
-      Compute SHA256SUMS for all files in releaseDir and generate an Ed25519 signature (.sig).
+  sign-release sign -key-env <ENV_NAME> (-dir <dir> | -file <file> | -checksums <file>) [-out <checksumsFile>]
+  sign-release sign -key <privKeyHex|path> (-dir <dir> | -file <file> | -checksums <file>) [-out <checksumsFile>]
+      Compute SHA256SUMS for files and generate an Ed25519 signature (.sig).
       (-key-env is strongly recommended to prevent process table secret exposure)
 
   sign-release verify -pubkey <pubKeyHex|path> -checksums <checksumsFile> -sig <sigFile> [-dir <releaseDir>]
@@ -90,6 +90,8 @@ func cmdSign(args []string) {
 	keyArg := fs.String("key", "", "64-byte Ed25519 private key hex string or path to key file (deprecated: use -key-env to avoid process table exposure)")
 	keyEnv := fs.String("key-env", "", "Environment variable name containing Ed25519 private key hex string")
 	releaseDir := fs.String("dir", "", "Directory containing release artifacts to hash and sign")
+	fileArg := fs.String("file", "", "Specific single file to hash and sign (alternative to -dir)")
+	checksumsArg := fs.String("checksums", "", "Directly sign an existing checksums file")
 	outFile := fs.String("out", "", "Output path for checksums (default: <dir>/SHA256SUMS)")
 	_ = fs.Parse(args)
 
@@ -98,8 +100,10 @@ func cmdSign(args []string) {
 		keyInput = os.Getenv(*keyEnv)
 	}
 	if keyInput == "" {
-		// Fallbacks for standard CI environment variables
-		if envVal := os.Getenv("NODE_MANAGER_RELEASE_PRIVATE_KEY"); envVal != "" {
+		// Fallbacks for standard CI / environment variables
+		if envVal := os.Getenv("SIRIUS_RELEASE_PRIVATE_KEY"); envVal != "" {
+			keyInput = envVal
+		} else if envVal := os.Getenv("NODE_MANAGER_RELEASE_PRIVATE_KEY"); envVal != "" {
 			keyInput = envVal
 		} else if envVal := os.Getenv("RELEASE_PRIVATE_KEY"); envVal != "" {
 			keyInput = envVal
@@ -108,8 +112,8 @@ func cmdSign(args []string) {
 		}
 	}
 
-	if keyInput == "" || *releaseDir == "" {
-		fmt.Fprintln(os.Stderr, "Error: signing key (via -key-env or -key) and -dir are required")
+	if keyInput == "" || (*releaseDir == "" && *fileArg == "" && *checksumsArg == "") {
+		fmt.Fprintln(os.Stderr, "Error: signing key (via -key-env or -key) and one of -dir, -file, or -checksums are required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -124,46 +128,82 @@ func cmdSign(args []string) {
 		os.Exit(1)
 	}
 
-	entries, err := os.ReadDir(*releaseDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading release directory: %v\n", err)
-		os.Exit(1)
-	}
+	var checksumsContent string
+	var targetChecksumFile string
+	fileCount := 0
 
-	var checksumLines []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == "SHA256SUMS" || strings.HasSuffix(name, ".sig") || strings.HasPrefix(name, ".") {
-			continue
-		}
-
-		filePath := filepath.Join(*releaseDir, name)
-		hash, err := computeFileSHA256(filePath)
+	if *checksumsArg != "" {
+		targetChecksumFile = *checksumsArg
+		data, err := os.ReadFile(targetChecksumFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error hashing %s: %v\n", name, err)
+			fmt.Fprintf(os.Stderr, "Error reading checksums file %s: %v\n", targetChecksumFile, err)
 			os.Exit(1)
 		}
-		checksumLines = append(checksumLines, fmt.Sprintf("%s  %s", hash, name))
-	}
+		checksumsContent = string(data)
+		fileCount = 1
+	} else if *fileArg != "" {
+		filePath := *fileArg
+		hash, err := computeFileSHA256(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error hashing %s: %v\n", filePath, err)
+			os.Exit(1)
+		}
+		name := filepath.Base(filePath)
+		checksumsContent = fmt.Sprintf("%s  %s\n", hash, name)
+		fileCount = 1
 
-	sort.Strings(checksumLines)
-	if len(checksumLines) == 0 {
-		fmt.Fprintln(os.Stderr, "Warning: No release artifact files found in directory to sign.")
-	}
+		targetChecksumFile = *outFile
+		if targetChecksumFile == "" {
+			targetChecksumFile = filepath.Join(filepath.Dir(filePath), "SHA256SUMS")
+		}
 
-	checksumsContent := strings.Join(checksumLines, "\n") + "\n"
+		if err := os.WriteFile(targetChecksumFile, []byte(checksumsContent), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", targetChecksumFile, err)
+			os.Exit(1)
+		}
+	} else {
+		entries, err := os.ReadDir(*releaseDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading release directory: %v\n", err)
+			os.Exit(1)
+		}
 
-	targetChecksumFile := *outFile
-	if targetChecksumFile == "" {
-		targetChecksumFile = filepath.Join(*releaseDir, "SHA256SUMS")
-	}
+		var checksumLines []string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == "SHA256SUMS" || strings.HasSuffix(name, ".sig") || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "manifest") {
+				continue
+			}
 
-	if err := os.WriteFile(targetChecksumFile, []byte(checksumsContent), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", targetChecksumFile, err)
-		os.Exit(1)
+			filePath := filepath.Join(*releaseDir, name)
+			hash, err := computeFileSHA256(filePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error hashing %s: %v\n", name, err)
+				os.Exit(1)
+			}
+			checksumLines = append(checksumLines, fmt.Sprintf("%s  %s", hash, name))
+		}
+
+		sort.Strings(checksumLines)
+		if len(checksumLines) == 0 {
+			fmt.Fprintln(os.Stderr, "Warning: No release artifact files found in directory to sign.")
+		}
+
+		checksumsContent = strings.Join(checksumLines, "\n") + "\n"
+		fileCount = len(checksumLines)
+
+		targetChecksumFile = *outFile
+		if targetChecksumFile == "" {
+			targetChecksumFile = filepath.Join(*releaseDir, "SHA256SUMS")
+		}
+
+		if err := os.WriteFile(targetChecksumFile, []byte(checksumsContent), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", targetChecksumFile, err)
+			os.Exit(1)
+		}
 	}
 
 	sigBytes := ed25519.Sign(privKeyBytes, []byte(checksumsContent))
@@ -173,9 +213,11 @@ func cmdSign(args []string) {
 		os.Exit(1)
 	}
 
+	pubKey := privKeyBytes.Public().(ed25519.PublicKey)
 	fmt.Printf("✓ Successfully computed checksums and Ed25519 signature:\n")
-	fmt.Printf("  Checksums: %s (%d files)\n", targetChecksumFile, len(checksumLines))
+	fmt.Printf("  Checksums: %s (%d files)\n", targetChecksumFile, fileCount)
 	fmt.Printf("  Signature: %s (%d bytes)\n", targetSigFile, len(sigBytes))
+	fmt.Printf("  Signer Pubkey: %s\n", hex.EncodeToString(pubKey))
 }
 
 func cmdVerify(args []string) {
