@@ -39,7 +39,29 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
   // 1. Transform raw validator network data into celestial stars
   const stars: GalaxyStarData[] = useMemo(() => {
     const rawList = networkValidatorStats?.topValidators || [];
-    if (rawList.length === 0) return [];
+    if (rawList.length === 0) {
+      if (harvestStats && harvestStats.totalBlocksValidated > 0) {
+        const pos = calculateStarPosition('SELF_HARVESTER', 0, 1, true);
+        return [
+          {
+            publicKey: 'Local Node Harvester',
+            shortKey: 'My Node',
+            blocksCount: harvestStats.totalBlocksValidated,
+            sharePercent: 100,
+            lastSeenHeight: harvestStats.lastHarvestedHeight,
+            lastSeenTime: harvestStats.lastHarvestedTime,
+            isSelf: true,
+            x: pos.x,
+            y: pos.y,
+            radius: 18,
+            color: '#10B981',
+            glowColor: '#06B6D4',
+            haloSize: 42,
+          },
+        ];
+      }
+      return [];
+    }
 
     let maxBlocks = 1;
     for (const v of rawList) {
@@ -66,7 +88,7 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
         haloSize: visual.haloSize,
       };
     });
-  }, [networkValidatorStats, currentHeight]);
+  }, [networkValidatorStats, harvestStats, currentHeight]);
 
   // 2. Generate P2P constellation filaments
   const edges: ConstellationEdge[] = useMemo(() => {
@@ -97,9 +119,9 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 w-full h-[660px]">
+    <div className="flex flex-col lg:flex-row gap-4 w-full h-[660px] min-w-0">
       {/* Interactive Galactic Universe Canvas */}
-      <div className="flex-1 h-full min-h-[460px]">
+      <div className="relative flex-1 min-w-0 h-full min-h-[460px] overflow-hidden">
         <SiriusGalaxyCanvas
           stars={stars}
           edges={edges}
@@ -114,7 +136,7 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
       </div>
 
       {/* Glassmorphic Side Panel HUD */}
-      <div className="h-full">
+      <div className="w-full lg:w-80 shrink-0 h-full">
         <SiriusGalaxyHUD
           stars={stars}
           selectedStar={selectedStar}

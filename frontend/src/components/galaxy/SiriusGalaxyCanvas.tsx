@@ -59,6 +59,21 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
   const novaQueueRef = useRef<ActiveNovaState[]>([]);
   const lastNovaPropRef = useRef<{ x: number; y: number; text?: string } | null>(null);
 
+  // Synchronized refs to allow steady 60 FPS render loop without effect teardown
+  const starsRef = useRef(stars);
+  starsRef.current = stars;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+  const selectedStarRef = useRef(selectedStar);
+  selectedStarRef.current = selectedStar;
+  const hoveredStarRef = useRef(hoveredStar);
+  hoveredStarRef.current = hoveredStar;
+  const showFilamentsRef = useRef(showFilaments);
+  showFilamentsRef.current = showFilaments;
+  const showLabelsRef = useRef(showLabels);
+  showLabelsRef.current = showLabels;
+  const hasInitiallyCenteredRef = useRef(false);
+
   // Track active Nova shockwaves
   useEffect(() => {
     if (activeNova && activeNova !== lastNovaPropRef.current) {
@@ -99,10 +114,12 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     if (onCenterStarRef) onCenterStarRef.current = centerOnStar;
   }, [resetCamera, centerOnStar, onCameraResetRef, onCenterStarRef]);
 
-  // Center on self star initially if present
+  // Center on self star initially if present (one-time on mount/first-load)
   useEffect(() => {
+    if (hasInitiallyCenteredRef.current) return;
     const selfStar = stars.find((s) => s.isSelf);
     if (selfStar) {
+      hasInitiallyCenteredRef.current = true;
       cameraRef.current.targetX = -selfStar.x * 0.75;
       cameraRef.current.targetY = -selfStar.y * 0.75;
       cameraRef.current.x = cameraRef.current.targetX;
@@ -130,6 +147,11 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       const dpr = window.devicePixelRatio || 1;
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
+
+      if (width <= 0 || height <= 0) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
 
       ctx.save();
       ctx.scale(dpr, dpr);
@@ -188,9 +210,10 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       ctx.globalAlpha = 1.0;
 
       // 3. Render Constellation Filaments (Mesh lines)
-      if (showFilaments) {
-        for (let i = 0; i < edges.length; i++) {
-          const edge = edges[i];
+      if (showFilamentsRef.current) {
+        const currentEdges = edgesRef.current;
+        for (let i = 0; i < currentEdges.length; i++) {
+          const edge = currentEdges[i];
           const p1 = worldToScreen(edge.x1, edge.y1);
           const p2 = worldToScreen(edge.x2, edge.y2);
 
@@ -241,8 +264,13 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       });
 
       // 5. Render Validator Stars
-      for (let i = 0; i < stars.length; i++) {
-        const star = stars[i];
+      const currentStars = starsRef.current;
+      const currentHovered = hoveredStarRef.current;
+      const currentSelected = selectedStarRef.current;
+      const currentShowLabels = showLabelsRef.current;
+
+      for (let i = 0; i < currentStars.length; i++) {
+        const star = currentStars[i];
         const pos = worldToScreen(star.x, star.y);
 
         // Cull stars outside viewport margin
@@ -255,8 +283,8 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
           continue;
         }
 
-        const isHovered = hoveredStar?.publicKey === star.publicKey;
-        const isSelected = selectedStar?.publicKey === star.publicKey;
+        const isHovered = currentHovered?.publicKey === star.publicKey;
+        const isSelected = currentSelected?.publicKey === star.publicKey;
         const scaledRadius = Math.max(4, star.radius * cam.zoom);
 
         // A. Pulsing Corona Glow (Outer Aura)
@@ -356,7 +384,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
         }
 
         // E. Star Label
-        if (showLabels || isHovered || isSelected || star.isSelf) {
+        if (currentShowLabels || isHovered || isSelected || star.isSelf) {
           const label = star.isSelf ? `★ ${star.shortKey} (You)` : star.shortKey;
           ctx.save();
           ctx.font = star.isSelf ? 'bold 11px monospace' : '10px monospace';
@@ -382,21 +410,27 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [stars, edges, selectedStar, hoveredStar, showFilaments, showLabels]);
+  }, []);
 
-  // Canvas Resize Observer with DPR Scaling
+  // Canvas Resize Observer with DPR Scaling (No inline style px to prevent flex ratchet loops)
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
     const handleResize = () => {
-      const rect = container.getBoundingClientRect();
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      if (width <= 0 || height <= 0) return;
+
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.round(rect.width * dpr);
-      canvas.height = Math.round(rect.height * dpr);
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      const targetW = Math.round(width * dpr);
+      const targetH = Math.round(height * dpr);
+
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
     };
 
     handleResize();
@@ -495,7 +529,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full min-h-[500px] overflow-hidden select-none bg-[#07090E] rounded-xl border border-[#262B34]"
+      className="relative w-full h-full min-h-[460px] overflow-hidden select-none bg-[#07090E] rounded-xl border border-[#262B34]"
     >
       <canvas
         ref={canvasRef}
@@ -503,7 +537,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
-        className={`w-full h-full block ${
+        className={`absolute inset-0 w-full h-full block ${
           hoveredStar ? 'cursor-pointer' : cameraRef.current.isDragging ? 'cursor-grabbing' : 'cursor-grab'
         }`}
       />
