@@ -96,11 +96,56 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     particlesRef.current = generateBackgroundParticles(160, 1400);
   }, []);
 
-  // Camera control handlers for parent HUD
+  // Camera control handlers for parent HUD: Frame-to-Fit all stars in viewport
   const resetCamera = useCallback(() => {
-    cameraRef.current.targetX = 0;
-    cameraRef.current.targetY = 0;
-    cameraRef.current.targetZoom = 1.0;
+    const currentStars = starsRef.current;
+    const cam = cameraRef.current;
+    if (currentStars.length === 0) {
+      cam.targetX = 0;
+      cam.targetY = 0;
+      cam.targetZoom = 1.0;
+      return;
+    }
+
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    const dpr = window.devicePixelRatio || 1;
+    const viewportWidth = container?.clientWidth || (canvas ? canvas.width / dpr : 800);
+    const viewportHeight = container?.clientHeight || (canvas ? canvas.height / dpr : 600);
+
+    // Compute celestial bounding box of all stars
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (let i = 0; i < currentStars.length; i++) {
+      const s = currentStars[i];
+      if (s.x < minX) minX = s.x;
+      if (s.x > maxX) maxX = s.x;
+      if (s.y < minY) minY = s.y;
+      if (s.y > maxY) maxY = s.y;
+    }
+
+    // Safety padding for glow halos, orbit rings, and star text labels
+    const padding = 120;
+    const spanX = Math.max(120, (maxX - minX) + padding * 2);
+    const spanY = Math.max(120, (maxY - minY) + padding * 2);
+
+    const centerX = (minX + maxX) * 0.5;
+    const centerY = (minY + maxY) * 0.5;
+
+    // Ideal zoom to frame the whole constellation comfortably
+    const zoomX = viewportWidth / spanX;
+    const zoomY = viewportHeight / spanY;
+    const fitZoom = Math.min(zoomX, zoomY);
+
+    // Clamp zoom to comfortable viewing range
+    const targetZoom = Math.max(0.25, Math.min(1.5, fitZoom));
+
+    cam.targetX = -centerX;
+    cam.targetY = -centerY;
+    cam.targetZoom = targetZoom;
   }, []);
 
   const centerOnStar = useCallback((star: GalaxyStarData) => {
@@ -114,18 +159,14 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     if (onCenterStarRef) onCenterStarRef.current = centerOnStar;
   }, [resetCamera, centerOnStar, onCameraResetRef, onCenterStarRef]);
 
-  // Center on self star initially if present (one-time on mount/first-load)
+  // Frame all stars initially on first load
   useEffect(() => {
     if (hasInitiallyCenteredRef.current) return;
-    const selfStar = stars.find((s) => s.isSelf);
-    if (selfStar) {
+    if (stars.length > 0) {
       hasInitiallyCenteredRef.current = true;
-      cameraRef.current.targetX = -selfStar.x * 0.75;
-      cameraRef.current.targetY = -selfStar.y * 0.75;
-      cameraRef.current.x = cameraRef.current.targetX;
-      cameraRef.current.y = cameraRef.current.targetY;
+      resetCamera();
     }
-  }, [stars]);
+  }, [stars, resetCamera]);
 
   // Main 60 FPS Render Loop
   useEffect(() => {
@@ -522,7 +563,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     e.preventDefault();
     const cam = cameraRef.current;
     const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-    const newZoom = Math.max(0.35, Math.min(2.8, cam.targetZoom * zoomFactor));
+    const newZoom = Math.max(0.2, Math.min(2.8, cam.targetZoom * zoomFactor));
     cam.targetZoom = newZoom;
   };
 

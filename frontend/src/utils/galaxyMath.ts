@@ -177,56 +177,144 @@ export function getStarColorAndRadius(
 
 /**
  * Generates constellation filaments connecting nodes.
- * Connects each node to its 2 nearest celestial neighbors or active P2P peers.
+ * Uses k-nearest neighbors + Minimum Spanning Tree (MST) bridging to guarantee
+ * that all stars (and both spiral arms + Sirius anchor) form a single cohesive,
+ * organically connected cosmic constellation mesh without isolated groups.
  */
 export function generateConstellationEdges(
   stars: Array<{ publicKey: string; x: number; y: number; isSelf?: boolean }>
 ): ConstellationEdge[] {
+  const n = stars.length;
+  if (n < 2) return [];
+
   const edges: ConstellationEdge[] = [];
   const edgeSet = new Set<string>();
 
-  for (let i = 0; i < stars.length; i++) {
+  const addEdge = (i: number, j: number, forcedOpacity?: number) => {
+    if (i === j || i < 0 || j < 0 || i >= n || j >= n) return;
     const s1 = stars[i];
+    const s2 = stars[j];
+    const edgeKey = s1.publicKey < s2.publicKey
+      ? `${s1.publicKey}_${s2.publicKey}`
+      : `${s2.publicKey}_${s1.publicKey}`;
 
-    // Find nearest neighbor distances
-    const distances: Array<{ index: number; dist: number }> = [];
-    for (let j = 0; j < stars.length; j++) {
-      if (i === j) continue;
-      const s2 = stars[j];
-      const dx = s1.x - s2.x;
-      const dy = s1.y - s2.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      distances.push({ index: j, dist });
+    if (edgeSet.has(edgeKey)) return;
+    edgeSet.add(edgeKey);
+
+    const dx = s1.x - s2.x;
+    const dy = s1.y - s2.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // Calculate opacity based on distance or forced override
+    let opacity = forcedOpacity;
+    if (opacity === undefined) {
+      const isAnchorEdge = s1.isSelf || s2.isSelf;
+      if (isAnchorEdge) {
+        opacity = Math.max(0.24, 0.52 - (dist / 650) * 0.3);
+      } else {
+        opacity = Math.max(0.12, 0.42 - (dist / 550) * 0.3);
+      }
     }
 
-    distances.sort((a, b) => a.dist - b.dist);
+    edges.push({
+      sourceKey: s1.publicKey,
+      targetKey: s2.publicKey,
+      x1: s1.x,
+      y1: s1.y,
+      x2: s2.x,
+      y2: s2.y,
+      opacity: parseFloat(opacity.toFixed(2)),
+    });
+  };
 
-    // Connect to 2 nearest neighbors if within visual range
-    const maxFilamentDist = 320;
-    const connectionsCount = Math.min(2, distances.length);
+  // 1. Calculate all pairwise distances
+  interface PairDist {
+    i: number;
+    j: number;
+    dist: number;
+  }
+  const allPairs: PairDist[] = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dx = stars[i].x - stars[j].x;
+      const dy = stars[i].y - stars[j].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      allPairs.push({ i, j, dist });
+    }
+  }
 
-    for (let k = 0; k < connectionsCount; k++) {
-      const neighbor = distances[k];
-      if (neighbor.dist <= maxFilamentDist) {
-        const s2 = stars[neighbor.index];
-        const edgeKey = s1.publicKey < s2.publicKey
-          ? `${s1.publicKey}_${s2.publicKey}`
-          : `${s2.publicKey}_${s1.publicKey}`;
+  // Sort pairs by ascending Euclidean distance
+  allPairs.sort((a, b) => a.dist - b.dist);
 
-        if (!edgeSet.has(edgeKey)) {
-          edgeSet.add(edgeKey);
-          const opacity = Math.max(0.12, 0.45 - (neighbor.dist / maxFilamentDist) * 0.35);
-          edges.push({
-            sourceKey: s1.publicKey,
-            targetKey: s2.publicKey,
-            x1: s1.x,
-            y1: s1.y,
-            x2: s2.x,
-            y2: s2.y,
-            opacity: parseFloat(opacity.toFixed(2)),
-          });
-        }
+  // 2. Disjoint-Set (Union-Find) for MST guaranteed connectivity
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+
+  const find = (i: number): number => {
+    let root = i;
+    while (root !== parent[root]) root = parent[root];
+    let curr = i;
+    while (curr !== root) {
+      const next = parent[curr];
+      parent[curr] = root;
+      curr = next;
+    }
+    return root;
+  };
+
+  const union = (i: number, j: number): boolean => {
+    const rootI = find(i);
+    const rootJ = find(j);
+    if (rootI === rootJ) return false;
+    parent[rootI] = rootJ;
+    return true;
+  };
+
+  // 3. Kruskal's MST to guarantee all nodes are connected into a single component
+  let componentsCount = n;
+  for (let p = 0; p < allPairs.length; p++) {
+    const pair = allPairs[p];
+    if (union(pair.i, pair.j)) {
+      addEdge(pair.i, pair.j);
+      componentsCount--;
+      if (componentsCount === 1) break;
+    }
+  }
+
+  // 4. Add k-Nearest Neighbors (k=3) for richer local constellation mesh density
+  const k = Math.min(3, n - 1);
+  for (let i = 0; i < n; i++) {
+    const neighbors: Array<{ j: number; dist: number }> = [];
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      const dx = stars[i].x - stars[j].x;
+      const dy = stars[i].y - stars[j].y;
+      neighbors.push({ j, dist: Math.sqrt(dx * dx + dy * dy) });
+    }
+    neighbors.sort((a, b) => a.dist - b.dist);
+    for (let m = 0; m < k; m++) {
+      // Connect local neighbors within reasonable galaxy radius
+      if (neighbors[m].dist <= 520) {
+        addEdge(i, neighbors[m].j);
       }
+    }
+  }
+
+  // 5. Special Anchor Links: Connect the Sirius Anchor (isSelf) to closest nodes on both sides
+  const selfIndex = stars.findIndex((s) => s.isSelf);
+  if (selfIndex !== -1) {
+    const distancesFromSelf: Array<{ j: number; dist: number }> = [];
+    for (let j = 0; j < n; j++) {
+      if (j === selfIndex) continue;
+      const dx = stars[selfIndex].x - stars[j].x;
+      const dy = stars[selfIndex].y - stars[j].y;
+      distancesFromSelf.push({ j, dist: Math.sqrt(dx * dx + dy * dy) });
+    }
+    distancesFromSelf.sort((a, b) => a.dist - b.dist);
+    // Connect self to 3 nearest stars
+    const anchorConnections = Math.min(3, distancesFromSelf.length);
+    for (let m = 0; m < anchorConnections; m++) {
+      addEdge(selfIndex, distancesFromSelf[m].j, 0.38);
     }
   }
 
