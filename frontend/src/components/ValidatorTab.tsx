@@ -11,13 +11,15 @@ import {
   Sliders,
   ChevronLeft,
   ChevronRight,
-  HardDrive
+  HardDrive,
+  Sparkles
 } from 'lucide-react';
 import { NodeMetrics, NodeConfig, HarvestStats, NetworkValidatorStats, StorageStatus, PortCheckResult } from '../types';
 import { getExplorerBlockUrl, getExplorerAddressUrl } from '../utils/explorer';
 import { formatNumber, formatXPXInMillions } from '../utils/format';
 import { formatToLocalTime, formatRelativeTime } from '../utils/date';
 import { StorageTab } from './StorageTab';
+import { SiriusGalaxyView } from './galaxy/SiriusGalaxyView';
 
 interface ValidatorTabProps {
   metrics: NodeMetrics | null;
@@ -44,17 +46,23 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
   onStartNode,
   onRefresh
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'harvesting' | 'storage'>(() => {
-    if (typeof window !== 'undefined' && (window.location.hash === '#storage' || window.location.hash.startsWith('#storage-') || window.location.hash === '#validator-storage')) {
-      return 'storage';
+  const [activeSubTab, setActiveSubTab] = useState<'harvesting' | 'galaxy' | 'storage'>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.hash === '#galaxy' || window.location.hash === '#constellation') {
+        return 'galaxy';
+      }
+      if (window.location.hash === '#storage' || window.location.hash.startsWith('#storage-') || window.location.hash === '#validator-storage') {
+        return 'storage';
+      }
     }
     return 'harvesting';
   });
 
-  const handleSubTabChange = (tab: 'harvesting' | 'storage') => {
+  const handleSubTabChange = (tab: 'harvesting' | 'galaxy' | 'storage') => {
     setActiveSubTab(tab);
     if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', tab === 'storage' ? '#storage' : '#validator');
+      const hash = tab === 'galaxy' ? '#galaxy' : tab === 'storage' ? '#storage' : '#validator';
+      window.history.replaceState(null, '', hash);
     }
   };
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -127,6 +135,17 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
           <span>Block Harvesting (POS+)</span>
         </button>
         <button
+          onClick={() => handleSubTabChange('galaxy')}
+          className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
+            activeSubTab === 'galaxy'
+              ? 'bg-sky-600/20 text-sky-400 border border-sky-500/40 shadow-xs'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-[#181B20] border border-transparent'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+          <span>Sirius Galaxy (Constellation)</span>
+        </button>
+        <button
           onClick={() => handleSubTabChange('storage')}
           className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
             activeSubTab === 'storage'
@@ -139,7 +158,13 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
         </button>
       </div>
 
-      {activeSubTab === 'storage' ? (
+      {activeSubTab === 'galaxy' ? (
+        <SiriusGalaxyView
+          metrics={metrics}
+          harvestStats={harvestStats}
+          networkValidatorStats={networkValidatorStats}
+        />
+      ) : activeSubTab === 'storage' ? (
         <StorageTab
           storageStatus={storageStatus || null}
           portCheck={portCheck || null}
