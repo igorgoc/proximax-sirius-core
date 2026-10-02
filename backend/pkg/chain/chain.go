@@ -369,8 +369,19 @@ func (cm *ChainMonitor) fetchAccountData(identifier, apiNode string) (*accountFe
 	}
 
 	if mosaics, ok := accMap["mosaics"].([]interface{}); ok {
+		var xpxFound bool
 		for _, mItem := range mosaics {
 			if mMap, ok := mItem.(map[string]interface{}); ok {
+				var isXPX bool
+				if idArr, ok := mMap["id"].([]interface{}); ok && len(idArr) >= 2 {
+					low := uint64(idArr[0].(float64))
+					high := uint64(idArr[1].(float64))
+					// XPX Currency Mosaic ID: 0x402B2F579FAEBC59 (low: 2679028825, high: 1076571991)
+					if low == 2679028825 && high == 1076571991 {
+						isXPX = true
+					}
+				}
+
 				var totalAmount uint64
 				if amtArr, ok := mMap["amount"].([]interface{}); ok && len(amtArr) >= 2 {
 					low := uint64(amtArr[0].(float64))
@@ -380,10 +391,21 @@ func (cm *ChainMonitor) fetchAccountData(identifier, apiNode string) (*accountFe
 					totalAmount = uint64(amtNum)
 				}
 
-				res.RawBalanceXPX = int64(totalAmount)
-				xpxVal := float64(totalAmount) / 1000000.0
-				res.BalanceXPX = fmt.Sprintf("%.6f XPX", xpxVal)
-				res.MosaicsFound = true
+				if isXPX {
+					res.RawBalanceXPX = int64(totalAmount)
+					xpxVal := float64(totalAmount) / 1000000.0
+					res.BalanceXPX = fmt.Sprintf("%.6f XPX", xpxVal)
+					res.MosaicsFound = true
+					xpxFound = true
+					break
+				}
+
+				if !xpxFound {
+					res.RawBalanceXPX = int64(totalAmount)
+					xpxVal := float64(totalAmount) / 1000000.0
+					res.BalanceXPX = fmt.Sprintf("%.6f XPX", xpxVal)
+					res.MosaicsFound = true
+				}
 			}
 		}
 	}

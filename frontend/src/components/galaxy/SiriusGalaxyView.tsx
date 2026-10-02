@@ -73,7 +73,7 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
       const pos = calculateStarPosition(v.publicKey, v.isSelf);
       const visual = getStarColorAndRadius(v, maxBlocks, currentHeight);
       const prefix = v.publicKey ? v.publicKey.slice(0, 4).toUpperCase() : (v.isSelf ? '1D33' : 'NODE');
-      const stakedBalance = v.stakedBalanceXPX || (v.sharePercent ? (v.sharePercent / 100) * (networkValidatorStats?.estimatedStakedPoolXPX || 60000000) : 0);
+      const stakedBalance = v.stakedBalanceXPX || (v.isSelf ? 7727964 : (v.sharePercent ? (v.sharePercent / 100) * (networkValidatorStats?.estimatedStakedPoolXPX || 60000000) : 0));
 
       return {
         publicKey: v.publicKey,

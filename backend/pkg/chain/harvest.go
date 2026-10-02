@@ -72,9 +72,14 @@ func NewHarvesterTracker(resourcesDir string) *HarvesterTracker {
 }
 
 func (ht *HarvesterTracker) SetHarvestPublicKey(pubKey string) {
+	cleanKey := strings.ToUpper(strings.TrimSpace(pubKey))
 	ht.mu.Lock()
-	defer ht.mu.Unlock()
-	ht.harvestPublicKey = strings.ToUpper(strings.TrimSpace(pubKey))
+	ht.harvestPublicKey = cleanKey
+	ht.mu.Unlock()
+
+	if cleanKey != "" && cleanKey != "REMOTE_ACCOUNT_PUBLIC_KEY" {
+		ht.networkValidators.triggerBalanceFetch(cleanKey)
+	}
 }
 
 func (ht *HarvesterTracker) GetNetworkValidatorStats() NetworkValidatorStats {
@@ -241,8 +246,29 @@ func (ht *HarvesterTracker) CheckBlock(height int64) error {
 // StartBackgroundScanner periodically and randomly checks for newly validated blocks without spamming explorer/nodes
 func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 	go func() {
+		updateSelfBalance := func() {
+			ht.mu.RLock()
+			pubKey := ht.harvestPublicKey
+			ht.mu.RUnlock()
+			if pubKey != "" && pubKey != "REMOTE_ACCOUNT_PUBLIC_KEY" {
+				if hStatus, err := cm.CheckHarvesterStatus(pubKey, ""); err == nil && hStatus != nil {
+					var selfXPX float64
+					if hStatus.AccountType == 2 && hStatus.LinkedRawBalanceXPX > 0 {
+						selfXPX = float64(hStatus.LinkedRawBalanceXPX) / 1000000.0
+					} else if hStatus.RawBalanceXPX > 0 {
+						selfXPX = float64(hStatus.RawBalanceXPX) / 1000000.0
+					}
+					if selfXPX > 0 {
+						ht.networkValidators.SetSelfStakedBalance(pubKey, selfXPX)
+					}
+				}
+			}
+		}
+
 		// Initial bootstrap: Scan the last 15 blocks on startup to populate network validator metrics immediately
 		time.Sleep(2 * time.Second)
+		updateSelfBalance()
+
 		if netHeight, err := cm.GetNetworkHeight(); err == nil && netHeight > 15 {
 			for h := netHeight - 15; h <= netHeight; h++ {
 				_ = ht.CheckBlock(h)
@@ -253,11 +279,17 @@ func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 			ht.mu.Unlock()
 		}
 
+		loopCounter := 0
 		for {
 			select {
 			case <-ht.stopChan:
 				return
 			default:
+			}
+
+			loopCounter++
+			if loopCounter%3 == 0 {
+				updateSelfBalance()
 			}
 
 			netHeight, err := cm.GetNetworkHeight()

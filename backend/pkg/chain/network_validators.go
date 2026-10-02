@@ -1,6 +1,9 @@
 package chain
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -37,16 +40,47 @@ type NetworkValidatorStats struct {
 	TopValidators          []ActiveValidatorSummary `json:"topValidators"`
 }
 
+type validatorBalanceEntry struct {
+	stakedXPX float64
+	fetchedAt time.Time
+}
+
 type NetworkValidatorTracker struct {
-	mu           sync.RWMutex
-	recentBlocks []NetworkBlockInfo
-	maxBlocks    int
+	mu            sync.RWMutex
+	recentBlocks  []NetworkBlockInfo
+	maxBlocks     int
+	balanceCache  map[string]validatorBalanceEntry
+	inFlight      map[string]bool
+	httpClient    *http.Client
+	selfStakedXPX float64
 }
 
 func NewNetworkValidatorTracker() *NetworkValidatorTracker {
 	return &NetworkValidatorTracker{
 		recentBlocks: make([]NetworkBlockInfo, 0, 1000),
 		maxBlocks:    1000, // ~4.1 hours of blocks at 15s cadence
+		balanceCache: make(map[string]validatorBalanceEntry),
+		inFlight:     make(map[string]bool),
+		httpClient: &http.Client{
+			Timeout: 4 * time.Second,
+		},
+	}
+}
+
+// SetSelfStakedBalance allows setting/overriding self validator balance directly
+func (nvt *NetworkValidatorTracker) SetSelfStakedBalance(pubKey string, balance float64) {
+	if balance <= 0 {
+		return
+	}
+	nvt.mu.Lock()
+	defer nvt.mu.Unlock()
+	nvt.selfStakedXPX = balance
+	if pubKey != "" {
+		cleanKey := strings.ToUpper(strings.TrimSpace(pubKey))
+		nvt.balanceCache[cleanKey] = validatorBalanceEntry{
+			stakedXPX: balance,
+			fetchedAt: time.Now(),
+		}
 	}
 }
 
@@ -77,6 +111,137 @@ func (nvt *NetworkValidatorTracker) RecordBlock(block NetworkBlockInfo) {
 	if len(nvt.recentBlocks) > nvt.maxBlocks {
 		nvt.recentBlocks = nvt.recentBlocks[:nvt.maxBlocks]
 	}
+}
+
+// resolveStakedBalance queries public nodes to fetch true staked XPX (resolving linked owner for remote harvesters)
+func (nvt *NetworkValidatorTracker) resolveStakedBalance(signerPubKey string) (float64, error) {
+	cleanSigner := NormalizeAccountIdentifier(signerPubKey)
+	for _, node := range PublicMainnetNodes {
+		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), cleanSigner)
+		resp, err := nvt.httpClient.Get(url)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var raw map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&raw)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		accMap, ok := raw["account"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		accType := 0
+		if at, ok := accMap["accountType"].(float64); ok {
+			accType = int(at)
+		}
+
+		targetAccMap := accMap
+
+		// In Sirius PoS+, if accountType == 2 (Remote Harvester), staked funds reside in the linked main owner account
+		if accType == 2 {
+			if linkedKey, ok := accMap["linkedAccountKey"].(string); ok {
+				cleanLinked := strings.TrimSpace(linkedKey)
+				if len(cleanLinked) == 64 && strings.Trim(cleanLinked, "0") != "" {
+					linkedUrl := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), cleanLinked)
+					lResp, lErr := nvt.httpClient.Get(linkedUrl)
+					if lErr == nil && lResp.StatusCode == http.StatusOK {
+						var lRaw map[string]interface{}
+						if decErr := json.NewDecoder(lResp.Body).Decode(&lRaw); decErr == nil {
+							if lAcc, ok := lRaw["account"].(map[string]interface{}); ok {
+								targetAccMap = lAcc
+							}
+						}
+						lResp.Body.Close()
+					}
+				}
+			}
+		}
+
+		// Extract XPX balance from targetAccMap mosaics
+		if mosaics, ok := targetAccMap["mosaics"].([]interface{}); ok {
+			var xpxAmount uint64
+			var xpxFound bool
+			for _, mItem := range mosaics {
+				mMap, ok := mItem.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				var isXPX bool
+				if idArr, ok := mMap["id"].([]interface{}); ok && len(idArr) >= 2 {
+					low := uint64(idArr[0].(float64))
+					high := uint64(idArr[1].(float64))
+					// XPX Currency Mosaic ID: 0x402B2F579FAEBC59 (low: 2679028825, high: 1076571991)
+					if low == 2679028825 && high == 1076571991 {
+						isXPX = true
+					}
+				}
+
+				var totalAmount uint64
+				if amtArr, ok := mMap["amount"].([]interface{}); ok && len(amtArr) >= 2 {
+					low := uint64(amtArr[0].(float64))
+					high := uint64(amtArr[1].(float64))
+					totalAmount = (high << 32) | low
+				} else if amtNum, ok := mMap["amount"].(float64); ok {
+					totalAmount = uint64(amtNum)
+				}
+
+				if isXPX {
+					xpxAmount = totalAmount
+					xpxFound = true
+					break
+				}
+				if !xpxFound && totalAmount > 0 {
+					xpxAmount = totalAmount
+				}
+			}
+
+			if xpxFound || xpxAmount > 0 {
+				return float64(xpxAmount) / 1000000.0, nil
+			}
+		}
+
+		return 0, nil
+	}
+
+	return 0, fmt.Errorf("failed to resolve balance from public nodes")
+}
+
+// triggerBalanceFetch starts an async background query to fetch and cache validator's true staked XPX
+func (nvt *NetworkValidatorTracker) triggerBalanceFetch(signer string) {
+	nvt.mu.Lock()
+	if nvt.inFlight[signer] {
+		nvt.mu.Unlock()
+		return
+	}
+	nvt.inFlight[signer] = true
+	nvt.mu.Unlock()
+
+	go func() {
+		defer func() {
+			nvt.mu.Lock()
+			delete(nvt.inFlight, signer)
+			nvt.mu.Unlock()
+		}()
+
+		balance, err := nvt.resolveStakedBalance(signer)
+		if err == nil {
+			nvt.mu.Lock()
+			nvt.balanceCache[signer] = validatorBalanceEntry{
+				stakedXPX: balance,
+				fetchedAt: time.Now(),
+			}
+			nvt.mu.Unlock()
+		}
+	}()
 }
 
 // GetStats computes active validators, cadence, and staking pool estimates
@@ -155,18 +320,14 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 		}
 	}
 
-	// In Sirius Mainnet PoS+, active committee validators stake ~60M XPX total (~6M XPX avg / active validator)
-	estimatedPoolXPX := float64(active4h) * 6000000.0
-	if active4h >= 10 {
-		estimatedPoolXPX = 60000000.0
-	}
-
 	// Build Top Validators list
 	topList := make([]ActiveValidatorSummary, 0, len(signers4h))
+	var signersToFetch []string
+
 	for signer, count := range signers4h {
 		shortKey := signer
-		if len(shortKey) > 12 {
-			shortKey = shortKey[:6] + "..." + shortKey[len(shortKey)-4:]
+		if len(shortKey) >= 4 {
+			shortKey = shortKey[:4]
 		}
 
 		share := 0.0
@@ -179,9 +340,18 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 			lastTimeStr = t.UTC().Format("2006-01-02 15:04:05 UTC")
 		}
 
+		isSelf := signer == selfClean
 		stakedBalance := 0.0
-		if share > 0 && estimatedPoolXPX > 0 {
-			stakedBalance = (share / 100.0) * estimatedPoolXPX
+
+		if isSelf && nvt.selfStakedXPX > 0 {
+			stakedBalance = nvt.selfStakedXPX
+		} else if entry, ok := nvt.balanceCache[signer]; ok {
+			stakedBalance = entry.stakedXPX
+		}
+
+		// Trigger background fetch if not in cache or cached > 5m ago
+		if entry, ok := nvt.balanceCache[signer]; !ok || time.Since(entry.fetchedAt) > 5*time.Minute {
+			signersToFetch = append(signersToFetch, signer)
 		}
 
 		topList = append(topList, ActiveValidatorSummary{
@@ -192,7 +362,7 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 			StakedBalanceXPX: stakedBalance,
 			LastSeenHeight:   signerLastHeight[signer],
 			LastSeenTime:     lastTimeStr,
-			IsSelf:           signer == selfClean,
+			IsSelf:           isSelf,
 		})
 	}
 
@@ -203,6 +373,27 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 	// Limit to top 8 active signers
 	if len(topList) > 8 {
 		topList = topList[:8]
+	}
+
+	// Asynchronously trigger balance queries for needed signers outside the lock
+	if len(signersToFetch) > 0 {
+		go func(keys []string) {
+			for _, k := range keys {
+				nvt.triggerBalanceFetch(k)
+				time.Sleep(50 * time.Millisecond) // gentle rate pacing
+			}
+		}(signersToFetch)
+	}
+
+	// Calculate total known staked pool
+	var totalKnownStaked float64
+	for _, v := range topList {
+		totalKnownStaked += v.StakedBalanceXPX
+	}
+
+	estimatedPoolXPX := float64(active4h) * 6000000.0
+	if totalKnownStaked > estimatedPoolXPX {
+		estimatedPoolXPX = totalKnownStaked
 	}
 
 	latestBlockSigner := ""

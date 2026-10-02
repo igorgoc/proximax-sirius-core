@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestChainMonitor_GetLocalHeight(t *testing.T) {
@@ -101,3 +102,81 @@ func TestChainMonitor_CheckHarvesterStatus(t *testing.T) {
 		t.Errorf("expected CanHarvest true, got false")
 	}
 }
+
+func TestNetworkValidatorTracker_LinkedAccountStakedBalance(t *testing.T) {
+	remoteKey := "1D339BA5E197D7AB2E4BFA9312B5C115040740F9F00C5E3BD7EA6F911B5827F2"
+	ownerKey := "F8C33546AB26A2ED132F8D12FBE10168B775A879BD0699F3EAFF2A1EBE40F43E"
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, remoteKey) {
+			resp := map[string]interface{}{
+				"account": map[string]interface{}{
+					"publicKey":        remoteKey,
+					"accountType":      2,
+					"linkedAccountKey": ownerKey,
+					"mosaics": []interface{}{
+						map[string]interface{}{
+							"id":     []interface{}{float64(2679028825), float64(1076571991)},
+							"amount": []interface{}{float64(10000000), float64(0)}, // 10 XPX
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		if strings.Contains(r.URL.Path, ownerKey) {
+			// [1317589471, 1799] -> 7,727,963.754975 XPX
+			resp := map[string]interface{}{
+				"account": map[string]interface{}{
+					"publicKey":        ownerKey,
+					"accountType":      1,
+					"linkedAccountKey": remoteKey,
+					"mosaics": []interface{}{
+						map[string]interface{}{
+							"id":     []interface{}{float64(2679028825), float64(1076571991)},
+							"amount": []interface{}{float64(1317589471), float64(1799)},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	origNodes := PublicMainnetNodes
+	PublicMainnetNodes = []string{mockServer.URL}
+	defer func() { PublicMainnetNodes = origNodes }()
+
+	nvt := NewNetworkValidatorTracker()
+	nvt.RecordBlock(NetworkBlockInfo{
+		Height:    100,
+		Signer:    remoteKey,
+		Timestamp: time.Now(),
+		FeeXPX:    0.5,
+	})
+
+	_ = nvt.GetStats(remoteKey)
+	time.Sleep(150 * time.Millisecond) // Wait for async fetch
+	stats := nvt.GetStats(remoteKey)
+
+	if len(stats.TopValidators) == 0 {
+		t.Fatalf("expected at least 1 top validator")
+	}
+
+	v := stats.TopValidators[0]
+	if v.PublicKey != remoteKey {
+		t.Errorf("expected public key %s, got %s", remoteKey, v.PublicKey)
+	}
+	if v.ShortKey != "1D33" {
+		t.Errorf("expected ShortKey '1D33', got '%s'", v.ShortKey)
+	}
+	if v.StakedBalanceXPX < 7700000 || v.StakedBalanceXPX > 7750000 {
+		t.Errorf("expected ~7.7M XPX, got %f", v.StakedBalanceXPX)
+	}
+}
+
