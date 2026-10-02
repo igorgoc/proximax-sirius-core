@@ -380,3 +380,33 @@ func TestGetEngineLogProgress_Rotation(t *testing.T) {
 		t.Fatalf("expected server_0002.log, 300, 26500, got %s, %d, %d", active, activeSz, totalSz)
 	}
 }
+
+func TestProcessSupervisor_SyncWatchdogStatus(t *testing.T) {
+	s := NewProcessSupervisor("/tmp/mock_chainconfig")
+
+	status := s.GetSyncWatchdogStatus()
+	if !status.Enabled {
+		t.Errorf("expected watchdog to be enabled by default")
+	}
+	if status.IsStalled {
+		t.Errorf("expected initially not stalled")
+	}
+
+	// Test stalled state detection when running but stuck
+	s.isRunning = true
+	s.lastHeightAdvance = time.Now().Add(-200 * time.Second) // 200s stalled (> 180s)
+	status2 := s.GetSyncWatchdogStatus()
+	if !status2.IsStalled {
+		t.Errorf("expected IsStalled to be true after 200s without advance")
+	}
+	if status2.StalledDurationSec < 195 {
+		t.Errorf("expected StalledDurationSec >= 195, got %d", status2.StalledDurationSec)
+	}
+
+	// Advance height: should reset stalled state
+	s.lastHeightAdvance = time.Now()
+	status3 := s.GetSyncWatchdogStatus()
+	if status3.IsStalled {
+		t.Errorf("expected IsStalled to be false after height advance")
+	}
+}

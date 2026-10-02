@@ -129,8 +129,18 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 	}
 	snapMgr := snapshot.NewSnapshotManager(supervisor, releasePubKey, nil)
 
-	// Start self-healing process watchdog
-	supervisor.StartWatchdog(configMgr.GetDataPath)
+	// Start self-healing process & autonomous sync stall watchdog
+	supervisor.StartWatchdog(configMgr.GetDataPath, func() (int64, int64, error) {
+		localH, err := chainMon.GetLocalHeight(configMgr.GetDataPath())
+		if err != nil {
+			return 0, 0, err
+		}
+		netH, err := chainMon.GetNetworkHeight()
+		if err != nil {
+			return 0, 0, err
+		}
+		return localH, netH, nil
+	})
 
 	apiToken := configMgr.GetOrCreateApiToken()
 	log.Printf("[Sirius Core] Secure API token initialized (%d chars)", len(apiToken))
@@ -494,6 +504,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"storageStatus":         s.storageMgr.GetStatus(),
 		"portCheck":             s.networkMgr.GetLastResult(),
 		"autoRecovery":          s.supervisor.IsAutoRecoveryEnabled(),
+		"syncWatchdog":          s.supervisor.GetSyncWatchdogStatus(),
 		"updateInfo":            s.updateMgr.GetUpdateInfo(),
 		"engineStatus":          s.engineUpdater.GetStatus(),
 		"wslStatus":             s.supervisor.ProbeWSLStatus(),

@@ -134,6 +134,16 @@ type DiskSpaceInfo struct {
 	Used       string `json:"used"`
 }
 
+type SyncHeightProvider func() (localHeight int64, networkHeight int64, err error)
+
+type SyncWatchdogStatus struct {
+	Enabled            bool   `json:"enabled"`
+	LastStallRecovered string `json:"lastStallRecovered,omitempty"`
+	LastObservedHeight int64  `json:"lastObservedHeight"`
+	StalledDurationSec int64  `json:"stalledDurationSec"`
+	IsStalled          bool   `json:"isStalled"`
+}
+
 type ProcessSupervisor struct {
 	chainConfigPath string
 	binPath         string
@@ -170,6 +180,11 @@ type ProcessSupervisor struct {
 	autoRecoveryEnabled bool
 	userIntendedRunning bool
 	lastAutoRecovered   time.Time
+
+	// Autonomous Sync Stall Watchdog
+	lastStallRecovered time.Time
+	lastObservedHeight int64
+	lastHeightAdvance  time.Time
 
 	// In-memory metrics cache
 	metricsCache    *NodeMetrics
@@ -1099,7 +1114,34 @@ func (dc *ProcessSupervisor) IsAutoRecoveryEnabled() bool {
 	return dc.autoRecoveryEnabled
 }
 
-func (dc *ProcessSupervisor) StartWatchdog(dataPathProvider func() string) {
+func (dc *ProcessSupervisor) GetSyncWatchdogStatus() SyncWatchdogStatus {
+	dc.autoRecoveryMu.RLock()
+	defer dc.autoRecoveryMu.RUnlock()
+
+	var stalledSec int64
+	isStalled := false
+	if !dc.lastHeightAdvance.IsZero() && dc.isRunning {
+		stalledSec = int64(time.Since(dc.lastHeightAdvance).Seconds())
+		if stalledSec >= 180 {
+			isStalled = true
+		}
+	}
+
+	lastRecoveredStr := ""
+	if !dc.lastStallRecovered.IsZero() {
+		lastRecoveredStr = dc.lastStallRecovered.UTC().Format("2006-01-02 15:04:05 UTC")
+	}
+
+	return SyncWatchdogStatus{
+		Enabled:            dc.autoRecoveryEnabled,
+		LastStallRecovered: lastRecoveredStr,
+		LastObservedHeight: dc.lastObservedHeight,
+		StalledDurationSec: stalledSec,
+		IsStalled:          isStalled,
+	}
+}
+
+func (dc *ProcessSupervisor) StartWatchdog(dataPathProvider func() string, heightProvider SyncHeightProvider) {
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -1116,6 +1158,8 @@ func (dc *ProcessSupervisor) StartWatchdog(dataPathProvider func() string) {
 			}
 
 			status, _ := dc.GetStatus()
+
+			// 1. Process Crash Auto-Recovery
 			if status != StatusRunning && status != StatusStarting {
 				if time.Since(lastRecovered) < 30*time.Second {
 					continue
@@ -1131,6 +1175,74 @@ func (dc *ProcessSupervisor) StartWatchdog(dataPathProvider func() string) {
 					dp = dataPathProvider()
 				}
 				_ = dc.StartNode(dp)
+				continue
+			}
+
+			// 2. Autonomous Sync Stall Watchdog (process alive but frozen on a block)
+			if status == StatusRunning && heightProvider != nil {
+				dc.mu.Lock()
+				startT := dc.startTime
+				dc.mu.Unlock()
+
+				// Grace period: allow node at least 3 minutes after launch to connect and establish P2P handshakes
+				if !startT.IsZero() && time.Since(startT) < 3*time.Minute {
+					continue
+				}
+
+				dc.autoRecoveryMu.RLock()
+				lastStall := dc.lastStallRecovered
+				dc.autoRecoveryMu.RUnlock()
+
+				// Cooldown: enforce at least 5 minutes between stall recoveries to avoid restart loops
+				if !lastStall.IsZero() && time.Since(lastStall) < 5*time.Minute {
+					continue
+				}
+
+				localHeight, networkHeight, err := heightProvider()
+				if err != nil || localHeight <= 0 || networkHeight <= 0 {
+					continue
+				}
+
+				now := time.Now()
+				dc.autoRecoveryMu.Lock()
+				if localHeight > dc.lastObservedHeight {
+					// Node is syncing normally!
+					dc.lastObservedHeight = localHeight
+					dc.lastHeightAdvance = now
+					dc.autoRecoveryMu.Unlock()
+					continue
+				}
+
+				if dc.lastHeightAdvance.IsZero() {
+					dc.lastHeightAdvance = now
+					dc.lastObservedHeight = localHeight
+					dc.autoRecoveryMu.Unlock()
+					continue
+				}
+
+				stalledDuration := now.Sub(dc.lastHeightAdvance)
+
+				// Stall Condition:
+				// - Network is ahead by at least 5 blocks
+				// - Local height has not advanced for >= 3 minutes (180s)
+				if networkHeight > localHeight+5 && stalledDuration >= 3*time.Minute {
+					dc.lastStallRecovered = now
+					dc.lastHeightAdvance = now
+					dc.autoRecoveryMu.Unlock()
+
+					dc.broadcastLog(fmt.Sprintf(
+						"[Sync Watchdog] ⚠️ Sync stall detected! Local height stuck at %d for %s while network height is %d (%d blocks behind). Triggering automated recovery restart to refresh P2P sockets...",
+						localHeight, stalledDuration.Round(time.Second), networkHeight, networkHeight-localHeight,
+					))
+
+					dp := ""
+					if dataPathProvider != nil {
+						dp = dataPathProvider()
+					}
+					_ = dc.RestartNode(dp)
+				} else {
+					dc.autoRecoveryMu.Unlock()
+				}
 			}
 		}
 	}()
