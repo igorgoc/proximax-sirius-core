@@ -18,6 +18,7 @@ func TestStorageManager_ConfigAndKeyMasking(t *testing.T) {
 		func() string { return dataDir },
 		func() string { return "1111111111111111111111111111111111111111111111111111111111111111" },
 	)
+	defer sm.Close()
 
 	// Valid 64-character dummy private key
 	testKey := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -68,6 +69,7 @@ func TestStorageManager_MetricsAndSandboxes(t *testing.T) {
 		func() string { return dataDir },
 		nil,
 	)
+	defer sm.Close()
 
 	drivesPath := sm.GetActiveStoragePath()
 	sandboxPath := filepath.Join(drivesPath, "drive-sandboxes")
@@ -133,3 +135,15 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageManager_Lifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+	resourcesDir := filepath.Join(tempDir, "resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	sm := NewStorageManager(resourcesDir, func() string { return tempDir }, nil)
+	// Calling Close multiple times should be safe and idempotent
+	sm.Close()
+	sm.Close()
+}
+

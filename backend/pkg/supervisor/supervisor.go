@@ -185,6 +185,9 @@ type ProcessSupervisor struct {
 	lastStallRecovered time.Time
 	lastObservedHeight int64
 	lastHeightAdvance  time.Time
+	watchdogStopChan   chan struct{}
+	watchdogStopOnce   sync.Once
+	watchdogWg         sync.WaitGroup
 
 	// In-memory metrics cache
 	metricsCache    *NodeMetrics
@@ -1142,11 +1145,27 @@ func (dc *ProcessSupervisor) GetSyncWatchdogStatus() SyncWatchdogStatus {
 }
 
 func (dc *ProcessSupervisor) StartWatchdog(dataPathProvider func() string, heightProvider SyncHeightProvider) {
+	dc.StopWatchdog()
+
+	dc.autoRecoveryMu.Lock()
+	dc.watchdogStopOnce = sync.Once{}
+	dc.watchdogStopChan = make(chan struct{})
+	stopCh := dc.watchdogStopChan
+	dc.autoRecoveryMu.Unlock()
+
+	dc.watchdogWg.Add(1)
 	go func() {
+		defer dc.watchdogWg.Done()
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
-		for range ticker.C {
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+			}
+
 			dc.autoRecoveryMu.RLock()
 			enabled := dc.autoRecoveryEnabled
 			userWanted := dc.userIntendedRunning
@@ -1246,6 +1265,20 @@ func (dc *ProcessSupervisor) StartWatchdog(dataPathProvider func() string, heigh
 			}
 		}
 	}()
+}
+
+// StopWatchdog terminates the background auto-recovery and sync watchdog goroutine cleanly
+func (dc *ProcessSupervisor) StopWatchdog() {
+	dc.autoRecoveryMu.Lock()
+	stopCh := dc.watchdogStopChan
+	dc.autoRecoveryMu.Unlock()
+
+	if stopCh != nil {
+		dc.watchdogStopOnce.Do(func() {
+			close(stopCh)
+		})
+		dc.watchdogWg.Wait()
+	}
 }
 
 func (dc *ProcessSupervisor) RestartNode(dataPath string) error {

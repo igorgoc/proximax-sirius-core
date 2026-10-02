@@ -52,6 +52,7 @@ func TestNetworkValidatorTracker_RecordBlockAndOrdering(t *testing.T) {
 
 func TestNetworkValidatorTracker_ActiveValidatorsAndCadence(t *testing.T) {
 	nvt := NewNetworkValidatorTracker()
+	defer nvt.Stop()
 	baseTime := time.Now().UTC()
 
 	// Insert 10 blocks spaced exactly 15 seconds apart: 5 by "VAL_ALPHA", 5 by "VAL_BETA"
@@ -122,11 +123,8 @@ func TestNetworkValidatorTracker_MosaicPriority(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	origNodes := PublicMainnetNodes
-	PublicMainnetNodes = []string{mockServer.URL}
-	defer func() { PublicMainnetNodes = origNodes }()
-
-	nvt := NewNetworkValidatorTracker()
+	nvt := NewNetworkValidatorTracker(mockServer.URL)
+	defer nvt.Stop()
 	balance, err := nvt.resolveStakedBalance(validatorKey)
 	if err != nil {
 		t.Fatalf("resolveStakedBalance failed: %v", err)
@@ -140,6 +138,7 @@ func TestNetworkValidatorTracker_MosaicPriority(t *testing.T) {
 
 func TestNetworkValidatorTracker_SelfStakedBalanceOverride(t *testing.T) {
 	nvt := NewNetworkValidatorTracker()
+	defer nvt.Stop()
 	selfKey := "1D339BA5E197D7AB2E4BFA9312B5C115040740F9F00C5E3BD7EA6F911B5827F2"
 
 	nvt.RecordBlock(NetworkBlockInfo{
@@ -175,6 +174,7 @@ func TestNetworkValidatorTracker_SelfStakedBalanceOverride(t *testing.T) {
 
 func TestNetworkValidatorTracker_ConcurrentAccess(t *testing.T) {
 	nvt := NewNetworkValidatorTracker()
+	defer nvt.Stop()
 	nvt.maxBlocks = 200
 
 	signers := []string{"NODE_A", "NODE_B", "NODE_C", "NODE_D"}

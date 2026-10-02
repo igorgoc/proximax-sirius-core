@@ -2041,6 +2041,9 @@ func (s *Server) handleSystemShutdown(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		log.Println("[Sirius Core] Received full shutdown command. Stopping node engine and exiting...")
+		s.supervisor.StopWatchdog()
+		s.harvesterTracker.Stop()
+		s.storageMgr.Close()
 		_ = s.supervisor.StopNode()
 		os.Exit(0)
 	}()
@@ -2056,10 +2059,11 @@ func (s *Server) handlePeersDetail(w http.ResponseWriter, r *http.Request) {
 	peers := s.supervisor.GetConnectedPeers()
 
 	// Ping seed nodes concurrently with bounded timeout
-	seedPings := make([]SeedPingInfo, len(chain.PublicMainnetNodes))
+	publicNodes := chain.GetPublicMainnetNodes()
+	seedPings := make([]SeedPingInfo, len(publicNodes))
 	var wg sync.WaitGroup
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	for i, node := range chain.PublicMainnetNodes {
+	for i, node := range publicNodes {
 		wg.Add(1)
 		go func(idx int, target string) {
 			defer wg.Done()

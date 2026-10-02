@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,16 +47,28 @@ type validatorBalanceEntry struct {
 }
 
 type NetworkValidatorTracker struct {
-	mu            sync.RWMutex
-	recentBlocks  []NetworkBlockInfo
-	maxBlocks     int
-	balanceCache  map[string]validatorBalanceEntry
-	inFlight      map[string]bool
-	httpClient    *http.Client
-	selfStakedXPX float64
+	mu              sync.RWMutex
+	recentBlocks    []NetworkBlockInfo
+	maxBlocks       int
+	balanceCache    map[string]validatorBalanceEntry
+	inFlight        map[string]bool
+	httpClient      *http.Client
+	selfStakedXPX   float64
+	apiNodes        []string
+	isBatchFetching atomic.Bool
+	stopChan        chan struct{}
+	stopOnce        sync.Once
+	wg              sync.WaitGroup
 }
 
-func NewNetworkValidatorTracker() *NetworkValidatorTracker {
+func NewNetworkValidatorTracker(nodes ...string) *NetworkValidatorTracker {
+	var targetNodes []string
+	if len(nodes) > 0 {
+		targetNodes = make([]string, len(nodes))
+		copy(targetNodes, nodes)
+	} else {
+		targetNodes = GetPublicMainnetNodes()
+	}
 	return &NetworkValidatorTracker{
 		recentBlocks: make([]NetworkBlockInfo, 0, 1000),
 		maxBlocks:    1000, // ~4.1 hours of blocks at 15s cadence
@@ -64,7 +77,36 @@ func NewNetworkValidatorTracker() *NetworkValidatorTracker {
 		httpClient: &http.Client{
 			Timeout: 4 * time.Second,
 		},
+		apiNodes: targetNodes,
+		stopChan: make(chan struct{}),
 	}
+}
+
+// SetNodes updates the public nodes used by this tracker
+func (nvt *NetworkValidatorTracker) SetNodes(nodes []string) {
+	nvt.mu.Lock()
+	defer nvt.mu.Unlock()
+	nvt.apiNodes = make([]string, len(nodes))
+	copy(nvt.apiNodes, nodes)
+}
+
+func (nvt *NetworkValidatorTracker) getNodes() []string {
+	nvt.mu.RLock()
+	defer nvt.mu.RUnlock()
+	if len(nvt.apiNodes) > 0 {
+		nodes := make([]string, len(nvt.apiNodes))
+		copy(nodes, nvt.apiNodes)
+		return nodes
+	}
+	return GetPublicMainnetNodes()
+}
+
+// Stop cleanly terminates in-flight background worker goroutines
+func (nvt *NetworkValidatorTracker) Stop() {
+	nvt.stopOnce.Do(func() {
+		close(nvt.stopChan)
+	})
+	nvt.wg.Wait()
 }
 
 // SetSelfStakedBalance allows setting/overriding self validator balance directly
@@ -116,7 +158,7 @@ func (nvt *NetworkValidatorTracker) RecordBlock(block NetworkBlockInfo) {
 // resolveStakedBalance queries public nodes to fetch true staked XPX (resolving linked owner for remote harvesters)
 func (nvt *NetworkValidatorTracker) resolveStakedBalance(signerPubKey string) (float64, error) {
 	cleanSigner := NormalizeAccountIdentifier(signerPubKey)
-	for _, node := range PublicMainnetNodes {
+	for _, node := range nvt.getNodes() {
 		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), cleanSigner)
 		resp, err := nvt.httpClient.Get(url)
 		if err != nil {
@@ -217,6 +259,12 @@ func (nvt *NetworkValidatorTracker) resolveStakedBalance(signerPubKey string) (f
 
 // triggerBalanceFetch starts an async background query to fetch and cache validator's true staked XPX
 func (nvt *NetworkValidatorTracker) triggerBalanceFetch(signer string) {
+	select {
+	case <-nvt.stopChan:
+		return
+	default:
+	}
+
 	nvt.mu.Lock()
 	if nvt.inFlight[signer] {
 		nvt.mu.Unlock()
@@ -225,7 +273,9 @@ func (nvt *NetworkValidatorTracker) triggerBalanceFetch(signer string) {
 	nvt.inFlight[signer] = true
 	nvt.mu.Unlock()
 
+	nvt.wg.Add(1)
 	go func() {
+		defer nvt.wg.Done()
 		defer func() {
 			nvt.mu.Lock()
 			delete(nvt.inFlight, signer)
@@ -233,14 +283,20 @@ func (nvt *NetworkValidatorTracker) triggerBalanceFetch(signer string) {
 		}()
 
 		balance, err := nvt.resolveStakedBalance(signer)
+		nvt.mu.Lock()
 		if err == nil {
-			nvt.mu.Lock()
 			nvt.balanceCache[signer] = validatorBalanceEntry{
 				stakedXPX: balance,
 				fetchedAt: time.Now(),
 			}
-			nvt.mu.Unlock()
+		} else {
+			// On error, cache for 1 minute before retrying to prevent rapid spamming under polling
+			nvt.balanceCache[signer] = validatorBalanceEntry{
+				stakedXPX: 0,
+				fetchedAt: time.Now().Add(-4 * time.Minute),
+			}
 		}
+		nvt.mu.Unlock()
 	}()
 }
 
@@ -377,12 +433,22 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 
 	// Asynchronously trigger balance queries for needed signers outside the lock
 	if len(signersToFetch) > 0 {
-		go func(keys []string) {
-			for _, k := range keys {
-				nvt.triggerBalanceFetch(k)
-				time.Sleep(50 * time.Millisecond) // gentle rate pacing
-			}
-		}(signersToFetch)
+		if nvt.isBatchFetching.CompareAndSwap(false, true) {
+			nvt.wg.Add(1)
+			go func(keys []string) {
+				defer nvt.wg.Done()
+				defer nvt.isBatchFetching.Store(false)
+				for _, k := range keys {
+					select {
+					case <-nvt.stopChan:
+						return
+					default:
+					}
+					nvt.triggerBalanceFetch(k)
+					time.Sleep(50 * time.Millisecond) // gentle rate pacing
+				}
+			}(signersToFetch)
+		}
 	}
 
 	// Calculate total known staked pool

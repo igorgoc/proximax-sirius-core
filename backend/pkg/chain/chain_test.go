@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -148,11 +150,8 @@ func TestNetworkValidatorTracker_LinkedAccountStakedBalance(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	origNodes := PublicMainnetNodes
-	PublicMainnetNodes = []string{mockServer.URL}
-	defer func() { PublicMainnetNodes = origNodes }()
-
-	nvt := NewNetworkValidatorTracker()
+	nvt := NewNetworkValidatorTracker(mockServer.URL)
+	defer nvt.Stop()
 	nvt.RecordBlock(NetworkBlockInfo{
 		Height:    100,
 		Signer:    remoteKey,
@@ -179,4 +178,97 @@ func TestNetworkValidatorTracker_LinkedAccountStakedBalance(t *testing.T) {
 		t.Errorf("expected ~7.7M XPX, got %f", v.StakedBalanceXPX)
 	}
 }
+
+func TestChainMonitor_SingleflightNetworkHeight(t *testing.T) {
+	var requestCount atomic.Int64
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		time.Sleep(20 * time.Millisecond) // slight delay to test concurrency coalescing
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"height": []interface{}{float64(14022500), float64(0)},
+		})
+	}))
+	defer mockServer.Close()
+
+	origNodes := GetPublicMainnetNodes()
+	SetPublicMainnetNodes([]string{mockServer.URL})
+	defer SetPublicMainnetNodes(origNodes)
+
+	cm := NewChainMonitor()
+	var wg sync.WaitGroup
+
+	// Concurrently query network height 15 times
+	for i := 0; i < 15; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := cm.GetNetworkHeight()
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if h != 14022500 {
+				t.Errorf("expected height 14022500, got %d", h)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Initial cold cache poll should serialize and not fire redundant rounds
+	count := requestCount.Load()
+	if count > 5 {
+		t.Errorf("expected bounded requests under singleflight, got %d", count)
+	}
+}
+
+func TestHarvesterTracker_SingleflightTriggerCheck(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/chain/height") {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"height": []interface{}{float64(100), float64(0)},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/block/") {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"meta": map[string]interface{}{
+					"hash":            "BLOCK_HASH_TEST",
+					"totalFee":        []interface{}{float64(1000000), float64(0)},
+					"numTransactions": 1,
+				},
+				"block": map[string]interface{}{
+					"signer":    "TEST_SIGNER",
+					"height":    []interface{}{float64(100), float64(0)},
+					"timestamp": []interface{}{float64(1000000), float64(0)},
+				},
+			})
+			return
+		}
+	}))
+	defer mockServer.Close()
+
+	origNodes := GetPublicMainnetNodes()
+	SetPublicMainnetNodes([]string{mockServer.URL})
+	defer SetPublicMainnetNodes(origNodes)
+
+	cm := NewChainMonitor()
+	ht := NewHarvesterTracker(t.TempDir())
+	defer ht.Stop()
+
+	// Rapidly call TriggerCheck 20 times concurrently
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ht.TriggerCheck(cm)
+		}()
+	}
+	wg.Wait()
+
+	// Background check should run safely without panic or deadlock
+	time.Sleep(100 * time.Millisecond)
+}
+
 

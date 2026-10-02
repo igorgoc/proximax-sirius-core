@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -410,3 +411,21 @@ func TestProcessSupervisor_SyncWatchdogStatus(t *testing.T) {
 		t.Errorf("expected IsStalled to be false after height advance")
 	}
 }
+
+func TestProcessSupervisor_WatchdogLifecycle(t *testing.T) {
+	s := NewProcessSupervisor(t.TempDir())
+
+	// Start watchdog with mock height provider
+	var pollCount atomic.Int64
+	s.StartWatchdog(func() string { return t.TempDir() }, func() (int64, int64, error) {
+		pollCount.Add(1)
+		return 100, 100, nil
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop watchdog - should exit cleanly and be idempotent
+	s.StopWatchdog()
+	s.StopWatchdog()
+}
+

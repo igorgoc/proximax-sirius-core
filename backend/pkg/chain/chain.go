@@ -12,14 +12,39 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-var PublicMainnetNodes = []string{
-	"https://aldebaran.xpxsirius.io",
-	"https://betelgeuse.xpxsirius.io",
-	"http://betelgeuse.xpxsirius.io:3000",
-	"http://aldebaran.xpxsirius.io:3000",
+var (
+	nodesMu            sync.RWMutex
+	publicMainnetNodes = []string{
+		"https://aldebaran.xpxsirius.io",
+		"https://betelgeuse.xpxsirius.io",
+		"http://betelgeuse.xpxsirius.io:3000",
+		"http://aldebaran.xpxsirius.io:3000",
+	}
+	// PublicMainnetNodes is maintained for backward compatibility. Use GetPublicMainnetNodes/SetPublicMainnetNodes for thread-safe access.
+	PublicMainnetNodes = publicMainnetNodes
+)
+
+// GetPublicMainnetNodes returns a thread-safe copy of active public node endpoints.
+func GetPublicMainnetNodes() []string {
+	nodesMu.RLock()
+	defer nodesMu.RUnlock()
+	res := make([]string, len(publicMainnetNodes))
+	copy(res, publicMainnetNodes)
+	return res
+}
+
+// SetPublicMainnetNodes updates public node endpoints thread-safely.
+func SetPublicMainnetNodes(nodes []string) {
+	nodesMu.Lock()
+	defer nodesMu.Unlock()
+	res := make([]string, len(nodes))
+	copy(res, nodes)
+	publicMainnetNodes = res
+	PublicMainnetNodes = res
 }
 
 type ChainHeightResponse struct {
@@ -43,14 +68,16 @@ type harvesterCacheEntry struct {
 }
 
 type ChainMonitor struct {
-	localBaseUrl    string
-	httpClient      *http.Client
-	harvesterCache  map[string]harvesterCacheEntry
-	cacheMu         sync.RWMutex
-	cachedNetHeight int64
-	netHeightTime   time.Time
-	cachedPeers     []PeerInfo
-	peersTime       time.Time
+	localBaseUrl       string
+	httpClient         *http.Client
+	harvesterCache     map[string]harvesterCacheEntry
+	cacheMu            sync.RWMutex
+	cachedNetHeight    int64
+	netHeightTime      time.Time
+	cachedPeers        []PeerInfo
+	peersTime          time.Time
+	isPollingNetHeight atomic.Bool
+	pollNetHeightMu    sync.Mutex
 }
 
 func NewChainMonitor() *ChainMonitor {
@@ -75,8 +102,13 @@ func (cm *ChainMonitor) GetNetworkHeight() (int64, error) {
 	}
 
 	if h > 0 {
-		// Non-blocking refresh in background
-		go cm.pollNetworkHeight()
+		// Non-blocking refresh in background (guarded against duplicate goroutine storms)
+		if cm.isPollingNetHeight.CompareAndSwap(false, true) {
+			go func() {
+				defer cm.isPollingNetHeight.Store(false)
+				_, _ = cm.pollNetworkHeight()
+			}()
+		}
 		return h, nil
 	}
 
@@ -84,11 +116,24 @@ func (cm *ChainMonitor) GetNetworkHeight() (int64, error) {
 }
 
 func (cm *ChainMonitor) pollNetworkHeight() (int64, error) {
+	cm.pollNetHeightMu.Lock()
+	defer cm.pollNetHeightMu.Unlock()
+
+	// Double-check if refreshed while waiting for lock
+	cm.cacheMu.RLock()
+	if cm.cachedNetHeight > 0 && time.Since(cm.netHeightTime) < 30*time.Second {
+		h := cm.cachedNetHeight
+		cm.cacheMu.RUnlock()
+		return h, nil
+	}
+	cm.cacheMu.RUnlock()
+
 	var maxHeight int64
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	for _, node := range PublicMainnetNodes {
+	nodes := GetPublicMainnetNodes()
+	for _, node := range nodes {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
@@ -195,7 +240,7 @@ func (cm *ChainMonitor) GetPeers() ([]PeerInfo, error) {
 	cm.cacheMu.RUnlock()
 
 	var peers []PeerInfo
-	urlsToTry := append([]string{cm.localBaseUrl}, PublicMainnetNodes...)
+	urlsToTry := append([]string{cm.localBaseUrl}, GetPublicMainnetNodes()...)
 
 	for _, url := range urlsToTry {
 		resp, err := cm.httpClient.Get(fmt.Sprintf("%s/node/peers", strings.TrimRight(url, "/")))
@@ -227,7 +272,12 @@ func (cm *ChainMonitor) GetPeers() ([]PeerInfo, error) {
 // ExecuteRestQuery proxies REST query for debugging console
 func (cm *ChainMonitor) ExecuteRestQuery(endpoint string) (interface{}, error) {
 	endpoint = strings.TrimLeft(endpoint, "/")
-	url := fmt.Sprintf("%s/%s", PublicMainnetNodes[0], endpoint)
+	nodes := GetPublicMainnetNodes()
+	baseNode := "https://aldebaran.xpxsirius.io"
+	if len(nodes) > 0 {
+		baseNode = nodes[0]
+	}
+	url := fmt.Sprintf("%s/%s", baseNode, endpoint)
 	resp, err := cm.httpClient.Get(url)
 	if err != nil {
 		return nil, err
@@ -322,7 +372,11 @@ func NormalizeAccountIdentifier(identifier string) string {
 func resolveApiNode(apiNode string) string {
 	clean := strings.TrimSpace(apiNode)
 	if clean == "" || strings.Contains(clean, "explorer.xpxsirius.io") {
-		return PublicMainnetNodes[0]
+		nodes := GetPublicMainnetNodes()
+		if len(nodes) > 0 {
+			return nodes[0]
+		}
+		return "https://aldebaran.xpxsirius.io"
 	}
 	return strings.TrimRight(clean, "/")
 }

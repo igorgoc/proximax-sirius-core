@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crypto/rand"
@@ -85,15 +86,19 @@ type OnboardResult struct {
 }
 
 type StorageManager struct {
-	resourcesPath  string
-	dataPathGetter func() string
-	bootKeyGetter  func() string
-	mu             sync.RWMutex
-	cachedPeers     []ReplicatorPeer
-	lastPeerScan    time.Time
-	cachedAccount   ReplicatorAccountInfo
-	lastAccountScan time.Time
-	httpClient      *http.Client
+	resourcesPath     string
+	dataPathGetter    func() string
+	bootKeyGetter     func() string
+	mu                sync.RWMutex
+	cachedPeers       []ReplicatorPeer
+	lastPeerScan      time.Time
+	cachedAccount     ReplicatorAccountInfo
+	lastAccountScan   time.Time
+	httpClient        *http.Client
+	stopChan          chan struct{}
+	stopOnce          sync.Once
+	isFetchingAccount atomic.Bool
+	wg                sync.WaitGroup
 }
 
 func NewStorageManager(resourcesPath string, dataPathGetter func() string, bootKeyGetter func() string) *StorageManager {
@@ -104,9 +109,19 @@ func NewStorageManager(resourcesPath string, dataPathGetter func() string, bootK
 		httpClient: &http.Client{
 			Timeout: 4 * time.Second,
 		},
+		stopChan: make(chan struct{}),
 	}
+	sm.wg.Add(1)
 	go sm.startBackgroundPeerChecker()
 	return sm
+}
+
+// Close gracefully terminates background peer checker and pending goroutines
+func (sm *StorageManager) Close() {
+	sm.stopOnce.Do(func() {
+		close(sm.stopChan)
+	})
+	sm.wg.Wait()
 }
 
 // LoadStorageConfig reads config-storage.properties and derives public identities
@@ -303,8 +318,13 @@ func (sm *StorageManager) CheckOnChainAccount(pubKey string) ReplicatorAccountIn
 	}
 
 	if hasCached {
-		// Asynchronous refresh in background
-		go sm.fetchOnChainAccount(pubKey)
+		// Asynchronous refresh in background (guarded against duplicate goroutine storms)
+		if sm.isFetchingAccount.CompareAndSwap(false, true) {
+			go func() {
+				defer sm.isFetchingAccount.Store(false)
+				sm.fetchOnChainAccount(pubKey)
+			}()
+		}
 		return cached
 	}
 
@@ -427,11 +447,19 @@ func (sm *StorageManager) GetBootstrapReplicators() []ReplicatorPeer {
 }
 
 func (sm *StorageManager) startBackgroundPeerChecker() {
+	defer sm.wg.Done()
+
 	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 	sm.refreshReplicatorPeers()
 
-	for range ticker.C {
-		sm.refreshReplicatorPeers()
+	for {
+		select {
+		case <-sm.stopChan:
+			return
+		case <-ticker.C:
+			sm.refreshReplicatorPeers()
+		}
 	}
 }
 

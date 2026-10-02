@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,6 +52,9 @@ type HarvesterTracker struct {
 	networkValidators *NetworkValidatorTracker
 	httpClient        *http.Client
 	stopChan          chan struct{}
+	stopOnce          sync.Once
+	isChecking        atomic.Bool
+	wg                sync.WaitGroup
 }
 
 func NewHarvesterTracker(resourcesDir string) *HarvesterTracker {
@@ -178,7 +182,8 @@ func (ht *HarvesterTracker) RecordValidatedBlock(block ValidatedBlock) {
 
 // CheckBlock queries the block at given height and records it if validated by this harvester
 func (ht *HarvesterTracker) CheckBlock(height int64) error {
-	for _, node := range PublicMainnetNodes {
+	nodes := GetPublicMainnetNodes()
+	for _, node := range nodes {
 		url := fmt.Sprintf("%s/block/%d", strings.TrimRight(node, "/"), height)
 		resp, err := ht.httpClient.Get(url)
 		if err != nil {
@@ -245,7 +250,9 @@ func (ht *HarvesterTracker) CheckBlock(height int64) error {
 
 // StartBackgroundScanner periodically and randomly checks for newly validated blocks without spamming explorer/nodes
 func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
+	ht.wg.Add(1)
 	go func() {
+		defer ht.wg.Done()
 		updateSelfBalance := func() {
 			ht.mu.RLock()
 			pubKey := ht.harvestPublicKey
@@ -266,11 +273,20 @@ func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 		}
 
 		// Initial bootstrap: Scan the last 15 blocks on startup to populate network validator metrics immediately
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ht.stopChan:
+			return
+		case <-time.After(2 * time.Second):
+		}
 		updateSelfBalance()
 
 		if netHeight, err := cm.GetNetworkHeight(); err == nil && netHeight > 15 {
 			for h := netHeight - 15; h <= netHeight; h++ {
+				select {
+				case <-ht.stopChan:
+					return
+				default:
+				}
 				_ = ht.CheckBlock(h)
 				time.Sleep(120 * time.Millisecond)
 			}
@@ -312,6 +328,11 @@ func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 					}
 
 					for h := startH; h <= endH; h++ {
+						select {
+						case <-ht.stopChan:
+							return
+						default:
+						}
 						_ = ht.CheckBlock(h)
 						time.Sleep(250 * time.Millisecond) // polite rate limit
 					}
@@ -324,22 +345,42 @@ func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 
 			// Jitter interval between 15s and 30s
 			jitterSec := 15 + time.Now().UnixNano()%15
+			timer := time.NewTimer(time.Duration(jitterSec) * time.Second)
 			select {
 			case <-ht.stopChan:
+				timer.Stop()
 				return
-			case <-time.After(time.Duration(jitterSec) * time.Second):
+			case <-timer.C:
 			}
 		}
 	}()
 }
 
 func (ht *HarvesterTracker) TriggerCheck(cm *ChainMonitor) {
+	if !ht.isChecking.CompareAndSwap(false, true) {
+		return // check already in progress
+	}
+	ht.wg.Add(1)
 	go func() {
+		defer ht.wg.Done()
+		defer ht.isChecking.Store(false)
+
+		select {
+		case <-ht.stopChan:
+			return
+		default:
+		}
+
 		netHeight, err := cm.GetNetworkHeight()
 		if err != nil || netHeight <= 0 {
 			return
 		}
 		for h := netHeight - 2; h <= netHeight; h++ {
+			select {
+			case <-ht.stopChan:
+				return
+			default:
+			}
 			if h > 0 {
 				_ = ht.CheckBlock(h)
 			}
@@ -348,5 +389,11 @@ func (ht *HarvesterTracker) TriggerCheck(cm *ChainMonitor) {
 }
 
 func (ht *HarvesterTracker) Stop() {
-	close(ht.stopChan)
+	ht.stopOnce.Do(func() {
+		close(ht.stopChan)
+		if ht.networkValidators != nil {
+			ht.networkValidators.Stop()
+		}
+	})
+	ht.wg.Wait()
 }
