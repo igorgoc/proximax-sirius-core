@@ -4,7 +4,7 @@ import {
   ConstellationEdge,
   BackgroundParticle,
   generateBackgroundParticles,
-  formatXPXAmount,
+  formatCompactXPX,
 } from '../../utils/galaxyMath';
 
 interface ActiveNovaState {
@@ -458,13 +458,9 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
           ctx.restore();
         }
 
-        // E. Star Label: 4-character public key prefix + XPX amount (e.g. 1D33 (7.7M XPX))
+        // E. Star Label: Only the compact amount of staked XPX (e.g. 7.7M)
         if (currentShowLabels || isHovered || isSelected || star.isSelf) {
-          const prefix = star.publicKey ? star.publicKey.slice(0, 4).toUpperCase() : (star.shortKey || 'NODE');
-          const balanceStr = formatXPXAmount(star.stakedBalanceXPX);
-          const label = star.isSelf
-            ? `★ ${prefix} (${balanceStr})`
-            : `${prefix} (${balanceStr})`;
+          const label = formatCompactXPX(star.stakedBalanceXPX);
 
           ctx.save();
           ctx.font = star.isSelf ? 'bold 11px monospace' : '10px monospace';
@@ -474,18 +470,11 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
             ? '#BAE6FD'
             : isHarvestPulsing > 0.1
             ? '#FDE68A'
-            : 'rgba(226, 232, 240, 0.85)';
+            : 'rgba(226, 232, 240, 0.9)';
           ctx.textAlign = 'center';
-          ctx.shadowColor = 'rgba(0,0,0,0.8)';
+          ctx.shadowColor = 'rgba(0,0,0,0.9)';
           ctx.shadowBlur = 4;
           ctx.fillText(label, pos.x, pos.y + scaledRadius + 14);
-
-          // Sub-label for share %
-          if ((isHovered || isSelected) && star.blocksCount > 0) {
-            ctx.font = '9px monospace';
-            ctx.fillStyle = '#94A3B8';
-            ctx.fillText(`${star.blocksCount} blks (${star.sharePercent.toFixed(1)}%)`, pos.x, pos.y + scaledRadius + 26);
-          }
           ctx.restore();
         }
       }

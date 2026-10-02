@@ -40,6 +40,18 @@ export interface GalaxyStarData {
   haloSize: number;
 }
 
+export function formatCompactXPX(xpx: number): string {
+  if (!xpx || xpx <= 0) return '0';
+  if (xpx >= 1000000) {
+    const val = xpx / 1000000;
+    return `${val.toFixed(1)}M`;
+  }
+  if (xpx >= 1000) {
+    return `${(xpx / 1000).toFixed(0)}k`;
+  }
+  return `${Math.round(xpx)}`;
+}
+
 export function formatXPXAmount(xpx: number): string {
   if (!xpx || xpx <= 0) return '0 XPX';
   if (xpx >= 1000000) {
