@@ -16,13 +16,14 @@ type NetworkBlockInfo struct {
 }
 
 type ActiveValidatorSummary struct {
-	PublicKey      string  `json:"publicKey"`
-	ShortKey       string  `json:"shortKey"`
-	BlocksCount    int     `json:"blocksCount"`
-	SharePercent   float64 `json:"sharePercent"`
-	LastSeenHeight int64   `json:"lastSeenHeight"`
-	LastSeenTime   string  `json:"lastSeenTime"`
-	IsSelf         bool    `json:"isSelf"`
+	PublicKey        string  `json:"publicKey"`
+	ShortKey         string  `json:"shortKey"`
+	BlocksCount      int     `json:"blocksCount"`
+	SharePercent     float64 `json:"sharePercent"`
+	StakedBalanceXPX float64 `json:"stakedBalanceXPX"`
+	LastSeenHeight   int64   `json:"lastSeenHeight"`
+	LastSeenTime     string  `json:"lastSeenTime"`
+	IsSelf           bool    `json:"isSelf"`
 }
 
 type NetworkValidatorStats struct {
@@ -32,6 +33,7 @@ type NetworkValidatorStats struct {
 	AvgBlockTimeSec        float64                  `json:"avgBlockTimeSec"`
 	TotalNetworkFees4h     float64                  `json:"totalNetworkFees4h"`
 	RecentBlocksCount      int                      `json:"recentBlocksCount"`
+	LatestBlockSigner      string                   `json:"latestBlockSigner"`
 	TopValidators          []ActiveValidatorSummary `json:"topValidators"`
 }
 
@@ -177,14 +179,20 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 			lastTimeStr = t.UTC().Format("2006-01-02 15:04:05 UTC")
 		}
 
+		stakedBalance := 0.0
+		if share > 0 && estimatedPoolXPX > 0 {
+			stakedBalance = (share / 100.0) * estimatedPoolXPX
+		}
+
 		topList = append(topList, ActiveValidatorSummary{
-			PublicKey:      signer,
-			ShortKey:       shortKey,
-			BlocksCount:    count,
-			SharePercent:   share,
-			LastSeenHeight: signerLastHeight[signer],
-			LastSeenTime:   lastTimeStr,
-			IsSelf:         signer == selfClean,
+			PublicKey:        signer,
+			ShortKey:         shortKey,
+			BlocksCount:      count,
+			SharePercent:     share,
+			StakedBalanceXPX: stakedBalance,
+			LastSeenHeight:   signerLastHeight[signer],
+			LastSeenTime:     lastTimeStr,
+			IsSelf:           signer == selfClean,
 		})
 	}
 
@@ -197,6 +205,11 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 		topList = topList[:8]
 	}
 
+	latestBlockSigner := ""
+	if len(nvt.recentBlocks) > 0 {
+		latestBlockSigner = strings.ToUpper(nvt.recentBlocks[0].Signer)
+	}
+
 	return NetworkValidatorStats{
 		ActiveValidators4h:     active4h,
 		ActiveValidators24h:    active24h,
@@ -204,6 +217,7 @@ func (nvt *NetworkValidatorTracker) GetStats(selfPubKey string) NetworkValidator
 		AvgBlockTimeSec:        avgBlockTime,
 		TotalNetworkFees4h:     totalFees4h,
 		RecentBlocksCount:      len(nvt.recentBlocks),
+		LatestBlockSigner:      latestBlockSigner,
 		TopValidators:          topList,
 	}
 }

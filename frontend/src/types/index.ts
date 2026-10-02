@@ -367,6 +367,7 @@ export interface ActiveValidatorSummary {
   shortKey: string;
   blocksCount: number;
   sharePercent: number;
+  stakedBalanceXPX?: number;
   lastSeenHeight: number;
   lastSeenTime: string;
   isSelf: boolean;
@@ -379,6 +380,7 @@ export interface NetworkValidatorStats {
   avgBlockTimeSec: number;
   totalNetworkFees4h: number;
   recentBlocksCount: number;
+  latestBlockSigner?: string;
   topValidators: ActiveValidatorSummary[];
 }
 

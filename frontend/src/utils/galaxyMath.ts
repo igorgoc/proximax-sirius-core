@@ -28,6 +28,7 @@ export interface GalaxyStarData {
   shortKey: string;
   blocksCount: number;
   sharePercent: number;
+  stakedBalanceXPX: number;
   lastSeenHeight: number;
   lastSeenTime: string;
   isSelf: boolean;
@@ -37,6 +38,18 @@ export interface GalaxyStarData {
   color: string;
   glowColor: string;
   haloSize: number;
+}
+
+export function formatXPXAmount(xpx: number): string {
+  if (!xpx || xpx <= 0) return '0 XPX';
+  if (xpx >= 1000000) {
+    const val = xpx / 1000000;
+    return `${val.toFixed(1)}M XPX`;
+  }
+  if (xpx >= 1000) {
+    return `${(xpx / 1000).toFixed(0)}k XPX`;
+  }
+  return `${Math.round(xpx)} XPX`;
 }
 
 export interface BackgroundParticle {
@@ -63,14 +76,11 @@ export function hashStringToNumber(str: string): number {
 
 /**
  * Calculates persistent 2D galactic coordinates for a validator star.
- * Uses a centered galactic coordinate system where origin (0, 0) is the center of the galaxy.
- * Places 'isSelf' as the radiant Sirius anchor star near center-left (-120, -40).
- * Places peer stars in a dual-arm logarithmic spiral galaxy with golden ratio spacing.
+ * 100% DETERMINISTIC based purely on publicKey and isSelf:
+ * Stars NEVER move their coordinates when blocks are harvested or rankings change!
  */
 export function calculateStarPosition(
   publicKey: string,
-  index: number,
-  totalCount: number,
   isSelf: boolean
 ): { x: number; y: number } {
   if (isSelf) {
@@ -79,24 +89,24 @@ export function calculateStarPosition(
   }
 
   const hash = hashStringToNumber(publicKey);
-  const normalizedHash = (hash % 10000) / 10000;
-  const hashJitter = ((hash % 1000) / 1000 - 0.5) * 45;
 
-  // Dual spiral arms separated by PI radians
-  const arm = index % 2;
-  const armOffset = arm * Math.PI;
+  // Arm 0 or Arm 1 based on hash (180 deg offset)
+  const arm = (hash >>> 0) % 2;
+  const armAngle = arm * Math.PI;
 
-  // Step progression along the arm
-  const t = Math.floor(index / 2);
-  const goldenAngle = 2.39996323; // Golden angle in radians
+  // Normalized distance along the arm [0..1]
+  const u = ((hash >>> 8) % 10000) / 10000;
+  // Natural galactic density: clustered around core, trailing outward
+  const radius = 175 + Math.pow(u, 0.85) * 350;
 
-  // Logarithmic spiral progression: r = a * e^(b * theta)
-  const theta = t * 0.42 + armOffset + (normalizedHash * 0.35);
-  const baseRadius = 160 + Math.pow(t + 1, 1.35) * 32;
-  const r = Math.min(850, baseRadius + hashJitter);
+  // Logarithmic spiral angle progression with radius + subtle organic jitter
+  const spiralAngle = Math.log(radius / 130) * 2.6;
+  const jitter = (((hash >>> 16) % 1000) / 1000 - 0.5) * 0.28;
+  const theta = armAngle + spiralAngle + jitter;
 
-  const x = Math.round(r * Math.cos(theta));
-  const y = Math.round((r * 0.68) * Math.sin(theta)); // Elliptical galactic tilt (0.68 aspect)
+  // Elliptical coordinate calculation (0.68 celestial tilt)
+  const x = Math.round(radius * Math.cos(theta));
+  const y = Math.round((radius * 0.68) * Math.sin(theta));
 
   return { x, y };
 }

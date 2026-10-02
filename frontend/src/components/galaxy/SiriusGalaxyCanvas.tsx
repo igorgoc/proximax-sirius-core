@@ -4,11 +4,13 @@ import {
   ConstellationEdge,
   BackgroundParticle,
   generateBackgroundParticles,
+  formatXPXAmount,
 } from '../../utils/galaxyMath';
 
 interface ActiveNovaState {
   x: number;
   y: number;
+  publicKey?: string;
   text?: string;
   startTime: number;
 }
@@ -18,7 +20,7 @@ export interface SiriusGalaxyCanvasProps {
   edges: ConstellationEdge[];
   selectedStar: GalaxyStarData | null;
   onSelectStar: (star: GalaxyStarData | null) => void;
-  activeNova?: { x: number; y: number; text?: string } | null;
+  activeNova?: { x: number; y: number; publicKey?: string; text?: string } | null;
   showFilaments: boolean;
   showLabels: boolean;
   onCameraResetRef?: React.MutableRefObject<(() => void) | null>;
@@ -57,7 +59,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
   const [hoveredStar, setHoveredStar] = useState<GalaxyStarData | null>(null);
   const particlesRef = useRef<BackgroundParticle[]>([]);
   const novaQueueRef = useRef<ActiveNovaState[]>([]);
-  const lastNovaPropRef = useRef<{ x: number; y: number; text?: string } | null>(null);
+  const lastNovaPropRef = useRef<{ x: number; y: number; publicKey?: string; text?: string } | null>(null);
 
   // Synchronized refs to allow steady 60 FPS render loop without effect teardown
   const starsRef = useRef(stars);
@@ -81,6 +83,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       novaQueueRef.current.push({
         x: activeNova.x,
         y: activeNova.y,
+        publicKey: activeNova.publicKey,
         text: activeNova.text,
         startTime: performance.now(),
       });
@@ -310,6 +313,22 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       const currentSelected = selectedStarRef.current;
       const currentShowLabels = showLabelsRef.current;
 
+      // Map active harvest glow intensities for winning block harvesters
+      const nowTime = performance.now();
+      const harvestPulseMap = new Map<string, number>();
+      for (let m = 0; m < novaQueueRef.current.length; m++) {
+        const nova = novaQueueRef.current[m];
+        if (nova.publicKey) {
+          const age = (nowTime - nova.startTime) / 1000;
+          const duration = 2.4;
+          if (age < duration) {
+            const intensity = Math.max(0, 1 - age / duration);
+            const prev = harvestPulseMap.get(nova.publicKey) || 0;
+            harvestPulseMap.set(nova.publicKey, Math.max(prev, intensity));
+          }
+        }
+      }
+
       for (let i = 0; i < currentStars.length; i++) {
         const star = currentStars[i];
         const pos = worldToScreen(star.x, star.y);
@@ -326,10 +345,12 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
 
         const isHovered = currentHovered?.publicKey === star.publicKey;
         const isSelected = currentSelected?.publicKey === star.publicKey;
+        const isHarvestPulsing = harvestPulseMap.get(star.publicKey) || 0;
         const scaledRadius = Math.max(4, star.radius * cam.zoom);
 
         // A. Pulsing Corona Glow (Outer Aura)
-        const pulse = 0.85 + 0.15 * Math.sin(time * 0.003 + i);
+        const basePulse = 0.85 + 0.15 * Math.sin(time * 0.003 + i);
+        const pulse = basePulse + isHarvestPulsing * 0.65;
         const glowRadius = scaledRadius * (star.haloSize / star.radius) * pulse;
 
         const glowGrad = ctx.createRadialGradient(
@@ -340,8 +361,8 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
           pos.y,
           glowRadius
         );
-        glowGrad.addColorStop(0, star.color);
-        glowGrad.addColorStop(0.35, star.glowColor);
+        glowGrad.addColorStop(0, isHarvestPulsing > 0.1 ? '#FDE68A' : star.color);
+        glowGrad.addColorStop(0.35, isHarvestPulsing > 0.1 ? '#F59E0B' : star.glowColor);
         glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
         ctx.fillStyle = glowGrad;
@@ -349,13 +370,26 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
         ctx.arc(pos.x, pos.y, glowRadius, 0, Math.PI * 2);
         ctx.fill();
 
+        // Extra Golden Photon Ring for block harvester (stays fixed at position)
+        if (isHarvestPulsing > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, scaledRadius * (1.2 + (1 - isHarvestPulsing) * 2.0), 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(245, 158, 11, ${isHarvestPulsing * 0.95})`;
+          ctx.lineWidth = 2 + isHarvestPulsing * 3;
+          ctx.shadowColor = '#F59E0B';
+          ctx.shadowBlur = 20;
+          ctx.stroke();
+          ctx.restore();
+        }
+
         // B. Solid Star Core
         ctx.save();
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, scaledRadius, 0, Math.PI * 2);
         ctx.fillStyle = star.color;
-        ctx.shadowColor = star.glowColor;
-        ctx.shadowBlur = isSelected || isHovered ? 25 : 12;
+        ctx.shadowColor = isHarvestPulsing > 0.1 ? '#F59E0B' : star.glowColor;
+        ctx.shadowBlur = isSelected || isHovered ? 25 : (isHarvestPulsing > 0.1 ? 30 : 12);
         ctx.fill();
         ctx.restore();
 
@@ -424,12 +458,23 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
           ctx.restore();
         }
 
-        // E. Star Label
+        // E. Star Label: 4-character public key prefix + XPX amount (e.g. 1D33 (7.7M XPX))
         if (currentShowLabels || isHovered || isSelected || star.isSelf) {
-          const label = star.isSelf ? `★ ${star.shortKey} (You)` : star.shortKey;
+          const prefix = star.publicKey ? star.publicKey.slice(0, 4).toUpperCase() : (star.shortKey || 'NODE');
+          const balanceStr = formatXPXAmount(star.stakedBalanceXPX);
+          const label = star.isSelf
+            ? `★ ${prefix} (${balanceStr})`
+            : `${prefix} (${balanceStr})`;
+
           ctx.save();
           ctx.font = star.isSelf ? 'bold 11px monospace' : '10px monospace';
-          ctx.fillStyle = star.isSelf ? '#A7F3D0' : isSelected ? '#BAE6FD' : 'rgba(226, 232, 240, 0.85)';
+          ctx.fillStyle = star.isSelf
+            ? '#A7F3D0'
+            : isSelected
+            ? '#BAE6FD'
+            : isHarvestPulsing > 0.1
+            ? '#FDE68A'
+            : 'rgba(226, 232, 240, 0.85)';
           ctx.textAlign = 'center';
           ctx.shadowColor = 'rgba(0,0,0,0.8)';
           ctx.shadowBlur = 4;

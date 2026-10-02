@@ -28,7 +28,7 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
   const [selectedStar, setSelectedStar] = useState<GalaxyStarData | null>(null);
   const [showFilaments, setShowFilaments] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
-  const [activeNova, setActiveNova] = useState<{ x: number; y: number; text?: string } | null>(null);
+  const [activeNova, setActiveNova] = useState<{ x: number; y: number; publicKey?: string; text?: string } | null>(null);
 
   const cameraResetRef = useRef<(() => void) | null>(null);
   const centerStarRef = useRef<((star: GalaxyStarData) => void) | null>(null);
@@ -41,13 +41,14 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
     const rawList = networkValidatorStats?.topValidators || [];
     if (rawList.length === 0) {
       if (harvestStats && harvestStats.totalBlocksValidated > 0) {
-        const pos = calculateStarPosition('SELF_HARVESTER', 0, 1, true);
+        const pos = calculateStarPosition('SELF_HARVESTER', true);
         return [
           {
-            publicKey: 'Local Node Harvester',
-            shortKey: 'My Node',
+            publicKey: '1D339BA5E197D7AB2E4BFA9312B5C115040740F9F00C5E3BD7EA6F911B5827F2',
+            shortKey: '1D33',
             blocksCount: harvestStats.totalBlocksValidated,
             sharePercent: 100,
+            stakedBalanceXPX: 7700000,
             lastSeenHeight: harvestStats.lastHarvestedHeight,
             lastSeenTime: harvestStats.lastHarvestedTime,
             isSelf: true,
@@ -68,15 +69,18 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
       if (v.blocksCount > maxBlocks) maxBlocks = v.blocksCount;
     }
 
-    return rawList.map((v, index) => {
-      const pos = calculateStarPosition(v.publicKey, index, rawList.length, v.isSelf);
+    return rawList.map((v) => {
+      const pos = calculateStarPosition(v.publicKey, v.isSelf);
       const visual = getStarColorAndRadius(v, maxBlocks, currentHeight);
+      const prefix = v.publicKey ? v.publicKey.slice(0, 4).toUpperCase() : (v.isSelf ? '1D33' : 'NODE');
+      const stakedBalance = v.stakedBalanceXPX || (v.sharePercent ? (v.sharePercent / 100) * (networkValidatorStats?.estimatedStakedPoolXPX || 60000000) : 0);
 
       return {
         publicKey: v.publicKey,
-        shortKey: v.shortKey || v.publicKey.slice(-8),
+        shortKey: prefix,
         blocksCount: v.blocksCount,
         sharePercent: v.sharePercent,
+        stakedBalanceXPX: stakedBalance,
         lastSeenHeight: v.lastSeenHeight,
         lastSeenTime: v.lastSeenTime,
         isSelf: v.isSelf,
@@ -100,17 +104,22 @@ export const SiriusGalaxyView: React.FC<SiriusGalaxyViewProps> = ({
   useEffect(() => {
     if (currentHeight > 0 && lastObservedHeightRef.current > 0 && currentHeight > lastObservedHeightRef.current) {
       // Find the winning harvester of the latest block
-      const winningStar = stars.find((s) => s.lastSeenHeight === currentHeight) || stars[0];
+      const winningSigner = networkValidatorStats?.latestBlockSigner?.toUpperCase();
+      const winningStar = (winningSigner && stars.find((s) => s.publicKey.toUpperCase() === winningSigner))
+        || stars.find((s) => s.lastSeenHeight === currentHeight)
+        || stars[0];
+
       if (winningStar) {
         setActiveNova({
           x: winningStar.x,
           y: winningStar.y,
-          text: `Block #${currentHeight}`,
+          publicKey: winningStar.publicKey,
+          text: `Block #${currentHeight} Harvested!`,
         });
       }
     }
     lastObservedHeightRef.current = currentHeight;
-  }, [currentHeight, stars]);
+  }, [currentHeight, stars, networkValidatorStats]);
 
   const handleCenterStar = (star: GalaxyStarData) => {
     if (centerStarRef.current) {

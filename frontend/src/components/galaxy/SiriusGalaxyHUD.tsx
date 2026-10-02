@@ -13,7 +13,7 @@ import {
   Award,
   Zap,
 } from 'lucide-react';
-import { GalaxyStarData } from '../../utils/galaxyMath';
+import { GalaxyStarData, formatXPXAmount } from '../../utils/galaxyMath';
 import { getExplorerPublicKeyUrl } from '../../utils/explorer';
 import { formatNumber } from '../../utils/format';
 
@@ -219,7 +219,7 @@ export const SiriusGalaxyHUD: React.FC<SiriusGalaxyHUDProps> = ({
                       )}
                     </div>
                     <div className="text-[10px] text-slate-400 font-mono">
-                      {star.blocksCount} blks ({star.sharePercent.toFixed(1)}%)
+                      <span className="text-amber-400/90 font-medium">{formatXPXAmount(star.stakedBalanceXPX)}</span> • {star.blocksCount} blks ({star.sharePercent.toFixed(1)}%)
                     </div>
                   </div>
                 </div>
@@ -277,14 +277,18 @@ export const SiriusGalaxyHUD: React.FC<SiriusGalaxyHUDProps> = ({
             {selectedStar.publicKey}
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+          <div className="grid grid-cols-3 gap-1.5 text-[10px]">
             <div className="bg-[#171F2C] p-1.5 rounded">
-              <span className="text-slate-500 block text-[9px]">BLOCKS MINTED</span>
+              <span className="text-slate-500 block text-[9px]">STAKED</span>
+              <span className="text-amber-400 font-bold">{formatXPXAmount(selectedStar.stakedBalanceXPX)}</span>
+            </div>
+            <div className="bg-[#171F2C] p-1.5 rounded">
+              <span className="text-slate-500 block text-[9px]">BLOCKS</span>
               <span className="text-white font-bold">{selectedStar.blocksCount}</span>
             </div>
             <div className="bg-[#171F2C] p-1.5 rounded">
-              <span className="text-slate-500 block text-[9px]">NETWORK SHARE</span>
-              <span className="text-sky-300 font-bold">{selectedStar.sharePercent.toFixed(2)}%</span>
+              <span className="text-slate-500 block text-[9px]">SHARE</span>
+              <span className="text-sky-300 font-bold">{selectedStar.sharePercent.toFixed(1)}%</span>
             </div>
           </div>
         </div>
