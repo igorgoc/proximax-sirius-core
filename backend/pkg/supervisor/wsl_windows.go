@@ -92,8 +92,11 @@ func FromWSLPath(wslPath string) string {
 		return filepath.Clean(wslPath)
 	}
 	clean := filepath.ToSlash(strings.TrimSpace(wslPath))
-	if strings.HasPrefix(clean, "/mnt/") && len(clean) >= 7 && (len(clean) == 7 || clean[6] == '/') {
+	if strings.HasPrefix(clean, "/mnt/") && len(clean) >= 6 && (len(clean) == 6 || clean[6] == '/') {
 		driveLetter := strings.ToUpper(string(clean[5]))
+		if len(clean) == 6 {
+			return driveLetter + ":\\"
+		}
 		rest := clean[6:]
 		rest = strings.ReplaceAll(rest, "/", "\\")
 		return fmt.Sprintf("%s:%s", driveLetter, rest)
@@ -1153,7 +1156,7 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	// 1. Silent pre-flight self-healing: Ensure essential dynamic runtime dependencies are installed inside WSL (e.g. libatomic1)
 	// and ensure high-speed native ext4 storage directory exists with full permissions
 	_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
-		"sh", "-c", "dpkg -s libatomic1 >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq libatomic1 >/dev/null 2>&1); mkdir -p /var/lib/sirius/data && chmod -R 777 /var/lib/sirius").Run()
+		"sh", "-c", "(ldconfig -p | grep -q libatomic || dpkg -s libatomic1 >/dev/null 2>&1) || (apt-get update -qq && apt-get install -y -qq libatomic1 >/dev/null 2>&1); mkdir -p /var/lib/sirius/data && chmod -R 777 /var/lib/sirius").Run()
 
 	// 2. Binary Architecture & Dependency Self-Healing: Verify sirius.bc and catapult.recovery are valid Linux ELF binaries
 	// and verify essential Linux dynamic shared libraries (RocksDB, plugins) exist.
@@ -1362,6 +1365,14 @@ func (dc *ProcessSupervisor) stopWSL() error {
 			// Engine process has terminated cleanly!
 			dc.broadcastLog("[Supervisor] Flushing kernel filesystem buffers and RocksDB tables to physical storage...")
 			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "sync").Run()
+			if dc.currentDataDir != "" {
+				dc.clearLocks(dc.currentDataDir)
+				wslDataDir := ToWSLPath(dc.currentDataDir)
+				if wslDataDir != "" {
+					_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+						"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
+				}
+			}
 			return nil
 		}
 
@@ -1418,6 +1429,14 @@ func (dc *ProcessSupervisor) stopWSL() error {
 			dc.broadcastLog("<error> [Supervisor] Process made ZERO forward progress for 60 seconds (deadlock detected). Escalating with SIGKILL...")
 			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "pkill", "-9", "-f", "sirius.bc").Run()
 			_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--", "sync").Run()
+			if dc.currentDataDir != "" {
+				dc.clearLocks(dc.currentDataDir)
+				wslDataDir := ToWSLPath(dc.currentDataDir)
+				if wslDataDir != "" {
+					_ = exec.Command("wsl.exe", "-d", distro, "-u", "root", "--",
+						"sh", "-c", fmt.Sprintf("rm -f '%s'/*.lock '%s'/statedb/*/LOCK >/dev/null 2>&1", wslDataDir, wslDataDir)).Run()
+				}
+			}
 			return fmt.Errorf("process was deadlocked and terminated with SIGKILL")
 		}
 

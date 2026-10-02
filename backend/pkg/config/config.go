@@ -125,8 +125,11 @@ func normalizeHostPath(p string) string {
 			return filepath.Clean(p)
 		}
 		clean := filepath.ToSlash(strings.TrimSpace(p))
-		if strings.HasPrefix(clean, "/mnt/") && len(clean) >= 7 && (len(clean) == 7 || clean[6] == '/') {
+		if strings.HasPrefix(clean, "/mnt/") && len(clean) >= 6 && (len(clean) == 6 || clean[6] == '/') {
 			driveLetter := strings.ToUpper(string(clean[5]))
+			if len(clean) == 6 {
+				return driveLetter + ":\\"
+			}
 			rest := strings.ReplaceAll(clean[6:], "/", "\\")
 			return fmt.Sprintf("%s:%s", driveLetter, rest)
 		}

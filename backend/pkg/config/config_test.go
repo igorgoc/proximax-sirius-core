@@ -163,3 +163,21 @@ func TestConfigManager_IsConfigured_RequiresHarvestKey(t *testing.T) {
 	}
 }
 
+func TestNormalizeHostPath_CrossPlatform(t *testing.T) {
+	// Native Unix paths should always remain unmodified
+	unixPaths := []string{
+		"/Users/igorgoc/Projects",
+		"/Volumes/ExternalSSD/sirius",
+		"/var/lib/sirius/data",
+		"",
+	}
+	for _, p := range unixPaths {
+		res := normalizeHostPath(p)
+		// On non-Windows platforms, normalizeHostPath always returns p untouched
+		if res != p && p != "" {
+			t.Errorf("expected path '%s' untouched on Unix, got '%s'", p, res)
+		}
+	}
+}
+
+
