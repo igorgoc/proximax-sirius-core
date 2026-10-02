@@ -61,6 +61,10 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
   const novaQueueRef = useRef<ActiveNovaState[]>([]);
   const lastNovaPropRef = useRef<{ x: number; y: number; publicKey?: string; text?: string } | null>(null);
 
+  // Multi-touch active pointer map & pinch-to-zoom tracking
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchDistRef = useRef<number | null>(null);
+
   // Synchronized refs to allow steady 60 FPS render loop without effect teardown
   const starsRef = useRef(stars);
   starsRef.current = stars;
@@ -112,7 +116,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
 
     const container = containerRef.current;
     const canvas = canvasRef.current;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const viewportWidth = container?.clientWidth || (canvas ? canvas.width / dpr : 800);
     const viewportHeight = container?.clientHeight || (canvas ? canvas.height / dpr : 600);
 
@@ -132,8 +136,8 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
 
     // Safety padding for glow halos, orbit rings, and star text labels
     const padding = 120;
-    const spanX = Math.max(120, (maxX - minX) + padding * 2);
-    const spanY = Math.max(120, (maxY - minY) + padding * 2);
+    const spanX = Math.max(120, maxX - minX + padding * 2);
+    const spanY = Math.max(120, maxY - minY + padding * 2);
 
     const centerX = (minX + maxX) * 0.5;
     const centerY = (minY + maxY) * 0.5;
@@ -179,6 +183,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     if (!ctx) return;
 
     let animId: number;
+    const harvestPulseMap: { [key: string]: number } = {};
 
     const render = (time: number) => {
       const cam = cameraRef.current;
@@ -188,7 +193,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       cam.y += (cam.targetY - cam.y) * 0.12;
       cam.zoom += (cam.targetZoom - cam.zoom) * 0.12;
 
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
 
@@ -215,30 +220,25 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // World coordinate space transformation
+      // World coordinate space transformation (zero-allocation projection)
       const centerX = width * 0.5;
       const centerY = height * 0.5;
+      const camX = cam.x;
+      const camY = cam.y;
+      const camZoom = cam.zoom;
 
-      const worldToScreen = (wx: number, wy: number) => {
-        return {
-          x: centerX + (wx + cam.x) * cam.zoom,
-          y: centerY + (wy + cam.y) * cam.zoom,
-        };
-      };
+      const toScreenX = (wx: number) => centerX + (wx + camX) * camZoom;
+      const toScreenY = (wy: number) => centerY + (wy + camY) * camZoom;
 
       // 2. Render Twinkling Background Particles
       const particles = particlesRef.current;
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-        const screenPos = worldToScreen(p.x, p.y);
+        const sx = toScreenX(p.x);
+        const sy = toScreenY(p.y);
 
         // Cull out of bounds
-        if (
-          screenPos.x < -20 ||
-          screenPos.x > width + 20 ||
-          screenPos.y < -20 ||
-          screenPos.y > height + 20
-        ) {
+        if (sx < -20 || sx > width + 20 || sy < -20 || sy > height + 20) {
           continue;
         }
 
@@ -248,64 +248,70 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
         ctx.fillStyle = p.color;
         ctx.globalAlpha = alpha;
         ctx.beginPath();
-        ctx.arc(screenPos.x, screenPos.y, p.size * Math.min(1.5, cam.zoom), 0, Math.PI * 2);
+        ctx.arc(sx, sy, p.size * Math.min(1.5, camZoom), 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1.0;
 
-      // 3. Render Constellation Filaments (Mesh lines)
+      // 3. Render Constellation Filaments (Batched in single path)
       if (showFilamentsRef.current) {
         const currentEdges = edgesRef.current;
+        ctx.beginPath();
         for (let i = 0; i < currentEdges.length; i++) {
           const edge = currentEdges[i];
-          const p1 = worldToScreen(edge.x1, edge.y1);
-          const p2 = worldToScreen(edge.x2, edge.y2);
+          const x1 = toScreenX(edge.x1);
+          const y1 = toScreenY(edge.y1);
+          const x2 = toScreenX(edge.x2);
+          const y2 = toScreenY(edge.y2);
 
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
-          ctx.strokeStyle = '#38BDF8';
-          ctx.globalAlpha = edge.opacity * Math.min(1, cam.zoom * 0.9);
-          ctx.lineWidth = Math.max(0.75, 1.2 * cam.zoom);
-          ctx.stroke();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
         }
+        ctx.strokeStyle = '#38BDF8';
+        ctx.globalAlpha = 0.32 * Math.min(1, camZoom * 0.9);
+        ctx.lineWidth = Math.max(0.75, 1.2 * camZoom);
+        ctx.stroke();
         ctx.globalAlpha = 1.0;
       }
 
       // 4. Render Active Harvest Nova Shockwaves
       const now = performance.now();
-      novaQueueRef.current = novaQueueRef.current.filter((nova) => {
+      const activeNovae = novaQueueRef.current;
+      let writeIdx = 0;
+
+      for (let i = 0; i < activeNovae.length; i++) {
+        const nova = activeNovae[i];
         const age = (now - nova.startTime) / 1000;
         const duration = 2.4; // 2.4s lifetime
-        if (age >= duration) return false;
 
-        const progress = age / duration;
-        const screenPos = worldToScreen(nova.x, nova.y);
-        const waveRadius = (20 + progress * 220) * cam.zoom;
-        const alpha = Math.max(0, (1 - progress) * 0.85);
+        if (age < duration) {
+          activeNovae[writeIdx++] = nova;
+          const progress = age / duration;
+          const nx = toScreenX(nova.x);
+          const ny = toScreenY(nova.y);
+          const waveRadius = (20 + progress * 220) * camZoom;
+          const alpha = Math.max(0, (1 - progress) * 0.85);
 
-        // Expanding Photon Ring
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(screenPos.x, screenPos.y, waveRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(245, 158, 11, ${alpha})`;
-        ctx.lineWidth = Math.max(1.5, 3.5 * (1 - progress) * cam.zoom);
-        ctx.shadowColor = '#F59E0B';
-        ctx.shadowBlur = 15;
-        ctx.stroke();
+          // Expanding Photon Ring
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(nx, ny, waveRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(245, 158, 11, ${alpha})`;
+          ctx.lineWidth = Math.max(1.5, 3.5 * (1 - progress) * camZoom);
+          ctx.stroke();
 
-        // Optional +XPX Badge
-        if (nova.text && progress < 0.8) {
-          const badgeY = screenPos.y - waveRadius * 0.5 - 15;
-          ctx.font = 'bold 11px monospace';
-          ctx.fillStyle = `rgba(252, 211, 77, ${alpha * 1.1})`;
-          ctx.textAlign = 'center';
-          ctx.fillText(nova.text, screenPos.x, badgeY);
+          // Optional +XPX Badge
+          if (nova.text && progress < 0.8) {
+            const badgeY = ny - waveRadius * 0.5 - 15;
+            ctx.font = 'bold 11px monospace';
+            ctx.fillStyle = `rgba(252, 211, 77, ${alpha * 1.1})`;
+            ctx.textAlign = 'center';
+            ctx.fillText(nova.text, nx, badgeY);
+          }
+          ctx.restore();
         }
-        ctx.restore();
-
-        return true;
-      });
+      }
+      activeNovae.length = writeIdx;
 
       // 5. Render Validator Stars
       const currentStars = starsRef.current;
@@ -314,39 +320,36 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
       const currentShowLabels = showLabelsRef.current;
 
       // Map active harvest glow intensities for winning block harvesters
-      const nowTime = performance.now();
-      const harvestPulseMap = new Map<string, number>();
-      for (let m = 0; m < novaQueueRef.current.length; m++) {
-        const nova = novaQueueRef.current[m];
+      for (const k in harvestPulseMap) {
+        delete harvestPulseMap[k];
+      }
+      for (let m = 0; m < activeNovae.length; m++) {
+        const nova = activeNovae[m];
         if (nova.publicKey) {
-          const age = (nowTime - nova.startTime) / 1000;
+          const age = (now - nova.startTime) / 1000;
           const duration = 2.4;
           if (age < duration) {
             const intensity = Math.max(0, 1 - age / duration);
-            const prev = harvestPulseMap.get(nova.publicKey) || 0;
-            harvestPulseMap.set(nova.publicKey, Math.max(prev, intensity));
+            const prev = harvestPulseMap[nova.publicKey] || 0;
+            harvestPulseMap[nova.publicKey] = Math.max(prev, intensity);
           }
         }
       }
 
       for (let i = 0; i < currentStars.length; i++) {
         const star = currentStars[i];
-        const pos = worldToScreen(star.x, star.y);
+        const px = toScreenX(star.x);
+        const py = toScreenY(star.y);
 
         // Cull stars outside viewport margin
-        if (
-          pos.x < -60 ||
-          pos.x > width + 60 ||
-          pos.y < -60 ||
-          pos.y > height + 60
-        ) {
+        if (px < -60 || px > width + 60 || py < -60 || py > height + 60) {
           continue;
         }
 
         const isHovered = currentHovered?.publicKey === star.publicKey;
         const isSelected = currentSelected?.publicKey === star.publicKey;
-        const isHarvestPulsing = harvestPulseMap.get(star.publicKey) || 0;
-        const scaledRadius = Math.max(4, star.radius * cam.zoom);
+        const isHarvestPulsing = harvestPulseMap[star.publicKey] || 0;
+        const scaledRadius = Math.max(4, star.radius * camZoom);
 
         // A. Pulsing Corona Glow (Outer Aura)
         const basePulse = 0.85 + 0.15 * Math.sin(time * 0.003 + i);
@@ -354,11 +357,11 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
         const glowRadius = scaledRadius * (star.haloSize / star.radius) * pulse;
 
         const glowGrad = ctx.createRadialGradient(
-          pos.x,
-          pos.y,
+          px,
+          py,
           scaledRadius * 0.4,
-          pos.x,
-          pos.y,
+          px,
+          py,
           glowRadius
         );
         glowGrad.addColorStop(0, isHarvestPulsing > 0.1 ? '#FDE68A' : star.color);
@@ -367,98 +370,84 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
 
         ctx.fillStyle = glowGrad;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, glowRadius, 0, Math.PI * 2);
+        ctx.arc(px, py, glowRadius, 0, Math.PI * 2);
         ctx.fill();
 
         // Extra Golden Photon Ring for block harvester (stays fixed at position)
         if (isHarvestPulsing > 0) {
           ctx.save();
           ctx.beginPath();
-          ctx.arc(pos.x, pos.y, scaledRadius * (1.2 + (1 - isHarvestPulsing) * 2.0), 0, Math.PI * 2);
+          ctx.arc(px, py, scaledRadius * (1.2 + (1 - isHarvestPulsing) * 2.0), 0, Math.PI * 2);
           ctx.strokeStyle = `rgba(245, 158, 11, ${isHarvestPulsing * 0.95})`;
           ctx.lineWidth = 2 + isHarvestPulsing * 3;
-          ctx.shadowColor = '#F59E0B';
-          ctx.shadowBlur = 20;
           ctx.stroke();
           ctx.restore();
         }
 
-        // B. Solid Star Core
+        // B. Concentric Orbital Resonance Rings for Self Harvester Node
+        if (star.isSelf) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.45)';
+          ctx.lineWidth = 1.25;
+          ctx.beginPath();
+          ctx.arc(px, py, scaledRadius * 1.85, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(px, py, scaledRadius * 2.6, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // C. Core Celestial Body (Star Disk)
         ctx.save();
+        ctx.fillStyle = isHarvestPulsing > 0.1 ? '#FFFBEB' : star.color;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, scaledRadius, 0, Math.PI * 2);
-        ctx.fillStyle = star.color;
-        ctx.shadowColor = isHarvestPulsing > 0.1 ? '#F59E0B' : star.glowColor;
-        ctx.shadowBlur = isSelected || isHovered ? 25 : (isHarvestPulsing > 0.1 ? 30 : 12);
+        ctx.arc(px, py, scaledRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Hot White Fusion Center
+        ctx.fillStyle = '#FFFFFF';
+        ctx.globalAlpha = 0.88;
+        ctx.beginPath();
+        ctx.arc(px, py, scaledRadius * 0.48, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
 
-        // C. Sirius Self Validator: Rotating Planetary Orbit Ring
-        if (star.isSelf) {
+        // D. Interactive Selection Target Reticle (HUD Bracket)
+        if (isSelected) {
           ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.rotate(time * 0.0006); // Slow majestic rotation
-          ctx.setLineDash([6, 5]);
-          ctx.strokeStyle = 'rgba(16, 185, 129, 0.7)';
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          ctx.arc(0, 0, scaledRadius * 2.1, 0, Math.PI * 2);
-          ctx.stroke();
+          const b = scaledRadius + 8;
+          const bracketLen = 6;
+          ctx.strokeStyle = '#38BDF8';
+          ctx.lineWidth = 2;
+          ctx.translate(px, py);
 
-          // Outer secondary faint ring
-          ctx.setLineDash([3, 8]);
-          ctx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
-          ctx.beginPath();
-          ctx.arc(0, 0, scaledRadius * 2.8, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
-        }
-
-        // D. Sci-Fi Targeting Crosshair Reticle (Hovered or Selected)
-        if (isHovered || isSelected) {
-          const reticleRadius = scaledRadius * 2.6 + 6;
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.strokeStyle = isSelected ? '#10B981' : '#38BDF8';
-          ctx.lineWidth = 1.4;
-          ctx.shadowColor = isSelected ? '#10B981' : '#38BDF8';
-          ctx.shadowBlur = 8;
-
-          // Rotating dashed border
-          ctx.save();
-          ctx.rotate(-time * 0.0012);
-          ctx.setLineDash([8, 6]);
-          ctx.beginPath();
-          ctx.arc(0, 0, reticleRadius, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
-
-          // 4 Corner brackets
-          const bracketLen = 7;
-          const b = reticleRadius * 0.9;
           ctx.beginPath();
           // Top-left
-          ctx.moveTo(-b - bracketLen, -b);
+          ctx.moveTo(-b, -b + bracketLen);
           ctx.lineTo(-b, -b);
-          ctx.lineTo(-b, -b - bracketLen);
+          ctx.lineTo(-b + bracketLen, -b);
           // Top-right
-          ctx.moveTo(b + bracketLen, -b);
+          ctx.moveTo(b - bracketLen, -b);
           ctx.lineTo(b, -b);
-          ctx.lineTo(b, -b - bracketLen);
+          ctx.lineTo(b, -b + bracketLen);
           // Bottom-left
-          ctx.moveTo(-b - bracketLen, b);
+          ctx.moveTo(-b, b - bracketLen);
           ctx.lineTo(-b, b);
-          ctx.lineTo(-b, b + bracketLen);
+          ctx.lineTo(-b + bracketLen, b);
           // Bottom-right
-          ctx.moveTo(b + bracketLen, b);
+          ctx.moveTo(b - bracketLen, b);
           ctx.lineTo(b, b);
-          ctx.lineTo(b, b + bracketLen);
+          ctx.lineTo(b, b - bracketLen);
           ctx.stroke();
 
           ctx.restore();
         }
 
-        // E. Star Label: Only the compact amount of staked XPX (e.g. 7.7M)
+        // E. Star Label: Compact staked XPX amount (e.g. 7.7M)
         if (currentShowLabels || isHovered || isSelected || star.isSelf) {
           const label = formatCompactXPX(star.stakedBalanceXPX);
 
@@ -472,9 +461,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
             ? '#FDE68A'
             : 'rgba(226, 232, 240, 0.9)';
           ctx.textAlign = 'center';
-          ctx.shadowColor = 'rgba(0,0,0,0.9)';
-          ctx.shadowBlur = 4;
-          ctx.fillText(label, pos.x, pos.y + scaledRadius + 14);
+          ctx.fillText(label, px, py + scaledRadius + 14);
           ctx.restore();
         }
       }
@@ -487,7 +474,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  // Canvas Resize Observer with DPR Scaling (No inline style px to prevent flex ratchet loops)
+  // Canvas Resize Observer with DPR Scaling (capped at 2x)
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -496,9 +483,9 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     const handleResize = () => {
       const width = container.clientWidth;
       const height = container.clientHeight;
-      if (width <= 0 || height <= 0) return;
+      if (width === 0 || height === 0) return;
 
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const targetW = Math.round(width * dpr);
       const targetH = Math.round(height * dpr);
 
@@ -519,7 +506,7 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     (screenX: number, screenY: number): GalaxyStarData | null => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
       const cam = cameraRef.current;
@@ -544,51 +531,102 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     [stars]
   );
 
-  // Mouse / Touch Interaction Handlers
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button !== 0) return; // Left click only
+  // Unified Pointer & Touch Interaction Handlers
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return; // Left click only for mouse
+    try {
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore if pointer capture fails
+    }
+
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
     const cam = cameraRef.current;
-    cam.isDragging = true;
-    cam.dragStartX = e.clientX;
-    cam.dragStartY = e.clientY;
-    cam.camStartX = cam.targetX;
-    cam.camStartY = cam.targetY;
+    if (activePointersRef.current.size === 1) {
+      cam.isDragging = true;
+      cam.dragStartX = e.clientX;
+      cam.dragStartY = e.clientY;
+      cam.camStartX = cam.targetX;
+      cam.camStartY = cam.targetY;
+      pinchDistRef.current = null;
+    } else if (activePointersRef.current.size === 2) {
+      cam.isDragging = false;
+      const pts = Array.from(activePointersRef.current.values());
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      pinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
+    }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
 
     const cam = cameraRef.current;
+
+    // Handle 2-finger pinch zoom
+    if (activePointersRef.current.size === 2 && pinchDistRef.current) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      const newDist = Math.sqrt(dx * dx + dy * dy);
+      if (pinchDistRef.current > 0) {
+        const factor = newDist / pinchDistRef.current;
+        cam.targetZoom = Math.max(0.2, Math.min(2.8, cam.targetZoom * factor));
+      }
+      pinchDistRef.current = newDist;
+      return;
+    }
+
     if (cam.isDragging) {
       const dx = (e.clientX - cam.dragStartX) / cam.zoom;
       const dy = (e.clientY - cam.dragStartY) / cam.zoom;
       cam.targetX = cam.camStartX + dx;
       cam.targetY = cam.camStartY + dy;
-    } else {
-      // Hover detection
+    } else if (e.pointerType === 'mouse') {
+      // Hover detection with state change deduplication
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
       const found = getStarAt(screenX, screenY);
-      setHoveredStar(found);
+      if (found?.publicKey !== hoveredStarRef.current?.publicKey) {
+        hoveredStarRef.current = found;
+        setHoveredStar(found);
+      }
     }
   };
 
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // Ignore if pointer capture already lost
+    }
+    activePointersRef.current.delete(e.pointerId);
+    if (activePointersRef.current.size < 2) {
+      pinchDistRef.current = null;
+    }
+
     const cam = cameraRef.current;
-    const wasDrag =
-      Math.abs(e.clientX - cam.dragStartX) > 4 ||
-      Math.abs(e.clientY - cam.dragStartY) > 4;
+    if (cam.isDragging && activePointersRef.current.size === 0) {
+      const wasDrag =
+        Math.abs(e.clientX - cam.dragStartX) > 4 ||
+        Math.abs(e.clientY - cam.dragStartY) > 4;
 
-    cam.isDragging = false;
+      cam.isDragging = false;
 
-    if (!wasDrag) {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (rect) {
-        const screenX = e.clientX - rect.left;
-        const screenY = e.clientY - rect.top;
-        const clicked = getStarAt(screenX, screenY);
-        onSelectStar(clicked);
+      if (!wasDrag) {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          const screenX = e.clientX - rect.left;
+          const screenY = e.clientY - rect.top;
+          const clicked = getStarAt(screenX, screenY);
+          onSelectStar(clicked);
+        }
       }
     }
   };
@@ -608,10 +646,12 @@ export const SiriusGalaxyCanvas: React.FC<SiriusGalaxyCanvasProps> = ({
     >
       <canvas
         ref={canvasRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onWheel={handleWheel}
+        style={{ touchAction: 'none' }}
         className={`absolute inset-0 w-full h-full block ${
           hoveredStar ? 'cursor-pointer' : cameraRef.current.isDragging ? 'cursor-grabbing' : 'cursor-grab'
         }`}
