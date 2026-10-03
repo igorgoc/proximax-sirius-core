@@ -110,10 +110,19 @@ grep -q "^certificateDirectory" "$USER_CONF" 2>/dev/null && sed -i "s|^certifica
 # Invariant: friendlyName belongs in config-node.properties [localnode]; strip it from config-user.properties to satisfy VerifyBagSizeLte(bag, 4)
 sed -i "/^friendlyName/d" "$USER_CONF" 2>/dev/null || true
 
-# Update config-node.properties with friendlyName
+# Update config-node.properties with friendlyName and hardware stability settings
 NODE_CONF="$DATA_DIR/resources/config-node.properties"
 if [ -f "$NODE_CONF" ]; then
     sed -i "s|^friendlyName *=.*|friendlyName = ${FRIENDLY_NAME}|" "$NODE_CONF" 2>/dev/null || true
+    # RPi4 Resource & Stability Hardening:
+    # 1. Disable process abort when consumer queues fill under I/O bursts
+    sed -i "s|^shouldAbortWhenDispatcherIsFull *=.*|shouldAbortWhenDispatcherIsFull = false|" "$NODE_CONF" 2>/dev/null || true
+    # 2. Right-size caches to prevent Linux OOM-killer on 4GB/8GB Home Assistant hosts
+    sed -i "s|^shortLivedCacheMaxSize *=.*|shortLivedCacheMaxSize = 500'000|" "$NODE_CONF" 2>/dev/null || true
+    sed -i "s|^unconfirmedTransactionsCacheMaxSize *=.*|unconfirmedTransactionsCacheMaxSize = 50'000|" "$NODE_CONF" 2>/dev/null || true
+    # 3. Limit incoming connections to prevent socket buffer exhaustion (512 -> 64)
+    sed -i '/^\[incoming_connections\]/,/^\[/ s|^maxConnections *=.*|maxConnections = 64|' "$NODE_CONF" 2>/dev/null || true
+    sed -i '/^\[incoming_connections\]/,/^\[/ s|^backlogSize *=.*|backlogSize = 64|' "$NODE_CONF" 2>/dev/null || true
 fi
 
 # Update config-harvesting.properties
@@ -136,6 +145,7 @@ for LOG_CONF in "$DATA_DIR/resources/config-logging-server.properties" "$DATA_DI
     if [ -f "$LOG_CONF" ]; then
         sed -i "s|^directory *=.*|directory = ${DATA_DIR}/logs|" "$LOG_CONF" 2>/dev/null || true
         sed -i "s|^filePattern *=.*/\([^/]*\.log\)|filePattern = ${DATA_DIR}/logs/\1|" "$LOG_CONF" 2>/dev/null || true
+        sed -i '/^\[file\]/,/^\[/ s|^sinkType *=.*|sinkType = Async|' "$LOG_CONF" 2>/dev/null || true
     fi
 done
 
@@ -304,18 +314,30 @@ fi
 LOG_INFO "Starting Sirius Catapult Engine Supervisor with Automated Sync Watchdog..."
 cd "$DATA_DIR"
 
+get_network_height() {
+    local h=""
+    for ep in "https://aldebaran.xpxsirius.io/chain/height" "https://betelgeuse.xpxsirius.io/chain/height"; do
+        h=$(curl -s --connect-timeout 3 -m 5 "$ep" 2>/dev/null | jq -r 'if .height then (.height[0] + .height[1] * 4294967296) else empty end' 2>/dev/null || true)
+        if [ -n "$h" ] && [ "$h" -gt 0 ] 2>/dev/null; then
+            echo "$h"
+            return 0
+        fi
+    done
+    echo "0"
+}
+
 cleanup_and_exit() {
     LOG_INFO "Shutdown signal received. Stopping sirius.bc gracefully..."
     if [ -n "${ENGINE_PID:-}" ] && kill -0 "$ENGINE_PID" 2>/dev/null; then
         kill -INT "$ENGINE_PID" 2>/dev/null || true
-        for i in $(seq 1 30); do
+        for i in $(seq 1 45); do
             if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
                 break
             fi
             sleep 1
         done
         if kill -0 "$ENGINE_PID" 2>/dev/null; then
-            LOG_WARN "Engine did not exit in 30s; sending SIGKILL..."
+            LOG_WARN "Engine did not exit in 45s; sending SIGKILL..."
             kill -KILL "$ENGINE_PID" 2>/dev/null || true
         fi
     fi
@@ -324,8 +346,11 @@ cleanup_and_exit() {
 
 trap cleanup_and_exit SIGTERM SIGINT
 
-# Maximum idle stall window before watchdog triggers recovery (8 minutes = 480 seconds)
-WATCHDOG_TIMEOUT_SEC=480
+# Watchdog timing parameters
+WATCHDOG_TIMEOUT_SEC=480       # 8 minutes stall before checking network
+WATCHDOG_GRACE_PERIOD_SEC=180  # 3 minutes startup grace period
+WATCHDOG_COOLDOWN_SEC=300      # 5 minutes cooldown between stall recoveries
+LAST_STALL_RECOVERY_TIME=0
 
 while true; do
     # Clear stale lock files before boot
@@ -346,48 +371,93 @@ while true; do
     # Start engine process in background
     "$SIRIUS_BIN" "$DATA_DIR" &
     ENGINE_PID=$!
+    ENGINE_START_TIME=$(date +%s)
     LOG_INFO "sirius.bc started with PID $ENGINE_PID on P2P port 7900"
 
-    LAST_INDEX_MTIME=0
-    if [ -f "$INDEX_FILE" ]; then
-        LAST_INDEX_MTIME=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || echo "0")
+    # Watchdog state initialization
+    LAST_OBSERVED_HEIGHT=0
+    if [ -f "$INDEX_FILE" ] && [ -s "$INDEX_FILE" ]; then
+        LAST_OBSERVED_HEIGHT=$(od -An -t u8 -N 8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo "0")
     fi
-    LAST_ACTIVITY_TIME=$(date +%s)
+    LAST_ADVANCE_TIME=$(date +%s)
+    LAST_STATUS_LOG_TIME=0
 
     # Watchdog monitoring loop (checks every 30 seconds)
     while kill -0 "$ENGINE_PID" 2>/dev/null; do
         sleep 30
 
         CURRENT_TIME=$(date +%s)
-        CURRENT_INDEX_MTIME=0
-        if [ -f "$INDEX_FILE" ]; then
-            CURRENT_INDEX_MTIME=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || echo "0")
+        UPTIME_SEC=$(( CURRENT_TIME - ENGINE_START_TIME ))
+
+        # Read current local height from index.dat
+        LOCAL_HEIGHT=0
+        if [ -f "$INDEX_FILE" ] && [ -s "$INDEX_FILE" ]; then
+            LOCAL_HEIGHT=$(od -An -t u8 -N 8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo "0")
         fi
 
-        # If index.dat was modified, reset the activity timer
-        if [ "$CURRENT_INDEX_MTIME" -gt "$LAST_INDEX_MTIME" ]; then
-            LAST_INDEX_MTIME="$CURRENT_INDEX_MTIME"
-            LAST_ACTIVITY_TIME="$CURRENT_TIME"
+        # If local height advanced, update progress tracking
+        if [ "${LOCAL_HEIGHT:-0}" -gt "${LAST_OBSERVED_HEIGHT:-0}" ] 2>/dev/null; then
+            LAST_OBSERVED_HEIGHT="$LOCAL_HEIGHT"
+            LAST_ADVANCE_TIME="$CURRENT_TIME"
         fi
 
-        # Check for sync stall: no new committed block in WATCHDOG_TIMEOUT_SEC (8 minutes)
-        IDLE_SEC=$(( CURRENT_TIME - LAST_ACTIVITY_TIME ))
-        if [ "$IDLE_SEC" -ge "$WATCHDOG_TIMEOUT_SEC" ]; then
-            CURRENT_HEIGHT="unknown"
-            if [ -f "$INDEX_FILE" ]; then
-                CURRENT_HEIGHT=$(od -An -t u8 -N 8 "$INDEX_FILE" 2>/dev/null | tr -d ' ' || echo "unknown")
+        # Periodic health log every 10 minutes
+        if [ $(( CURRENT_TIME - LAST_STATUS_LOG_TIME )) -ge 600 ]; then
+            LAST_STATUS_LOG_TIME="$CURRENT_TIME"
+            LOG_INFO "[SENTRY] Node running (PID: $ENGINE_PID, local height: ${LOCAL_HEIGHT}, uptime: $(( UPTIME_SEC / 60 ))m)"
+        fi
+
+        # Skip stall evaluation during startup grace period (handshake & timesync establishment)
+        if [ "$UPTIME_SEC" -lt "$WATCHDOG_GRACE_PERIOD_SEC" ]; then
+            continue
+        fi
+
+        # Skip stall evaluation during cooldown window
+        if [ "$LAST_STALL_RECOVERY_TIME" -gt 0 ]; then
+            SINCE_LAST_RECOVERY=$(( CURRENT_TIME - LAST_STALL_RECOVERY_TIME ))
+            if [ "$SINCE_LAST_RECOVERY" -lt "$WATCHDOG_COOLDOWN_SEC" ]; then
+                continue
             fi
-            LOG_WARN "[WATCHDOG] Sync stall detected: No block committed in ${IDLE_SEC}s (> ${WATCHDOG_TIMEOUT_SEC}s) at height ${CURRENT_HEIGHT}."
-            LOG_WARN "[WATCHDOG] Initiating automated graceful restart to recover peer connections..."
+        fi
+
+        # Calculate stalled duration
+        IDLE_SEC=$(( CURRENT_TIME - LAST_ADVANCE_TIME ))
+
+        # Check for sync stall: no local height advance for >= WATCHDOG_TIMEOUT_SEC (8 minutes)
+        if [ "$IDLE_SEC" -ge "$WATCHDOG_TIMEOUT_SEC" ]; then
+            NETWORK_HEIGHT=$(get_network_height)
+
+            if [ -n "$NETWORK_HEIGHT" ] && [ "$NETWORK_HEIGHT" -gt 0 ] 2>/dev/null; then
+                BEHIND_BLOCKS=$(( NETWORK_HEIGHT - LOCAL_HEIGHT ))
+
+                # Invariant: If node is at tip or within 5 blocks of network height, DO NOT restart!
+                if [ "$BEHIND_BLOCKS" -le 5 ]; then
+                    LAST_ADVANCE_TIME="$CURRENT_TIME"
+                    LOG_INFO "[WATCHDOG] Node is fully in sync at chain tip (local: ${LOCAL_HEIGHT}, network: ${NETWORK_HEIGHT}). Normal operation."
+                    continue
+                fi
+
+                # Genuine sync stall: Node is behind by > 5 blocks and frozen for >= 8 min
+                LOG_WARN "[WATCHDOG] ⚠️ Genuine sync stall detected! Local height stuck at ${LOCAL_HEIGHT} for ${IDLE_SEC}s while network height is ${NETWORK_HEIGHT} (${BEHIND_BLOCKS} blocks behind)."
+            else
+                # Network query failed (temporary DNS/network fluctuation): defer restart
+                LOG_WARN "[WATCHDOG] Local height idle for ${IDLE_SEC}s, but unable to query public network height. Deferring restart."
+                LAST_ADVANCE_TIME=$(( CURRENT_TIME - (WATCHDOG_TIMEOUT_SEC / 2) ))
+                continue
+            fi
+
+            LOG_WARN "[WATCHDOG] Initiating automated graceful restart (45s grace period) to cycle stale P2P sockets..."
+            LAST_STALL_RECOVERY_TIME="$CURRENT_TIME"
 
             kill -INT "$ENGINE_PID" 2>/dev/null || true
-            for w in $(seq 1 30); do
+            for w in $(seq 1 45); do
                 if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
                     break
                 fi
                 sleep 1
             done
             if kill -0 "$ENGINE_PID" 2>/dev/null; then
+                LOG_WARN "[WATCHDOG] Engine did not exit in 45s; sending SIGKILL..."
                 kill -KILL "$ENGINE_PID" 2>/dev/null || true
             fi
             wait "$ENGINE_PID" 2>/dev/null || true
@@ -397,7 +467,16 @@ while true; do
 
     wait "$ENGINE_PID" 2>/dev/null || true
     EXIT_CODE=$?
-    LOG_WARN "sirius.bc exited with status $EXIT_CODE. Restarting engine in 5 seconds..."
+    if [ "$EXIT_CODE" -eq 137 ]; then
+        LOG_ERR "Engine was terminated by SIGKILL (Exit code 137). Probable cause: Linux Kernel OOM killer on Raspberry Pi 4."
+    elif [ "$EXIT_CODE" -eq 134 ]; then
+        LOG_ERR "Engine crashed with SIGABRT (Exit code 134). Probable cause: Disruptor overflow or assertion abort."
+    elif [ "$EXIT_CODE" -eq 130 ]; then
+        LOG_INFO "Engine stopped via SIGINT (Exit code 130)."
+    else
+        LOG_WARN "sirius.bc exited with status $EXIT_CODE."
+    fi
+    LOG_INFO "Restarting engine in 5 seconds..."
     sleep 5
 done
 
