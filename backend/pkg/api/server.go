@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -191,6 +192,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/keys/generate", s.handleKeyGenerate)
 	mux.HandleFunc("/api/keys/parse", s.handleKeyParse)
 	mux.HandleFunc("/api/harvesting/link", s.handleHarvestingLink)
+	mux.HandleFunc("/api/harvesting/delegated/add", s.handleDelegatedHarvesterAdd)
+	mux.HandleFunc("/api/harvesting/delegated/list", s.handleDelegatedHarvesterList)
+	mux.HandleFunc("/api/harvesting/delegated/remove", s.handleDelegatedHarvesterRemove)
 	mux.HandleFunc("/api/peers", s.handlePeers)
 	mux.HandleFunc("/api/network/peers-detail", s.handlePeersDetail)
 	mux.HandleFunc("/api/network/public-ip", s.handlePublicIp)
@@ -353,10 +357,14 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 		lrw.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		lrw.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss: http: https:;")
 
-		// Restrict CORS to verified localhost / local IP origins
+		// Restrict CORS to verified localhost / local IP origins, allowing external origins for public delegated harvesting
+		isDelegatedApi := strings.HasPrefix(r.URL.Path, "/api/harvesting/delegated/")
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			if u, err := url.Parse(origin); err == nil {
+			if isDelegatedApi {
+				lrw.Header().Set("Access-Control-Allow-Origin", origin)
+				lrw.Header().Set("Vary", "Origin")
+			} else if u, err := url.Parse(origin); err == nil {
 				h := u.Hostname()
 				if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" {
 					lrw.Header().Set("Access-Control-Allow-Origin", origin)
@@ -371,6 +379,19 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 		if r.Method == "OPTIONS" {
 			lrw.WriteHeader(http.StatusOK)
 			return
+		}
+
+		// Allow public delegated key registration from community web wallets
+		if r.URL.Path == "/api/harvesting/delegated/add" {
+			if r.Method == "POST" {
+				ct := r.Header.Get("Content-Type")
+				if !strings.HasPrefix(ct, "application/json") {
+					http.Error(lrw, `{"error":"Unsupported Media Type: application/json required"}`, http.StatusUnsupportedMediaType)
+					return
+				}
+				next.ServeHTTP(lrw, r)
+				return
+			}
 		}
 
 		// Security: Protections for state-changing requests on /api/
@@ -849,6 +870,140 @@ func (s *Server) handleHarvestingLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, result)
+}
+
+func (s *Server) handleDelegatedHarvesterAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		RemotePrivateKey string `json:"remotePrivateKey"`
+		OwnerAddress     string `json:"ownerAddress"`
+		Label            string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	privKey := strings.TrimSpace(req.RemotePrivateKey)
+	if len(privKey) != 64 {
+		jsonError(w, "Remote private key must be exactly 64 hexadecimal characters", http.StatusBadRequest)
+		return
+	}
+
+	keyInfo, err := crypto.KeyPairFromPrivateKey(privKey)
+	if err != nil {
+		jsonError(w, "Invalid remote private key: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	delegatedDir := filepath.Join(s.configMgr.GetResourcesPath(), "delegated_keys")
+	if err := os.MkdirAll(delegatedDir, 0700); err != nil {
+		jsonError(w, "Failed to create delegated keys directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	safeName := strings.TrimSpace(req.OwnerAddress)
+	if safeName == "" {
+		safeName = strings.TrimSpace(req.Label)
+	}
+	if safeName == "" {
+		safeName = keyInfo.PublicKey
+	}
+	safeName = regexp.MustCompile(`[^a-zA-Z0-9_\-]`).ReplaceAllString(safeName, "_")
+	filePath := filepath.Join(delegatedDir, safeName+".key")
+
+	if err := os.WriteFile(filePath, []byte(strings.ToUpper(privKey)+"\n"), 0600); err != nil {
+		jsonError(w, "Failed to write delegated key file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[Harvesting] Hot-loaded delegated harvester key %s.key (Harvester PubKey: %s)", safeName, keyInfo.PublicKey)
+	jsonResponse(w, map[string]interface{}{
+		"status":             "success",
+		"message":            "Delegated harvester key loaded successfully into validator node",
+		"harvesterPublicKey": keyInfo.PublicKey,
+		"ownerAddress":       req.OwnerAddress,
+		"fileName":           safeName + ".key",
+	})
+}
+
+func (s *Server) handleDelegatedHarvesterList(w http.ResponseWriter, r *http.Request) {
+	delegatedDir := filepath.Join(s.configMgr.GetResourcesPath(), "delegated_keys")
+	_ = os.MkdirAll(delegatedDir, 0700)
+
+	entries, err := os.ReadDir(delegatedDir)
+	if err != nil {
+		jsonError(w, "Failed to read delegated keys: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type DelegatedKeyItem struct {
+		FileName           string    `json:"fileName"`
+		HarvesterPublicKey string    `json:"harvesterPublicKey"`
+		ModifiedAt         time.Time `json:"modifiedAt"`
+	}
+
+	var list []DelegatedKeyItem
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".key") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(delegatedDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(content))
+		info, err := crypto.KeyPairFromPrivateKey(trimmed)
+		pubKey := ""
+		if err == nil && info != nil {
+			pubKey = info.PublicKey
+		}
+		fi, _ := entry.Info()
+		modTime := time.Now()
+		if fi != nil {
+			modTime = fi.ModTime()
+		}
+		list = append(list, DelegatedKeyItem{
+			FileName:           entry.Name(),
+			HarvesterPublicKey: pubKey,
+			ModifiedAt:         modTime,
+		})
+	}
+	if list == nil {
+		list = []DelegatedKeyItem{}
+	}
+	jsonResponse(w, list)
+}
+
+func (s *Server) handleDelegatedHarvesterRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		FileName string `json:"fileName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	clean := filepath.Base(strings.TrimSpace(req.FileName))
+	if !strings.HasSuffix(clean, ".key") {
+		clean += ".key"
+	}
+	target := filepath.Join(s.configMgr.GetResourcesPath(), "delegated_keys", clean)
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		jsonError(w, "Failed to remove key: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[Harvesting] Removed delegated harvester key %s", clean)
+	jsonResponse(w, map[string]string{"status": "removed", "fileName": clean})
 }
 
 func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
