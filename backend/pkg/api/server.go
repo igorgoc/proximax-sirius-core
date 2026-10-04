@@ -882,6 +882,7 @@ func (s *Server) handleDelegatedHarvesterAdd(w http.ResponseWriter, r *http.Requ
 		RemotePrivateKey string `json:"remotePrivateKey"`
 		OwnerAddress     string `json:"ownerAddress"`
 		Label            string `json:"label"`
+		Force            bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request: "+err.Error(), http.StatusBadRequest)
@@ -898,6 +899,42 @@ func (s *Server) handleDelegatedHarvesterAdd(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		jsonError(w, "Invalid remote private key: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Verify on-chain that this key is linked, has >= 100,000 XPX balance, and is registered in Harvester Committee
+	if !req.Force {
+		harvStatus, hErr := s.chainMon.CheckHarvesterStatus(keyInfo.PublicKey, "")
+		if hErr != nil {
+			jsonError(w, "Unable to verify harvester status on Sirius Mainnet: "+hErr.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if !harvStatus.IsLinked {
+			jsonError(w, "Cannot activate: Remote key ("+keyInfo.PublicKey[:8]+"..."+keyInfo.PublicKey[56:]+") is not linked to any funding account on-chain. Please complete Step 2 (Link Account Key) first.", http.StatusBadRequest)
+			return
+		}
+
+		// Verify minimum balance (100,000 XPX = 100,000,000,000 micro-XPX)
+		effectiveRawBalance := harvStatus.LinkedRawBalanceXPX
+		if harvStatus.AccountType == 1 {
+			effectiveRawBalance = harvStatus.RawBalanceXPX
+		}
+		if effectiveRawBalance < 100000000000 {
+			displayBal := harvStatus.LinkedBalanceXPX
+			if displayBal == "" {
+				displayBal = harvStatus.BalanceXPX
+			}
+			if displayBal == "" {
+				displayBal = "0.00 XPX"
+			}
+			jsonError(w, fmt.Sprintf("Cannot activate: Account balance (%s) is below the minimum 100,000 XPX required for Sirius POS+ harvesting.", displayBal), http.StatusBadRequest)
+			return
+		}
+
+		if !harvStatus.IsCommitteeHarvester && !harvStatus.CanHarvest {
+			jsonError(w, "Cannot activate: Remote key is linked, but not registered in the Harvester Committee on-chain. Please complete Step 3 (Register Harvester) first.", http.StatusBadRequest)
+			return
+		}
 	}
 
 	delegatedDir := filepath.Join(s.configMgr.GetResourcesPath(), "delegated_keys")
