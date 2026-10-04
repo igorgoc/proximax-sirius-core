@@ -357,11 +357,11 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 		lrw.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		lrw.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss: http: https:;")
 
-		// Restrict CORS to verified localhost / local IP origins, allowing external origins for public delegated harvesting
-		isDelegatedApi := strings.HasPrefix(r.URL.Path, "/api/harvesting/delegated/")
+		// Restrict CORS to verified localhost / local IP origins, allowing external origins for public delegated harvesting and status probes
+		isPublicApi := strings.HasPrefix(r.URL.Path, "/api/harvesting/delegated/") || r.URL.Path == "/api/status" || r.URL.Path == "/api/harvesting/stats"
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			if isDelegatedApi {
+			if isPublicApi {
 				lrw.Header().Set("Access-Control-Allow-Origin", origin)
 				lrw.Header().Set("Vary", "Origin")
 			} else if u, err := url.Parse(origin); err == nil {
@@ -513,6 +513,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	cfg, _ := s.configMgr.LoadNodeConfig()
 
+	delegatedDir := filepath.Join(s.configMgr.GetResourcesPath(), "delegated_keys")
+	delegatedCount := 0
+	if entries, err := os.ReadDir(delegatedDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".key") {
+				delegatedCount++
+			}
+		}
+	}
+	maxSlots := 100
+	friendlyName := "Sirius Validator Node"
+	harvestPubKey := ""
+	if cfg != nil {
+		if cfg.MaxUnlockedAccounts > 0 {
+			maxSlots = cfg.MaxUnlockedAccounts
+		}
+		if cfg.FriendlyName != "" {
+			friendlyName = cfg.FriendlyName
+		}
+		harvestPubKey = cfg.HarvestPublicKey
+	}
+
 	resp := map[string]interface{}{
 		"status":                metrics.Status,
 		"blockHeight":           metrics.BlockHeight,
@@ -520,6 +542,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"peersCount":            metrics.PeersCount,
 		"metrics":               metrics,
 		"config":                cfg,
+		"features":              []string{"delegated_harvesting_hotload", "fast_finality"},
+		"delegatedHarvesting": map[string]interface{}{
+			"enabled":     true,
+			"activeSlots": delegatedCount,
+			"maxSlots":    maxSlots,
+			"nodeKey":     harvestPubKey,
+			"nodeName":    friendlyName,
+		},
 		"harvestStats":          s.harvesterTracker.GetStats(),
 		"networkValidatorStats": s.harvesterTracker.GetNetworkValidatorStats(),
 		"storageStatus":         s.storageMgr.GetStatus(),
