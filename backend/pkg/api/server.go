@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -195,6 +196,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/harvesting/delegated/add", s.handleDelegatedHarvesterAdd)
 	mux.HandleFunc("/api/harvesting/delegated/list", s.handleDelegatedHarvesterList)
 	mux.HandleFunc("/api/harvesting/delegated/remove", s.handleDelegatedHarvesterRemove)
+	mux.HandleFunc("/api/validator/onchain-status", s.handleValidatorOnChainStatus)
+	mux.HandleFunc("/api/validator/register-onchain", s.handleValidatorRegisterOnChain)
 	mux.HandleFunc("/api/peers", s.handlePeers)
 	mux.HandleFunc("/api/network/peers-detail", s.handlePeersDetail)
 	mux.HandleFunc("/api/network/public-ip", s.handlePublicIp)
@@ -358,7 +361,7 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 		lrw.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss: http: https:;")
 
 		// Restrict CORS to verified localhost / local IP origins, allowing external origins for public delegated harvesting and status probes
-		isPublicApi := strings.HasPrefix(r.URL.Path, "/api/harvesting/delegated/") || r.URL.Path == "/api/status" || r.URL.Path == "/api/harvesting/stats"
+		isPublicApi := strings.HasPrefix(r.URL.Path, "/api/harvesting/delegated/") || r.URL.Path == "/api/status" || r.URL.Path == "/api/harvesting/stats" || strings.HasPrefix(r.URL.Path, "/api/validator/")
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			if isPublicApi {
@@ -1071,6 +1074,152 @@ func (s *Server) handleDelegatedHarvesterRemove(w http.ResponseWriter, r *http.R
 	}
 	log.Printf("[Harvesting] Removed delegated harvester key %s", clean)
 	jsonResponse(w, map[string]string{"status": "removed", "fileName": clean})
+}
+
+func (s *Server) handleValidatorOnChainStatus(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.configMgr.LoadNodeConfig()
+	if err != nil {
+		jsonError(w, "Failed to load node configuration: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	targetPubKey := ""
+	if cfg != nil {
+		if cfg.HarvestPublicKey != "" {
+			targetPubKey = cfg.HarvestPublicKey
+		} else if cfg.BootPublicKey != "" {
+			targetPubKey = cfg.BootPublicKey
+		}
+	}
+
+	if q := r.URL.Query().Get("publicKey"); q != "" {
+		targetPubKey = q
+	}
+
+	if targetPubKey == "" {
+		jsonResponse(w, map[string]interface{}{
+			"registered": false,
+			"message":    "No validator public key configured",
+		})
+		return
+	}
+
+	meta, err := crypto.GetValidatorOnChainMetadata(targetPubKey, "")
+	if err != nil || meta == nil {
+		jsonResponse(w, map[string]interface{}{
+			"registered":      false,
+			"targetPublicKey": targetPubKey,
+			"message":         "Validator is not yet registered in the on-chain directory",
+		})
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"registered":      true,
+		"targetPublicKey": targetPubKey,
+		"metadata":        meta,
+	})
+}
+
+func (s *Server) handleValidatorRegisterOnChain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		AccountPrivateKey crypto.SecretKeyBuffer `json:"accountPrivateKey"`
+		Name              string                 `json:"name"`
+		Endpoint          string                 `json:"endpoint"`
+		RestEndpoint      string                 `json:"restEndpoint"`
+		Location          string                 `json:"location"`
+		ApiNode           string                 `json:"apiNode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer req.AccountPrivateKey.Wipe()
+
+	cfg, _ := s.configMgr.LoadNodeConfig()
+
+	var keyBytes []byte
+	if len(req.AccountPrivateKey) == 32 {
+		keyBytes = make([]byte, 32)
+		copy(keyBytes, req.AccountPrivateKey)
+	} else if cfg != nil && len(cfg.HarvestKey) == 64 {
+		b, err := hex.DecodeString(cfg.HarvestKey)
+		if err == nil && len(b) == 32 {
+			keyBytes = b
+		}
+	} else if cfg != nil && len(cfg.BootKey) == 64 {
+		b, err := hex.DecodeString(cfg.BootKey)
+		if err == nil && len(b) == 32 {
+			keyBytes = b
+		}
+	}
+
+	if len(keyBytes) != 32 {
+		jsonError(w, "A valid 64-hex account private key is required to sign the on-chain registration transaction", http.StatusBadRequest)
+		return
+	}
+	defer func() {
+		for i := range keyBytes {
+			keyBytes[i] = 0
+		}
+	}()
+
+	nodeName := strings.TrimSpace(req.Name)
+	if nodeName == "" && cfg != nil && cfg.FriendlyName != "" {
+		nodeName = cfg.FriendlyName
+	}
+	if nodeName == "" {
+		nodeName = "Sirius Validator Node"
+	}
+
+	endpoint := strings.TrimSpace(req.Endpoint)
+	if endpoint == "" {
+		host := "localhost"
+		if cfg != nil && cfg.Host != "" {
+			host = cfg.Host
+		}
+		endpoint = fmt.Sprintf("http://%s:8080", host)
+	}
+
+	restEndpoint := strings.TrimSpace(req.RestEndpoint)
+	if restEndpoint == "" {
+		host := "localhost"
+		if cfg != nil && cfg.Host != "" {
+			host = cfg.Host
+		}
+		restEndpoint = fmt.Sprintf("http://%s:3000", host)
+	}
+
+	location := strings.TrimSpace(req.Location)
+	if location == "" {
+		location = "Global"
+	}
+
+	targetNodeKey := ""
+	if cfg != nil && cfg.HarvestPublicKey != "" {
+		targetNodeKey = cfg.HarvestPublicKey
+	}
+
+	res, err := crypto.RegisterValidatorOnChain(
+		keyBytes,
+		nodeName,
+		endpoint,
+		restEndpoint,
+		location,
+		targetNodeKey,
+		req.ApiNode,
+	)
+	if err != nil {
+		jsonError(w, "Failed to register on-chain: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	jsonResponse(w, res)
 }
 
 func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {

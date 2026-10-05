@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -382,3 +383,169 @@ func PerformDelegatedHarvestingLink(accountPrivateKeyBytes []byte, remoteHarvest
 		Message:          "Successfully linked remote account and registered harvester on ProximaX Sirius Mainnet",
 	}, nil
 }
+
+type ValidatorRegistrationResult struct {
+	TxHash          string `json:"txHash,omitempty"`
+	TargetPublicKey string `json:"targetPublicKey"`
+	Endpoint        string `json:"endpoint"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	Message         string `json:"message"`
+}
+
+// RegisterValidatorOnChain creates and broadcasts an AccountMetadataTransaction (sirius.v)
+// registering this validator in the decentralized global directory.
+func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoint string, restEndpoint string, location string, nodePublicKey string, apiNodeUrl string) (*ValidatorRegistrationResult, error) {
+	if len(accountPrivateKeyBytes) != 32 {
+		return nil, errors.New("account private key must be exactly 32 bytes (64 hex characters)")
+	}
+
+	defer func() {
+		for i := range accountPrivateKeyBytes {
+			accountPrivateKeyBytes[i] = 0
+		}
+	}()
+
+	if apiNodeUrl == "" {
+		apiNodeUrl = DefaultApiNodes[0]
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	config, err := sdk.NewConfig(ctx, []string{apiNodeUrl})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Sirius API node (%s): %w", apiNodeUrl, err)
+	}
+
+	client := sdk.NewClient(nil, config)
+
+	account, err := sdk.NewAccount(config.NetworkType, config.GenerationHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize sdk account: %w", err)
+	}
+
+	privKey := crypto.NewPrivateKey(accountPrivateKeyBytes)
+	defer privKey.Destroy()
+
+	keyPair, err := crypto.NewKeyPair(privKey, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive keypair: %w", err)
+	}
+
+	publicAcc, err := sdk.NewAccountFromPublicKey(keyPair.PublicKey.String(), config.NetworkType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive public account: %w", err)
+	}
+
+	account.KeyPair = keyPair
+	account.PublicAccount = publicAcc
+
+	if nodePublicKey == "" {
+		nodePublicKey = publicAcc.PublicKey
+	}
+
+	metaPayload := map[string]interface{}{
+		"name":          name,
+		"endpoint":      endpoint,
+		"restEndpoint":  restEndpoint,
+		"location":      location,
+		"nodePublicKey": nodePublicKey,
+	}
+	metaJsonBytes, err := json.Marshal(metaPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize metadata JSON: %w", err)
+	}
+	newValue := string(metaJsonBytes)
+
+	// Scoped key: "sirius.v" in hex is 0x7369726975732E76
+	scopedKey := sdk.ScopedMetadataKey(0x7369726975732E76)
+
+	// Check if old value exists
+	oldValue := ""
+	if compositeHash, chErr := sdk.CalculateUniqueAccountMetadataId(publicAcc.Address, publicAcc, scopedKey); chErr == nil {
+		if metaInfo, mErr := client.MetadataV2.GetMetadataV2Info(ctx, compositeHash); mErr == nil && metaInfo != nil && metaInfo.Address != nil {
+			oldValue = string(metaInfo.Address.Value)
+		}
+	}
+
+	if oldValue == newValue {
+		return &ValidatorRegistrationResult{
+			TargetPublicKey: publicAcc.PublicKey,
+			Endpoint:        endpoint,
+			Name:            name,
+			Status:          "ALREADY_REGISTERED",
+			Message:         "Validator metadata is already registered and up-to-date on ProximaX Sirius Mainnet",
+		}, nil
+	}
+
+	metaTx, err := client.NewAccountMetadataTransaction(
+		sdk.NewDeadline(time.Hour),
+		publicAcc,
+		scopedKey,
+		newValue,
+		oldValue,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AccountMetadataTransaction: %w", err)
+	}
+
+	signedTx, err := account.Sign(metaTx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign AccountMetadataTransaction: %w", err)
+	}
+
+	txHash, err := client.Transaction.Announce(ctx, signedTx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to broadcast AccountMetadataTransaction: %w", err)
+	}
+
+	return &ValidatorRegistrationResult{
+		TxHash:          txHash,
+		TargetPublicKey: publicAcc.PublicKey,
+		Endpoint:        endpoint,
+		Name:            name,
+		Status:          "SUCCESS",
+		Message:         "Successfully broadcasted validator directory registration to ProximaX Sirius Mainnet",
+	}, nil
+}
+
+// GetValidatorOnChainMetadata queries on-chain metadata for scoped key 'sirius.v'
+func GetValidatorOnChainMetadata(targetPublicKey string, apiNodeUrl string) (map[string]interface{}, error) {
+	if apiNodeUrl == "" {
+		apiNodeUrl = DefaultApiNodes[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	config, err := sdk.NewConfig(ctx, []string{apiNodeUrl})
+	if err != nil {
+		return nil, err
+	}
+	client := sdk.NewClient(nil, config)
+
+	publicAcc, err := sdk.NewAccountFromPublicKey(targetPublicKey, config.NetworkType)
+	if err != nil {
+		return nil, err
+	}
+
+	scopedKey := sdk.ScopedMetadataKey(0x7369726975732E76)
+	compositeHash, err := sdk.CalculateUniqueAccountMetadataId(publicAcc.Address, publicAcc, scopedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	metaInfo, err := client.MetadataV2.GetMetadataV2Info(ctx, compositeHash)
+	if err != nil || metaInfo == nil || metaInfo.Address == nil {
+		return nil, errors.New("no on-chain validator metadata found")
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(metaInfo.Address.Value, &parsed); err != nil {
+		return map[string]interface{}{
+			"rawValue": string(metaInfo.Address.Value),
+		}, nil
+	}
+	return parsed, nil
+}
+

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Shield, 
   Coins, 
@@ -12,7 +12,12 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
-  Sparkles
+  Sparkles,
+  Globe,
+  Users,
+  CheckCircle,
+  RefreshCw,
+  Trash2
 } from 'lucide-react';
 import { NodeMetrics, NodeConfig, HarvestStats, NetworkValidatorStats, StorageStatus, PortCheckResult } from '../types';
 import { getExplorerBlockUrl, getExplorerAddressUrl } from '../utils/explorer';
@@ -69,6 +74,92 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  const [onChainStatus, setOnChainStatus] = useState<{ registered: boolean; metadata?: any; loading: boolean }>({
+    registered: false,
+    loading: true,
+  });
+  const [isRegisteringOnChain, setIsRegisteringOnChain] = useState(false);
+  const [regMessage, setRegMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [delegatedHarvesters, setDelegatedHarvesters] = useState<Array<{ fileName: string; harvesterPublicKey: string; modifiedAt: string }>>([]);
+  const [loadingHarvesters, setLoadingHarvesters] = useState(false);
+
+  const fetchOnChainStatus = async () => {
+    try {
+      setOnChainStatus(prev => ({ ...prev, loading: true }));
+      const res = await fetch('/api/validator/onchain-status');
+      const data = await res.json();
+      setOnChainStatus({
+        registered: Boolean(data.registered),
+        metadata: data.metadata,
+        loading: false,
+      });
+    } catch {
+      setOnChainStatus({ registered: false, loading: false });
+    }
+  };
+
+  const fetchDelegatedHarvesters = async () => {
+    try {
+      setLoadingHarvesters(true);
+      const res = await fetch('/api/harvesting/delegated/list');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setDelegatedHarvesters(data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingHarvesters(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOnChainStatus();
+    fetchDelegatedHarvesters();
+  }, [config?.harvestPublicKey]);
+
+  const handleRegisterOnChain = async () => {
+    setIsRegisteringOnChain(true);
+    setRegMessage(null);
+    try {
+      const res = await fetch('/api/validator/register-onchain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: config?.friendlyName || 'Sirius Validator Node',
+          endpoint: `http://${window.location.hostname || 'localhost'}:8080`,
+          restEndpoint: `http://${window.location.hostname || 'localhost'}:3000`,
+          location: 'Global',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && (data.status === 'SUCCESS' || data.status === 'ALREADY_REGISTERED')) {
+        setRegMessage({ type: 'success', text: data.message || 'Successfully registered on-chain!' });
+        fetchOnChainStatus();
+      } else {
+        setRegMessage({ type: 'error', text: data.error || data.message || 'Failed to register on-chain' });
+      }
+    } catch (err: any) {
+      setRegMessage({ type: 'error', text: err.message || 'Network error registering on-chain' });
+    } finally {
+      setIsRegisteringOnChain(false);
+    }
+  };
+
+  const handleRemoveHarvester = async (fileName: string) => {
+    if (!confirm(`Are you sure you want to remove delegated harvester key ${fileName}?`)) return;
+    try {
+      await fetch('/api/harvesting/delegated/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName }),
+      });
+      fetchDelegatedHarvesters();
+    } catch (err) {
+      console.error('Failed to remove delegated key:', err);
+    }
+  };
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -340,6 +431,141 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                 {harvestStats?.lastHarvestedHeight ? `#${formatNumber(harvestStats.lastHarvestedHeight)}` : '—'}
               </span>
             </div>
+          </div>
+        </section>
+
+      </div>
+
+      {/* 3.5 Decentralized Directory & Delegated Staking Pool Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        {/* On-Chain Directory Registration */}
+        <section className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold tracking-wider uppercase text-slate-400 flex items-center space-x-2">
+                <Globe className="w-3.5 h-3.5 text-sky-400" />
+                <span>On-Chain Node Directory</span>
+              </h3>
+              <span className={`text-[11px] font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
+                onChainStatus.registered 
+                  ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40' 
+                  : 'bg-amber-950/60 text-amber-300 border border-amber-800/40'
+              }`}>
+                {onChainStatus.registered ? <CheckCircle className="w-3 h-3 text-emerald-400" /> : <AlertCircle className="w-3 h-3 text-amber-400" />}
+                {onChainStatus.registered ? 'Registered (Public)' : 'Unregistered'}
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+              Publishes this node into Sirius Mainnet's decentralized metadata directory (<code className="text-sky-300 font-mono">sirius.v</code>). Community web wallets discover this node with zero hardcoding.
+            </p>
+
+            {onChainStatus.registered && onChainStatus.metadata && (
+              <div className="bg-[#111317] border border-[#262B34] rounded p-3 mb-4 space-y-1.5 text-xs font-mono">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Name:</span>
+                  <span className="text-slate-200">{onChainStatus.metadata.name || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Public Web:</span>
+                  <span className="text-slate-200">{onChainStatus.metadata.endpoint || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">REST API:</span>
+                  <span className="text-slate-200">{onChainStatus.metadata.restEndpoint || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Region:</span>
+                  <span className="text-slate-200">{onChainStatus.metadata.location || 'Global'}</span>
+                </div>
+              </div>
+            )}
+
+            {regMessage && (
+              <div className={`p-2.5 rounded text-xs mb-3 ${
+                regMessage.type === 'success' 
+                  ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300' 
+                  : 'bg-red-950/60 border border-red-800/60 text-red-300'
+              }`}>
+                {regMessage.text}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleRegisterOnChain}
+            disabled={isRegisteringOnChain || !hasHarvestKey}
+            className="w-full mt-2 flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
+          >
+            {isRegisteringOnChain ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Broadcasting to Sirius Mainnet...</span>
+              </>
+            ) : onChainStatus.registered ? (
+              <>
+                <Globe className="w-3.5 h-3.5" />
+                <span>Update On-Chain Registration</span>
+              </>
+            ) : (
+              <>
+                <Globe className="w-3.5 h-3.5" />
+                <span>Register Validator On-Chain (1-Click)</span>
+              </>
+            )}
+          </button>
+        </section>
+
+        {/* Delegated Staking Pool (Active Harvesters) */}
+        <section className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold tracking-wider uppercase text-slate-400 flex items-center space-x-2">
+                <Users className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Delegated Staking Pool</span>
+              </h3>
+              <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                {delegatedHarvesters.length} / {config?.maxUnlockedAccounts || 5} Slots
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+              Active remote harvester keys hotloaded onto this validator from web wallet delegators.
+            </p>
+
+            <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+              {loadingHarvesters ? (
+                <div className="text-xs text-slate-500 py-4 text-center">Loading delegated harvesters...</div>
+              ) : delegatedHarvesters.length === 0 ? (
+                <div className="text-xs text-slate-500 py-6 text-center border border-dashed border-[#262B34] rounded">
+                  No delegated accounts currently connected.
+                </div>
+              ) : (
+                delegatedHarvesters.map((item) => (
+                  <div key={item.fileName} className="flex items-center justify-between p-2 bg-[#111317] border border-[#262B34] rounded text-xs">
+                    <div>
+                      <div className="font-mono text-slate-200 font-medium">
+                        {truncate(item.harvesterPublicKey || item.fileName, 8, 8)}
+                      </div>
+                      <div className="text-[10px] text-slate-500">{item.fileName}</div>
+                    </div>
+                    <button
+                      onClick={() => handleRemoveHarvester(item.fileName)}
+                      className="p-1.5 hover:bg-red-950/60 hover:text-red-400 text-slate-500 rounded transition-colors"
+                      title="Remove Delegated Key"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 pt-3 border-t border-[#262B34] flex items-center justify-between text-xs text-slate-400">
+            <span>Dynamic Hotload Ready</span>
+            <span className="text-emerald-400 font-semibold">Active</span>
           </div>
         </section>
 
