@@ -17,7 +17,11 @@ import {
   Users,
   CheckCircle,
   RefreshCw,
-  Trash2
+  Trash2,
+  Eye,
+  EyeOff,
+  Key,
+  X
 } from 'lucide-react';
 import { NodeMetrics, NodeConfig, HarvestStats, NetworkValidatorStats, StorageStatus, PortCheckResult } from '../types';
 import { getExplorerBlockUrl, getExplorerAddressUrl } from '../utils/explorer';
@@ -80,7 +84,15 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
     loading: true,
   });
   const [isRegisteringOnChain, setIsRegisteringOnChain] = useState(false);
-  const [regMessage, setRegMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [operatorKey, setOperatorKey] = useState('');
+  const [showOperatorKey, setShowOperatorKey] = useState(false);
+  const [regName, setRegName] = useState('');
+  const [regEndpoint, setRegEndpoint] = useState('');
+  const [regRestEndpoint, setRegRestEndpoint] = useState('');
+  const [regLocation, setRegLocation] = useState('Global');
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regMessage, setRegMessage] = useState<{ type: 'success' | 'error'; text: string; txHash?: string } | null>(null);
   const [delegatedHarvesters, setDelegatedHarvesters] = useState<Array<{ fileName: string; harvesterPublicKey: string; modifiedAt: string }>>([]);
   const [loadingHarvesters, setLoadingHarvesters] = useState(false);
 
@@ -119,29 +131,59 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
     fetchDelegatedHarvesters();
   }, [config?.harvestPublicKey]);
 
-  const handleRegisterOnChain = async () => {
+  const openRegisterModal = () => {
+    setOperatorKey('');
+    setShowOperatorKey(false);
+    setRegName(config?.friendlyName || 'Sirius Validator Node');
+    const host = window.location.hostname || 'localhost';
+    setRegEndpoint(`http://${host}:8080`);
+    setRegRestEndpoint(`http://${host}:3000`);
+    setRegLocation('Global');
+    setRegError(null);
+    setIsRegisterModalOpen(true);
+  };
+
+  const handleSubmitRegisterOnChain = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanKey = operatorKey.trim();
+    if (!cleanKey) {
+      setRegError('Operator Main Account private key is required');
+      return;
+    }
+    if (!/^[0-9a-fA-F]{64}$/.test(cleanKey)) {
+      setRegError('Invalid private key: must be exactly 64 hexadecimal characters');
+      return;
+    }
+
     setIsRegisteringOnChain(true);
-    setRegMessage(null);
+    setRegError(null);
     try {
       const res = await fetch('/api/validator/register-onchain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: config?.friendlyName || 'Sirius Validator Node',
-          endpoint: `http://${window.location.hostname || 'localhost'}:8080`,
-          restEndpoint: `http://${window.location.hostname || 'localhost'}:3000`,
-          location: 'Global',
+          accountPrivateKey: cleanKey,
+          name: regName.trim() || config?.friendlyName || 'Sirius Validator Node',
+          endpoint: regEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:8080`,
+          restEndpoint: regRestEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:3000`,
+          location: regLocation.trim() || 'Global',
         }),
       });
       const data = await res.json();
-      if (res.ok && (data.status === 'SUCCESS' || data.status === 'ALREADY_REGISTERED')) {
-        setRegMessage({ type: 'success', text: data.message || 'Successfully registered on-chain!' });
+      if (res.ok && (data.status === 'SUCCESS' || data.status === 'ALREADY_REGISTERED' || data.status === 'PENDING')) {
+        setRegMessage({
+          type: 'success',
+          text: data.message || 'Successfully registered on-chain!',
+          txHash: data.txHash,
+        });
+        setOperatorKey('');
+        setIsRegisterModalOpen(false);
         fetchOnChainStatus();
       } else {
-        setRegMessage({ type: 'error', text: data.error || data.message || 'Failed to register on-chain' });
+        setRegError(data.error || data.message || 'Failed to register on-chain');
       }
     } catch (err: any) {
-      setRegMessage({ type: 'error', text: err.message || 'Network error registering on-chain' });
+      setRegError(err.message || 'Network error registering on-chain');
     } finally {
       setIsRegisteringOnChain(false);
     }
@@ -488,13 +530,27 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                   ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300' 
                   : 'bg-red-950/60 border border-red-800/60 text-red-300'
               }`}>
-                {regMessage.text}
+                <div>{regMessage.text}</div>
+                {regMessage.txHash && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <span className="text-slate-400">Tx Hash:</span>
+                    <a
+                      href={`https://explorer.xpxsirius.io/#/transaction/${regMessage.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 hover:text-sky-300 underline font-mono text-[11px] inline-flex items-center gap-1"
+                    >
+                      <span>{truncate(regMessage.txHash, 10, 10)}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
           <button
-            onClick={handleRegisterOnChain}
+            onClick={openRegisterModal}
             disabled={isRegisteringOnChain || !hasHarvestKey}
             className="w-full mt-2 flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
           >
@@ -511,7 +567,7 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
             ) : (
               <>
                 <Globe className="w-3.5 h-3.5" />
-                <span>Register Validator On-Chain (1-Click)</span>
+                <span>Register Validator On-Chain</span>
               </>
             )}
           </button>
@@ -721,6 +777,173 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
         )}
       </section>
         </>
+      )}
+
+      {/* On-Chain Directory Registration Modal */}
+      {isRegisterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#181B20] border border-[#262B34] rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-[#262B34] pb-3">
+              <div className="flex items-center space-x-2">
+                <Globe className="w-5 h-5 text-sky-400" />
+                <h3 className="text-sm font-semibold text-white">
+                  Register in On-Chain Directory (<span className="text-sky-300 font-mono">sirius.v</span>)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRegisterModalOpen(false)}
+                disabled={isRegisteringOnChain}
+                className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-[#262B34] transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Info / Consensus Note */}
+            <div className="bg-sky-950/30 border border-sky-800/40 rounded-lg p-3 text-xs text-sky-200 space-y-1.5">
+              <div className="font-semibold flex items-center gap-1.5 text-sky-300">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>Sirius POS+ Consensus Requirement</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-300">
+                To announce your node to the network, this transaction must be signed by a funded <strong className="text-white">Main Account</strong> (e.g. your wallet account with ≥ 0.1 XPX for fees).
+              </p>
+              <p className="text-[11px] leading-relaxed text-amber-300/90">
+                ⚠️ The node's remote harvest key has block-signing privileges only and cannot sign mempool transactions.
+              </p>
+            </div>
+
+            {/* Registration Form */}
+            <form onSubmit={handleSubmitRegisterOnChain} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                  <span>Operator Account Private Key (Funded Main Account) *</span>
+                  <span className="text-[11px] text-slate-500 font-mono">64 hex characters</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showOperatorKey ? 'text' : 'password'}
+                    value={operatorKey}
+                    onChange={e => setOperatorKey(e.target.value)}
+                    placeholder="Enter 64-hex private key of funded wallet"
+                    className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-blue-500 pr-10"
+                    autoComplete="off"
+                    spellCheck="false"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOperatorKey(s => !s)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5"
+                    tabIndex={-1}
+                  >
+                    {showOperatorKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Node Display Name</label>
+                <input
+                  type="text"
+                  value={regName}
+                  onChange={e => setRegName(e.target.value)}
+                  placeholder="e.g. Sirius Community Validator"
+                  className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Web Cockpit Endpoint</label>
+                  <input
+                    type="text"
+                    value={regEndpoint}
+                    onChange={e => setRegEndpoint(e.target.value)}
+                    placeholder="http://<public-ip>:8080"
+                    className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Sirius REST Endpoint</label>
+                  <input
+                    type="text"
+                    value={regRestEndpoint}
+                    onChange={e => setRegRestEndpoint(e.target.value)}
+                    placeholder="http://<public-ip>:3000"
+                    className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Geographic Region</label>
+                <input
+                  type="text"
+                  value={regLocation}
+                  onChange={e => setRegLocation(e.target.value)}
+                  placeholder="e.g. EU, US-East, Asia, Global"
+                  className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {/* Live JSON Payload Preview */}
+              <div>
+                <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                  <span>Data Sent to Blockchain (sirius.v Preview)</span>
+                  <span className="text-[11px] text-sky-400 font-mono">Public Ledger Record</span>
+                </label>
+                <pre className="bg-[#111317] border border-[#262B34] rounded-md p-2.5 text-[11px] font-mono text-emerald-300 overflow-x-auto select-text leading-relaxed">
+{JSON.stringify({
+  name: regName.trim() || config?.friendlyName || 'Sirius Validator Node',
+  endpoint: regEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:8080`,
+  restEndpoint: regRestEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:3000`,
+  location: regLocation.trim() || 'Global',
+  nodePublicKey: config?.harvestPublicKey || '1D339BA5E197D7AB2E4BFA9312B5C115040740F9F00C5E3BD7EA6F911B5827F2',
+}, null, 2)}
+                </pre>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  💡 This exact JSON is what gets permanently recorded in the on-chain directory. No private keys or sensitive passwords are ever included.
+                </p>
+              </div>
+
+              {regError && (
+                <div className="p-2.5 rounded text-xs bg-red-950/60 border border-red-800/60 text-red-300">
+                  {regError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#262B34]">
+                <button
+                  type="button"
+                  onClick={() => setIsRegisterModalOpen(false)}
+                  disabled={isRegisteringOnChain}
+                  className="px-3.5 py-2 bg-transparent hover:bg-[#262B34] text-slate-300 rounded-md text-xs font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRegisteringOnChain}
+                  className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  {isRegisteringOnChain ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Broadcasting Transaction...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>Publish to Sirius Mainnet</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
     </div>

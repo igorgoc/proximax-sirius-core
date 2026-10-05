@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -360,6 +359,35 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 		lrw.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		lrw.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss: http: https:;")
 
+		// Helper to validate whether an Origin or Referer host is permitted
+		isAllowedHost := func(hostToCheck string) bool {
+			cleanHost := strings.ToLower(strings.TrimSpace(hostToCheck))
+			if h, _, err := net.SplitHostPort(cleanHost); err == nil {
+				cleanHost = h
+			}
+			cleanReq := strings.ToLower(strings.TrimSpace(r.Host))
+			if h, _, err := net.SplitHostPort(cleanReq); err == nil {
+				cleanReq = h
+			}
+
+			if cleanHost == "" {
+				return false
+			}
+			// 1. Same-Origin: Origin/Referer matches the Host being served
+			if cleanHost == cleanReq {
+				return true
+			}
+			// 2. Loopback local origins
+			if cleanHost == "localhost" || cleanHost == "127.0.0.1" || cleanHost == "::1" || cleanHost == "0.0.0.0" {
+				return true
+			}
+			// 3. Authorized tunnels & DDNS domains
+			if strings.HasSuffix(cleanHost, ".trycloudflare.com") || strings.HasSuffix(cleanHost, ".duckdns.org") {
+				return true
+			}
+			return false
+		}
+
 		// Restrict CORS to verified localhost / local IP origins, allowing external origins for public delegated harvesting and status probes
 		isPublicApi := strings.HasPrefix(r.URL.Path, "/api/harvesting/delegated/") || r.URL.Path == "/api/status" || r.URL.Path == "/api/harvesting/stats" || strings.HasPrefix(r.URL.Path, "/api/validator/")
 		origin := r.Header.Get("Origin")
@@ -368,8 +396,7 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 				lrw.Header().Set("Access-Control-Allow-Origin", origin)
 				lrw.Header().Set("Vary", "Origin")
 			} else if u, err := url.Parse(origin); err == nil {
-				h := u.Hostname()
-				if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" {
+				if isAllowedHost(u.Hostname()) {
 					lrw.Header().Set("Access-Control-Allow-Origin", origin)
 					lrw.Header().Set("Vary", "Origin")
 				}
@@ -403,19 +430,17 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 		isStateChanging := r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" || r.Method == "PATCH"
 
 		if isApi && isStateChanging {
-			// 1. CSRF Protection: Require valid Origin or Referer header matching localhost/127.0.0.1 (Fail closed)
+			// 1. CSRF Protection: Require valid Origin or Referer header matching same-origin host / localhost / tunnel (Fail closed)
 			hasValidOrigin := false
 			if origin != "" {
 				if u, err := url.Parse(origin); err == nil {
-					h := u.Hostname()
-					if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" {
+					if isAllowedHost(u.Hostname()) {
 						hasValidOrigin = true
 					}
 				}
 			} else if referer := r.Header.Get("Referer"); referer != "" {
 				if u, err := url.Parse(referer); err == nil {
-					h := u.Hostname()
-					if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" {
+					if isAllowedHost(u.Hostname()) {
 						hasValidOrigin = true
 					}
 				}
@@ -470,15 +495,34 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Helper to check authorized host
+	cleanReq := strings.ToLower(strings.TrimSpace(r.Host))
+	if h, _, err := net.SplitHostPort(cleanReq); err == nil {
+		cleanReq = h
+	}
+	isAllowed := func(rawHost string) bool {
+		clean := strings.ToLower(strings.TrimSpace(rawHost))
+		if h, _, err := net.SplitHostPort(clean); err == nil {
+			clean = h
+		}
+		return clean == cleanReq ||
+			clean == "localhost" ||
+			clean == "127.0.0.1" ||
+			clean == "::1" ||
+			clean == "0.0.0.0" ||
+			strings.HasSuffix(clean, ".trycloudflare.com") ||
+			strings.HasSuffix(clean, ".duckdns.org")
+	}
+
 	// Validate Origin / Referer if present
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		if u, err := url.Parse(origin); err != nil || !(u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1" || u.Hostname() == "0.0.0.0") {
+		if u, err := url.Parse(origin); err != nil || !isAllowed(u.Hostname()) {
 			http.Error(w, `{"error":"Forbidden: cross-origin access rejected"}`, http.StatusForbidden)
 			return
 		}
 	} else if referer := r.Header.Get("Referer"); referer != "" {
-		if u, err := url.Parse(referer); err != nil || !(u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1" || u.Hostname() == "0.0.0.0") {
+		if u, err := url.Parse(referer); err != nil || !isAllowed(u.Hostname()) {
 			http.Error(w, `{"error":"Forbidden: cross-origin access rejected"}`, http.StatusForbidden)
 			return
 		}
@@ -1148,20 +1192,10 @@ func (s *Server) handleValidatorRegisterOnChain(w http.ResponseWriter, r *http.R
 	if len(req.AccountPrivateKey) == 32 {
 		keyBytes = make([]byte, 32)
 		copy(keyBytes, req.AccountPrivateKey)
-	} else if cfg != nil && len(cfg.HarvestKey) == 64 {
-		b, err := hex.DecodeString(cfg.HarvestKey)
-		if err == nil && len(b) == 32 {
-			keyBytes = b
-		}
-	} else if cfg != nil && len(cfg.BootKey) == 64 {
-		b, err := hex.DecodeString(cfg.BootKey)
-		if err == nil && len(b) == 32 {
-			keyBytes = b
-		}
 	}
 
 	if len(keyBytes) != 32 {
-		jsonError(w, "A valid 64-hex account private key is required to sign the on-chain registration transaction", http.StatusBadRequest)
+		jsonError(w, "A funded 64-hex main account private key is required to register the validator on-chain. The node's remote harvesting key cannot sign transactions under Sirius POS+ consensus rules.", http.StatusBadRequest)
 		return
 	}
 	defer func() {

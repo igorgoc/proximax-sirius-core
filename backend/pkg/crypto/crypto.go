@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -441,6 +442,28 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 	account.KeyPair = keyPair
 	account.PublicAccount = publicAcc
 
+	// 1. Verify that the signing account exists and is NOT a Remote Harvester Key
+	accInfo, err := client.Account.GetAccountInfo(ctx, publicAcc.Address)
+	if err != nil {
+		return nil, fmt.Errorf("account %s not found on Sirius Mainnet. Ensure account exists and is funded with XPX: %w", publicAcc.Address.Address, err)
+	}
+
+	if accInfo.AccountType == 2 {
+		return nil, fmt.Errorf("account %s is a Remote Harvester Key. Under Sirius POS+ consensus rules, remote keys cannot sign transactions. Please use your funded Main Account private key.", publicAcc.Address.Address)
+	}
+
+	// 2. Verify account has sufficient balance to pay network transaction fees (min 0.1 XPX)
+	var xpxAmount uint64
+	for _, m := range accInfo.Mosaics {
+		if m.AssetId.Id() == 0x402B2F579FAEBC59 || m.AssetId.Id() == 4623869273703554137 {
+			xpxAmount = uint64(m.Amount)
+			break
+		}
+	}
+	if xpxAmount < 100000 {
+		return nil, fmt.Errorf("insufficient XPX balance on account %s (%0.4f XPX). At least 0.1 XPX is required for transaction fees.", publicAcc.Address.Address, float64(xpxAmount)/1e6)
+	}
+
 	if nodePublicKey == "" {
 		nodePublicKey = publicAcc.PublicKey
 	}
@@ -490,24 +513,67 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 		return nil, fmt.Errorf("failed to create AccountMetadataTransaction: %w", err)
 	}
 
-	signedTx, err := account.Sign(metaTx)
+	// Under Sirius Catapult consensus rules, metadata transactions are embedded transactions
+	// that must be wrapped inside an Aggregate Transaction container.
+	metaTx.ToAggregate(publicAcc)
+
+	aggTx, err := client.NewCompleteAggregateTransaction(
+		sdk.NewDeadline(time.Hour),
+		[]sdk.Transaction{metaTx},
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign AccountMetadataTransaction: %w", err)
+		return nil, fmt.Errorf("failed to create CompleteAggregateTransaction: %w", err)
+	}
+	aggTx.MaxFee = sdk.Amount(150000) // 0.15 XPX network fee covers aggregate header + metadata
+
+	signedTx, err := account.SignWithCosignatures(aggTx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign CompleteAggregateTransaction: %w", err)
 	}
 
 	txHash, err := client.Transaction.Announce(ctx, signedTx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to broadcast AccountMetadataTransaction: %w", err)
+		return nil, fmt.Errorf("failed to broadcast CompleteAggregateTransaction: %w", err)
 	}
+	log.Printf("[Validator Registry] Successfully announced aggregate transaction %s to Sirius Mainnet via %s", txHash, apiNodeUrl)
 
-	return &ValidatorRegistrationResult{
-		TxHash:          txHash,
-		TargetPublicKey: publicAcc.PublicKey,
-		Endpoint:        endpoint,
-		Name:            name,
-		Status:          "SUCCESS",
-		Message:         "Successfully broadcasted validator directory registration to ProximaX Sirius Mainnet",
-	}, nil
+	// 3. Actively poll transaction status to confirm acceptance by network validators
+	pollTicker := time.NewTicker(1 * time.Second)
+	defer pollTicker.Stop()
+	timeout := time.After(20 * time.Second)
+
+	for {
+		select {
+		case <-timeout:
+			log.Printf("[Validator Registry] Transaction %s still pending block inclusion after 20s", txHash)
+			return &ValidatorRegistrationResult{
+				TxHash:          txHash,
+				TargetPublicKey: publicAcc.PublicKey,
+				Endpoint:        endpoint,
+				Name:            name,
+				Status:          "PENDING",
+				Message:         fmt.Sprintf("Transaction %s announced to Sirius Mainnet. Awaiting block inclusion.", txHash),
+			}, nil
+		case <-pollTicker.C:
+			txStatus, sErr := client.Transaction.GetTransactionStatus(ctx, txHash)
+			if sErr == nil && txStatus != nil {
+				log.Printf("[Validator Registry] Transaction %s status check: Group=%s, Status=%s", txHash, txStatus.Group, txStatus.Status)
+				if strings.EqualFold(string(txStatus.Group), "failed") || strings.HasPrefix(txStatus.Status, "Failure_") {
+					return nil, fmt.Errorf("transaction %s rejected by network validators: %s", txHash, txStatus.Status)
+				}
+				if strings.EqualFold(string(txStatus.Group), "unconfirmed") || strings.EqualFold(string(txStatus.Group), "confirmed") || strings.EqualFold(txStatus.Status, "Success") {
+					return &ValidatorRegistrationResult{
+						TxHash:          txHash,
+						TargetPublicKey: publicAcc.PublicKey,
+						Endpoint:        endpoint,
+						Name:            name,
+						Status:          "SUCCESS",
+						Message:         "Successfully registered validator directory on ProximaX Sirius Mainnet",
+					}, nil
+				}
+			}
+		}
+	}
 }
 
 // GetValidatorOnChainMetadata queries on-chain metadata for scoped key 'sirius.v'
@@ -524,28 +590,43 @@ func GetValidatorOnChainMetadata(targetPublicKey string, apiNodeUrl string) (map
 	}
 	client := sdk.NewClient(nil, config)
 
-	publicAcc, err := sdk.NewAccountFromPublicKey(targetPublicKey, config.NetworkType)
-	if err != nil {
-		return nil, err
-	}
-
 	scopedKey := sdk.ScopedMetadataKey(0x7369726975732E76)
-	compositeHash, err := sdk.CalculateUniqueAccountMetadataId(publicAcc.Address, publicAcc, scopedKey)
-	if err != nil {
-		return nil, err
+
+	// 1. Direct check on targetPublicKey
+	if publicAcc, err := sdk.NewAccountFromPublicKey(targetPublicKey, config.NetworkType); err == nil {
+		compositeHash, err := sdk.CalculateUniqueAccountMetadataId(publicAcc.Address, publicAcc, scopedKey)
+		if err == nil {
+			if metaInfo, err := client.MetadataV2.GetMetadataV2Info(ctx, compositeHash); err == nil && metaInfo != nil && metaInfo.Address != nil {
+				var parsed map[string]interface{}
+				if err := json.Unmarshal(metaInfo.Address.Value, &parsed); err == nil {
+					return parsed, nil
+				}
+				return map[string]interface{}{
+					"rawValue": string(metaInfo.Address.Value),
+				}, nil
+			}
+		}
 	}
 
-	metaInfo, err := client.MetadataV2.GetMetadataV2Info(ctx, compositeHash)
-	if err != nil || metaInfo == nil || metaInfo.Address == nil {
-		return nil, errors.New("no on-chain validator metadata found")
+	// 2. Search for any account metadata with scopedKey 'sirius.v' where nodePublicKey matches targetPublicKey
+	pageOpts := &sdk.MetadataV2PageOptions{
+		ScopedKey: "7369726975732E76",
+	}
+	if page, err := client.MetadataV2.GetMetadataV2Infos(ctx, pageOpts); err == nil && page != nil {
+		for _, entry := range page.Metadatas {
+			if entry.Address == nil || len(entry.Address.Value) == 0 {
+				continue
+			}
+			var parsed map[string]interface{}
+			if err := json.Unmarshal(entry.Address.Value, &parsed); err == nil {
+				nodeKey, _ := parsed["nodePublicKey"].(string)
+				if strings.EqualFold(nodeKey, targetPublicKey) {
+					return parsed, nil
+				}
+			}
+		}
 	}
 
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(metaInfo.Address.Value, &parsed); err != nil {
-		return map[string]interface{}{
-			"rawValue": string(metaInfo.Address.Value),
-		}, nil
-	}
-	return parsed, nil
+	return nil, errors.New("no on-chain validator metadata found")
 }
 

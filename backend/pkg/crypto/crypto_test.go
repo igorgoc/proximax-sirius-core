@@ -220,3 +220,22 @@ func TestDestroyAndZero_DirectAndIdempotent(t *testing.T) {
 	nilPriv.Destroy()
 	nilPriv.Zero()
 }
+
+func TestRegisterValidatorOnChain_InvalidKeyLength(t *testing.T) {
+	_, err := RegisterValidatorOnChain(
+		[]byte{1, 2, 3}, // invalid length (not 32)
+		"Test Node",
+		"http://localhost:8080",
+		"http://localhost:3000",
+		"Global",
+		"",
+		"",
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid key length, got nil")
+	}
+	if !strings.Contains(err.Error(), "must be exactly 32 bytes") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
