@@ -378,6 +378,7 @@ func (s *Server) securityAndLoggingMiddleware(next http.Handler) http.Handler {
 
 		lrw.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		lrw.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Sirius-Token")
+		lrw.Header().Set("Access-Control-Allow-Private-Network", "true")
 
 		if r.Method == "OPTIONS" {
 			lrw.WriteHeader(http.StatusOK)
