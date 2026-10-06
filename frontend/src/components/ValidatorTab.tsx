@@ -507,7 +507,7 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Delegation Mode:</span>
-                  <span className="text-emerald-400 font-semibold">Zero-NAT On-Chain</span>
+                  <span className="text-emerald-400 font-semibold">On-Chain</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Region:</span>
@@ -872,7 +872,7 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
 }, null, 2)}
                 </pre>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  💡 Zero-NAT On-Chain Mode: Community wallets connect directly through Sirius blockchain transactions. No public IP or port forwarding required!
+                  💡 On-Chain Mode: Community wallets connect directly through Sirius blockchain transactions. No public IP or port forwarding required!
                 </p>
               </div>
 
