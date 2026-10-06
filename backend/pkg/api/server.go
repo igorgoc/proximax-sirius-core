@@ -60,6 +60,7 @@ type Server struct {
 	networkMgr       *network.NetworkManager
 	migrator         *migrator.Migrator
 	snapshotMgr      *snapshot.SnapshotManager
+	delegationListener *chain.DelegationListener
 	staticFS         fs.FS
 	apiToken         string
 	wsMutex          sync.Mutex
@@ -152,11 +153,15 @@ func NewServer(configMgr *config.ConfigManager, supervisor *supervisor.ProcessSu
 		_ = supervisor.EnsureNemesisSeed(initialDataPath)
 	}()
 
+	dl := chain.NewDelegationListener(configMgr.GetResourcesPath(), configMgr.GetDataPath(), nil)
+	dl.Start()
+
 	return &Server{
 		configMgr:        configMgr,
 		supervisor:       supervisor,
 		chainMon:         chainMon,
 		harvesterTracker: ht,
+		delegationListener: dl,
 		updateMgr:        um,
 		engineUpdater:    eu,
 		storageMgr:       sm,
@@ -590,13 +595,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"peersCount":            metrics.PeersCount,
 		"metrics":               metrics,
 		"config":                cfg,
-		"features":              []string{"delegated_harvesting_hotload", "fast_finality"},
+		"features":              []string{"delegated_harvesting_hotload", "fast_finality", "onchain_delegated_listener"},
 		"delegatedHarvesting": map[string]interface{}{
-			"enabled":     true,
-			"activeSlots": delegatedCount,
-			"maxSlots":    maxSlots,
-			"nodeKey":     harvestPubKey,
-			"nodeName":    friendlyName,
+			"enabled":         true,
+			"activeSlots":     delegatedCount,
+			"maxSlots":        maxSlots,
+			"nodeKey":         harvestPubKey,
+			"nodeAddress":     s.delegationListener.GetNodeAddress(),
+			"nodeName":        friendlyName,
+			"onchainListener": true,
 		},
 		"harvestStats":          s.harvesterTracker.GetStats(),
 		"networkValidatorStats": s.harvesterTracker.GetNetworkValidatorStats(),

@@ -42,6 +42,9 @@ chainconfig/resources/config-harvesting.properties
 chainconfig/resources/config-user.properties
 chainconfig/resources/config-storage.properties
 chainconfig/resources/config-manager.properties
+chainconfig/resources/delegated_keys/
+chainconfig/resources/delegation_listener_state.json
+chainconfig/data/delegation_listener_state.json
 
 # Compiled Go manager binaries & PID
 bin/**/sirius-core*

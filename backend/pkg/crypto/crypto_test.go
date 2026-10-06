@@ -239,3 +239,44 @@ func TestRegisterValidatorOnChain_InvalidKeyLength(t *testing.T) {
 	}
 }
 
+func TestDecryptOnChainPayload(t *testing.T) {
+	// Payload encrypted via tsjs-xpx-chain-sdk:
+	// Sender PrivKey: 6C37783DECCB15AE63411FB0C73BDEF9602B680A5B2E5F71C1AA406C60806538
+	// Sender PubKey: 6B72F94DDBD22785941C362C938524ADB18ACF85F307BC69400BDE7DD6CB5AFF
+	// Recipient PrivKey: B5C844B30BEB5F348331FEE3AD19DA81573ADC1E85A87DFC70D9C301A2469859
+	// Recipient PubKey: 2B1FBAC37E682B4B98CCAE83EE8E6ED69CF000B5EFFEAC173F40176D51D96922
+	payloadHex := "6CAA53C28270BC267E3B7B080C96F8B598B6D1CD4BCEF7A366D1FD7536477029874BBCF5BBB369D4031C352CB2C8A2014AF339BC0BD02E21CA83C5EAB6A13A4281F1702EDFBC90FBB94E3CE7CD2F7581"
+	senderPubHex := "6B72F94DDBD22785941C362C938524ADB18ACF85F307BC69400BDE7DD6CB5AFF"
+	recipientPrivHex := "B5C844B30BEB5F348331FEE3AD19DA81573ADC1E85A87DFC70D9C301A2469859"
+
+	decrypted, err := DecryptDelegationPayload(payloadHex, senderPubHex, recipientPrivHex)
+	if err != nil {
+		t.Fatalf("DecryptDelegationPayload failed: %v", err)
+	}
+
+	if decrypted != "hello-sirius-delegation" {
+		t.Fatalf("unexpected decrypted text: got %s, want %s", decrypted, "hello-sirius-delegation")
+	}
+
+	// Test ParseDelegatedStakingPayload with JSON string
+	jsonPayload := `{"type":"sirius.delegated_staking","version":1,"action":"link","remotePrivateKey":"5A1D2C3B4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6C7D8E9F0A1B"}`
+	parsedKey, action, err := ParseDelegatedPayload(jsonPayload)
+	if err != nil {
+		t.Fatalf("ParseDelegatedPayload failed: %v", err)
+	}
+	if action != "link" {
+		t.Errorf("expected action 'link', got %s", action)
+	}
+	if parsedKey != "5A1D2C3B4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6C7D8E9F0A1B" {
+		t.Errorf("parsed key mismatch: got %s", parsedKey)
+	}
+
+	// Also support raw 64-hex key directly for backwards compatibility
+	rawKey, rawAction, err := ParseDelegatedPayload("5A1D2C3B4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6C7D8E9F0A1B")
+	if err != nil {
+		t.Fatalf("ParseDelegatedPayload with raw key failed: %v", err)
+	}
+	if rawAction != "link" || rawKey != "5A1D2C3B4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6C7D8E9F0A1B" {
+		t.Errorf("raw key parse failed")
+	}
+}

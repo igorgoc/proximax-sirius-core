@@ -630,3 +630,87 @@ func GetValidatorOnChainMetadata(targetPublicKey string, apiNodeUrl string) (map
 	return nil, errors.New("no on-chain validator metadata found")
 }
 
+// DecryptDelegationPayload decrypts an on-chain encrypted message payload (hex)
+// sent by a delegator to this validator node using Sirius Catapult ECDH block cipher.
+func DecryptDelegationPayload(payloadHex, senderPublicKeyHex, recipientPrivateKeyHex string) (string, error) {
+	payloadBytes, err := hex.DecodeString(strings.TrimSpace(payloadHex))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode encrypted payload hex: %w", err)
+	}
+
+	senderPubBytes, err := hex.DecodeString(strings.TrimSpace(senderPublicKeyHex))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode sender public key hex: %w", err)
+	}
+
+	recipientPrivBytes, err := hex.DecodeString(strings.TrimSpace(recipientPrivateKeyHex))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode recipient private key hex: %w", err)
+	}
+	defer func() {
+		for i := range recipientPrivBytes {
+			recipientPrivBytes[i] = 0
+		}
+	}()
+
+	recipPriv := crypto.NewPrivateKey(recipientPrivBytes)
+	defer recipPriv.Destroy()
+
+	senderPub := crypto.NewPublicKey(senderPubBytes)
+
+	plain, err := sdk.NewPlainMessageFromEncodedData(payloadBytes, recipPriv, senderPub)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt message payload: %w", err)
+	}
+
+	res := plain.Message()
+	// Check if res is hex-encoded string (e.g. from tsjs-xpx-chain-sdk EncryptedMessage)
+	if decodedBytes, decErr := hex.DecodeString(res); decErr == nil && len(decodedBytes) > 0 {
+		res = string(decodedBytes)
+	}
+
+	return res, nil
+}
+
+// DelegatedStakingPayload represents the structured on-chain message payload
+type DelegatedStakingPayload struct {
+	Type             string `json:"type"`
+	Version          int    `json:"version"`
+	Action           string `json:"action"` // "link" or "unlink"
+	RemotePrivateKey string `json:"remotePrivateKey"`
+}
+
+// ParseDelegatedPayload parses either a JSON payload or a raw 64-hex string.
+func ParseDelegatedPayload(content string) (remotePrivateKey string, action string, err error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "", "", errors.New("empty payload")
+	}
+
+	// 1. Try parsing JSON
+	var payload DelegatedStakingPayload
+	if jsonErr := json.Unmarshal([]byte(content), &payload); jsonErr == nil && payload.RemotePrivateKey != "" {
+		key := strings.ToUpper(strings.TrimSpace(payload.RemotePrivateKey))
+		if len(key) != 64 {
+			return "", "", fmt.Errorf("remote private key in payload must be 64 hex characters, got %d", len(key))
+		}
+		if _, hexErr := hex.DecodeString(key); hexErr != nil {
+			return "", "", fmt.Errorf("invalid hex in remote private key: %w", hexErr)
+		}
+		act := strings.ToLower(strings.TrimSpace(payload.Action))
+		if act == "" {
+			act = "link"
+		}
+		return key, act, nil
+	}
+
+	// 2. Fallback: treat directly as 64-hex key
+	cleanKey := strings.ToUpper(content)
+	if len(cleanKey) == 64 {
+		if _, hexErr := hex.DecodeString(cleanKey); hexErr == nil {
+			return cleanKey, "link", nil
+		}
+	}
+
+	return "", "", errors.New("unrecognized delegation payload format")
+}
