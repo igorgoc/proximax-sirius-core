@@ -85,11 +85,11 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
   });
   const [isRegisteringOnChain, setIsRegisteringOnChain] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isUnregisterModalOpen, setIsUnregisterModalOpen] = useState(false);
+  const [isUnregisteringOnChain, setIsUnregisteringOnChain] = useState(false);
   const [operatorKey, setOperatorKey] = useState('');
   const [showOperatorKey, setShowOperatorKey] = useState(false);
   const [regName, setRegName] = useState('');
-  const [regEndpoint, setRegEndpoint] = useState('');
-  const [regRestEndpoint, setRegRestEndpoint] = useState('');
   const [regLocation, setRegLocation] = useState('Global');
   const [regError, setRegError] = useState<string | null>(null);
   const [regMessage, setRegMessage] = useState<{ type: 'success' | 'error'; text: string; txHash?: string } | null>(null);
@@ -182,6 +182,55 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
       setRegError(err.message || 'Network error registering on-chain');
     } finally {
       setIsRegisteringOnChain(false);
+    }
+  };
+
+  const openUnregisterModal = () => {
+    setOperatorKey('');
+    setShowOperatorKey(false);
+    setRegError(null);
+    setIsUnregisterModalOpen(true);
+  };
+
+  const handleSubmitUnregisterOnChain = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanKey = operatorKey.trim();
+    if (!cleanKey) {
+      setRegError('Operator Main Account private key is required');
+      return;
+    }
+    if (!/^[0-9a-fA-F]{64}$/.test(cleanKey)) {
+      setRegError('Invalid private key: must be exactly 64 hexadecimal characters');
+      return;
+    }
+
+    setIsUnregisteringOnChain(true);
+    setRegError(null);
+    try {
+      const res = await fetch('/api/validator/unregister-onchain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountPrivateKey: cleanKey,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && (data.status === 'SUCCESS' || data.status === 'NOT_REGISTERED' || data.status === 'PENDING')) {
+        setRegMessage({
+          type: 'success',
+          text: data.message || 'Successfully removed from on-chain validator directory!',
+          txHash: data.txHash,
+        });
+        setOperatorKey('');
+        setIsUnregisterModalOpen(false);
+        fetchOnChainStatus();
+      } else {
+        setRegError(data.error || data.message || 'Failed to unregister on-chain');
+      }
+    } catch (err: any) {
+      setRegError(err.message || 'Network error unregistering on-chain');
+    } finally {
+      setIsUnregisteringOnChain(false);
     }
   };
 
@@ -541,28 +590,47 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
             )}
           </div>
 
-          <button
-            onClick={openRegisterModal}
-            disabled={isRegisteringOnChain || !hasHarvestKey}
-            className="w-full mt-2 flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
-          >
-            {isRegisteringOnChain ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Broadcasting to Sirius Mainnet...</span>
-              </>
-            ) : onChainStatus.registered ? (
-              <>
-                <Globe className="w-3.5 h-3.5" />
-                <span>Update On-Chain Registration</span>
-              </>
-            ) : (
-              <>
-                <Globe className="w-3.5 h-3.5" />
-                <span>Register Validator On-Chain</span>
-              </>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={openRegisterModal}
+              disabled={isRegisteringOnChain || isUnregisteringOnChain || !hasHarvestKey}
+              className={`flex-1 flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer`}
+            >
+              {isRegisteringOnChain ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Broadcasting to Sirius Mainnet...</span>
+                </>
+              ) : onChainStatus.registered ? (
+                <>
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Update Registration</span>
+                </>
+              ) : (
+                <>
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Register Validator On-Chain</span>
+                </>
+              )}
+            </button>
+
+            {onChainStatus.registered && (
+              <button
+                type="button"
+                onClick={openUnregisterModal}
+                disabled={isRegisteringOnChain || isUnregisteringOnChain || !hasHarvestKey}
+                title="Remove node from on-chain decentralized directory"
+                className="px-3.5 py-2.5 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 disabled:opacity-50 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center space-x-1.5"
+              >
+                {isUnregisteringOnChain ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>Remove from Directory</span>
+              </button>
             )}
-          </button>
+          </div>
         </section>
 
         {/* Delegated Staking Pool (Active Harvesters) */}
@@ -905,6 +973,91 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                     <>
                       <Globe className="w-3.5 h-3.5" />
                       <span>Publish to Sirius Mainnet</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Unregister Node On-Chain Confirmation Modal */}
+      {isUnregisterModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#181B20] border border-red-500/30 rounded-lg max-w-lg w-full p-6 shadow-2xl relative">
+            <button
+              onClick={() => setIsUnregisterModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-2.5 mb-2">
+              <div className="w-8 h-8 rounded-full bg-red-950/60 border border-red-500/40 flex items-center justify-center text-red-400">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <h3 className="text-sm font-semibold text-white">Remove Node from On-Chain Directory</h3>
+            </div>
+
+            <p className="text-xs text-slate-300 mb-4 leading-relaxed">
+              This broadcasts an <code className="text-red-300 font-mono">AccountMetadataTransaction</code> to delete this node's entry (<code className="text-sky-300 font-mono">sirius.v</code>) from the blockchain. Community web wallets will no longer list this node for delegation.
+            </p>
+
+            <form onSubmit={handleSubmitUnregisterOnChain} className="space-y-4 text-xs">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                  <span>Signer Main Account Private Key</span>
+                  <span className="text-[11px] text-amber-400">Funded Key (≥ 0.15 XPX)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showOperatorKey ? 'text' : 'password'}
+                    value={operatorKey}
+                    onChange={e => setOperatorKey(e.target.value)}
+                    placeholder="64-hex private key of the account that registered the node"
+                    className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs font-mono focus:outline-none focus:border-red-500 pr-10"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOperatorKey(!showOperatorKey)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-200"
+                  >
+                    {showOperatorKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {regError && (
+                <div className="p-2.5 rounded text-xs bg-red-950/60 border border-red-800/60 text-red-300">
+                  {regError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#262B34]">
+                <button
+                  type="button"
+                  onClick={() => setIsUnregisterModalOpen(false)}
+                  disabled={isUnregisteringOnChain}
+                  className="px-3.5 py-2 bg-transparent hover:bg-[#262B34] text-slate-300 rounded-md text-xs font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUnregisteringOnChain}
+                  className="flex items-center space-x-1.5 px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  {isUnregisteringOnChain ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Broadcasting Removal...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Confirm Removal</span>
                     </>
                   )}
                 </button>

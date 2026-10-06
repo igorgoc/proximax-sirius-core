@@ -636,6 +636,149 @@ func GetValidatorOnChainMetadata(targetPublicKey string, apiNodeUrl string) (map
 	return nil, errors.New("no on-chain validator metadata found")
 }
 
+// UnregisterValidatorOnChain removes the validator directory entry on-chain by clearing
+// the 'sirius.v' scoped metadata (setting value to empty string or tombstone).
+func UnregisterValidatorOnChain(accountPrivateKeyBytes []byte, apiNodeUrl string) (*ValidatorRegistrationResult, error) {
+	if len(accountPrivateKeyBytes) != 32 {
+		return nil, errors.New("account private key must be exactly 32 bytes (64 hex characters)")
+	}
+
+	defer func() {
+		for i := range accountPrivateKeyBytes {
+			accountPrivateKeyBytes[i] = 0
+		}
+	}()
+
+	if apiNodeUrl == "" {
+		apiNodeUrl = DefaultApiNodes[0]
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	config, err := sdk.NewConfig(ctx, []string{apiNodeUrl})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Sirius API node (%s): %w", apiNodeUrl, err)
+	}
+
+	client := sdk.NewClient(nil, config)
+
+	account, err := sdk.NewAccount(config.NetworkType, config.GenerationHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize sdk account: %w", err)
+	}
+
+	privKey := crypto.NewPrivateKey(accountPrivateKeyBytes)
+	defer privKey.Destroy()
+
+	keyPair, err := crypto.NewKeyPair(privKey, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive keypair: %w", err)
+	}
+
+	publicAcc, err := sdk.NewAccountFromPublicKey(keyPair.PublicKey.String(), config.NetworkType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive public account: %w", err)
+	}
+
+	account.KeyPair = keyPair
+	account.PublicAccount = publicAcc
+
+	accInfo, err := client.Account.GetAccountInfo(ctx, publicAcc.Address)
+	if err != nil {
+		return nil, fmt.Errorf("account %s not found on Sirius Mainnet: %w", publicAcc.Address.Address, err)
+	}
+
+	if accInfo.AccountType == 2 {
+		return nil, fmt.Errorf("account %s is a Remote Harvester Key. Under Sirius POS+ rules, remote keys cannot sign transactions.", publicAcc.Address.Address)
+	}
+
+	scopedKey := sdk.ScopedMetadataKey(0x7369726975732E76)
+
+	// Fetch current on-chain value
+	oldValue := ""
+	if compositeHash, chErr := sdk.CalculateUniqueAccountMetadataId(publicAcc.Address, publicAcc, scopedKey); chErr == nil {
+		if metaInfo, mErr := client.MetadataV2.GetMetadataV2Info(ctx, compositeHash); mErr == nil && metaInfo != nil && metaInfo.Address != nil {
+			oldValue = string(metaInfo.Address.Value)
+		}
+	}
+
+	if oldValue == "" {
+		return &ValidatorRegistrationResult{
+			TargetPublicKey: publicAcc.PublicKey,
+			Status:          "NOT_REGISTERED",
+			Message:         "Validator is not currently registered in the on-chain directory",
+		}, nil
+	}
+
+	// In Sirius Catapult metadata v2, to delete or clear metadata, newValue is empty ""
+	newValue := ""
+
+	metaTx, err := client.NewAccountMetadataTransaction(
+		sdk.NewDeadline(time.Hour),
+		publicAcc,
+		scopedKey,
+		newValue,
+		oldValue,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AccountMetadataTransaction: %w", err)
+	}
+
+	metaTx.ToAggregate(publicAcc)
+
+	aggTx, err := client.NewCompleteAggregateTransaction(
+		sdk.NewDeadline(time.Hour),
+		[]sdk.Transaction{metaTx},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CompleteAggregateTransaction: %w", err)
+	}
+	aggTx.MaxFee = sdk.Amount(150000)
+
+	signedTx, err := account.SignWithCosignatures(aggTx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign CompleteAggregateTransaction: %w", err)
+	}
+
+	txHash, err := client.Transaction.Announce(ctx, signedTx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to broadcast CompleteAggregateTransaction: %w", err)
+	}
+	log.Printf("[Validator Registry] Announced unregister transaction %s to Sirius Mainnet", txHash)
+
+	pollTicker := time.NewTicker(1 * time.Second)
+	defer pollTicker.Stop()
+	timeout := time.After(20 * time.Second)
+
+	for {
+		select {
+		case <-timeout:
+			return &ValidatorRegistrationResult{
+				TxHash:          txHash,
+				TargetPublicKey: publicAcc.PublicKey,
+				Status:          "PENDING",
+				Message:         fmt.Sprintf("Transaction %s announced to Sirius Mainnet. Awaiting block inclusion.", txHash),
+			}, nil
+		case <-pollTicker.C:
+			txStatus, sErr := client.Transaction.GetTransactionStatus(ctx, txHash)
+			if sErr == nil && txStatus != nil {
+				if strings.EqualFold(string(txStatus.Group), "failed") || strings.HasPrefix(txStatus.Status, "Failure_") {
+					return nil, fmt.Errorf("transaction %s rejected by network validators: %s", txHash, txStatus.Status)
+				}
+				if strings.EqualFold(string(txStatus.Group), "unconfirmed") || strings.EqualFold(string(txStatus.Group), "confirmed") || strings.EqualFold(txStatus.Status, "Success") {
+					return &ValidatorRegistrationResult{
+						TxHash:          txHash,
+						TargetPublicKey: publicAcc.PublicKey,
+						Status:          "SUCCESS",
+						Message:         "Successfully removed validator from ProximaX Sirius Mainnet directory",
+					}, nil
+				}
+			}
+		}
+	}
+}
+
 // DecryptDelegationPayload decrypts an on-chain encrypted message payload (hex)
 // sent by a delegator to this validator node using Sirius Catapult ECDH block cipher.
 func DecryptDelegationPayload(payloadHex, senderPublicKeyHex, recipientPrivateKeyHex string) (string, error) {

@@ -202,6 +202,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/harvesting/delegated/remove", s.handleDelegatedHarvesterRemove)
 	mux.HandleFunc("/api/validator/onchain-status", s.handleValidatorOnChainStatus)
 	mux.HandleFunc("/api/validator/register-onchain", s.handleValidatorRegisterOnChain)
+	mux.HandleFunc("/api/validator/unregister-onchain", s.handleValidatorUnregisterOnChain)
 	mux.HandleFunc("/api/peers", s.handlePeers)
 	mux.HandleFunc("/api/network/peers-detail", s.handlePeersDetail)
 	mux.HandleFunc("/api/network/public-ip", s.handlePublicIp)
@@ -1258,6 +1259,47 @@ func (s *Server) handleValidatorRegisterOnChain(w http.ResponseWriter, r *http.R
 	)
 	if err != nil {
 		jsonError(w, "Failed to register on-chain: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	jsonResponse(w, res)
+}
+
+func (s *Server) handleValidatorUnregisterOnChain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		AccountPrivateKey crypto.SecretKeyBuffer `json:"accountPrivateKey"`
+		ApiNode           string                 `json:"apiNode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer req.AccountPrivateKey.Wipe()
+
+	var keyBytes []byte
+	if len(req.AccountPrivateKey) == 32 {
+		keyBytes = make([]byte, 32)
+		copy(keyBytes, req.AccountPrivateKey)
+	}
+
+	if len(keyBytes) != 32 {
+		jsonError(w, "A funded 64-hex main account private key is required to unregister the validator on-chain.", http.StatusBadRequest)
+		return
+	}
+	defer func() {
+		for i := range keyBytes {
+			keyBytes[i] = 0
+		}
+	}()
+
+	res, err := crypto.UnregisterValidatorOnChain(keyBytes, req.ApiNode)
+	if err != nil {
+		jsonError(w, "Failed to unregister on-chain: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
