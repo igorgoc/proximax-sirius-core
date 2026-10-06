@@ -135,9 +135,6 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
     setOperatorKey('');
     setShowOperatorKey(false);
     setRegName(config?.friendlyName || 'Sirius Validator Node');
-    const host = window.location.hostname || 'localhost';
-    setRegEndpoint(`http://${host}:8080`);
-    setRegRestEndpoint(`http://${host}:3000`);
     setRegLocation('Global');
     setRegError(null);
     setIsRegisterModalOpen(true);
@@ -164,8 +161,7 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
         body: JSON.stringify({
           accountPrivateKey: cleanKey,
           name: regName.trim() || config?.friendlyName || 'Sirius Validator Node',
-          endpoint: regEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:8080`,
-          restEndpoint: regRestEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:3000`,
+          endpoint: 'onchain',
           location: regLocation.trim() || 'Global',
         }),
       });
@@ -510,12 +506,8 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                   <span className="text-slate-200">{onChainStatus.metadata.name || '—'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Public Web:</span>
-                  <span className="text-slate-200">{onChainStatus.metadata.endpoint || '—'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">REST API:</span>
-                  <span className="text-slate-200">{onChainStatus.metadata.restEndpoint || '—'}</span>
+                  <span className="text-slate-500">Delegation Mode:</span>
+                  <span className="text-emerald-400 font-semibold">Zero-NAT On-Chain</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Region:</span>
@@ -854,29 +846,6 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">Web Cockpit Endpoint</label>
-                  <input
-                    type="text"
-                    value={regEndpoint}
-                    onChange={e => setRegEndpoint(e.target.value)}
-                    placeholder="http://<public-ip>:8080"
-                    className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">Sirius REST Endpoint</label>
-                  <input
-                    type="text"
-                    value={regRestEndpoint}
-                    onChange={e => setRegRestEndpoint(e.target.value)}
-                    placeholder="http://<public-ip>:3000"
-                    className="w-full bg-[#111317] border border-[#262B34] rounded-md px-3 py-2 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-slate-300 font-medium mb-1">Geographic Region</label>
                 <input
@@ -897,14 +866,13 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                 <pre className="bg-[#111317] border border-[#262B34] rounded-md p-2.5 text-[11px] font-mono text-emerald-300 overflow-x-auto select-text leading-relaxed">
 {JSON.stringify({
   name: regName.trim() || config?.friendlyName || 'Sirius Validator Node',
-  endpoint: regEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:8080`,
-  restEndpoint: regRestEndpoint.trim() || `http://${window.location.hostname || 'localhost'}:3000`,
+  endpoint: 'onchain',
   location: regLocation.trim() || 'Global',
   nodePublicKey: config?.harvestPublicKey || '1D339BA5E197D7AB2E4BFA9312B5C115040740F9F00C5E3BD7EA6F911B5827F2',
 }, null, 2)}
                 </pre>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  💡 This exact JSON is what gets permanently recorded in the on-chain directory. No private keys or sensitive passwords are ever included.
+                  💡 Zero-NAT On-Chain Mode: Community wallets connect directly through Sirius blockchain transactions. No public IP or port forwarding required!
                 </p>
               </div>
 

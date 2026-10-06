@@ -468,12 +468,18 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 		nodePublicKey = publicAcc.PublicKey
 	}
 
+	if endpoint == "" || strings.HasPrefix(endpoint, "http://localhost") || strings.HasPrefix(endpoint, "http://127.0.0.1") {
+		endpoint = "onchain"
+	}
+
 	metaPayload := map[string]interface{}{
 		"name":          name,
 		"endpoint":      endpoint,
-		"restEndpoint":  restEndpoint,
 		"location":      location,
 		"nodePublicKey": nodePublicKey,
+	}
+	if restEndpoint != "" && !strings.Contains(restEndpoint, "localhost") && !strings.Contains(restEndpoint, "127.0.0.1") {
+		metaPayload["restEndpoint"] = restEndpoint
 	}
 	metaJsonBytes, err := json.Marshal(metaPayload)
 	if err != nil {
