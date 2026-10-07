@@ -321,10 +321,14 @@ func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 				ht.mu.Unlock()
 
 				if startH <= netHeight {
-					// Only check at most 5 blocks per check to stay lightweight
+					// If behind by more than 30 blocks, jump to netHeight - 15 to stay real-time
+					if netHeight-startH > 30 {
+						startH = netHeight - 15
+					}
+
 					endH := netHeight
-					if endH-startH > 5 {
-						endH = startH + 4
+					if endH-startH > 10 {
+						endH = startH + 9
 					}
 
 					for h := startH; h <= endH; h++ {
@@ -334,7 +338,7 @@ func (ht *HarvesterTracker) StartBackgroundScanner(cm *ChainMonitor) {
 						default:
 						}
 						_ = ht.CheckBlock(h)
-						time.Sleep(250 * time.Millisecond) // polite rate limit
+						time.Sleep(100 * time.Millisecond) // polite rate limit
 					}
 
 					ht.mu.Lock()

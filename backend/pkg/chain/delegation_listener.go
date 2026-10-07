@@ -58,6 +58,9 @@ type DelegationListener struct {
 	harvestKey       string
 	nodeAddress      string
 	nodePublicKey    string
+	bootKey          string
+	bootAddress      string
+	bootPublicKey    string
 	processedHashes  map[string]bool
 	stateFilePath    string
 
@@ -129,27 +132,55 @@ func (dl *DelegationListener) saveState() {
 
 func (dl *DelegationListener) reloadHarvestIdentity() {
 	harvestPropPath := filepath.Join(dl.resourcesDir, "config-harvesting.properties")
-	content, err := os.ReadFile(harvestPropPath)
-	if err != nil {
-		return
-	}
+	userPropPath := filepath.Join(dl.resourcesDir, "config-user.properties")
 
-	for _, line := range strings.Split(string(content), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "harvestKey") {
-			parts := strings.SplitN(trimmed, "=", 2)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[1])
-				if len(key) == 64 {
-					dl.mu.Lock()
-					dl.harvestKey = strings.ToUpper(key)
-					if kp, err := crypto.KeyPairFromPrivateKey(dl.harvestKey); err == nil && kp != nil {
-						dl.nodeAddress = kp.Address
-						dl.nodePublicKey = kp.PublicKey
+	var harvestKey, bootKey string
+
+	if content, err := os.ReadFile(harvestPropPath); err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "harvestKey") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					k := strings.TrimSpace(parts[1])
+					if len(k) == 64 {
+						harvestKey = strings.ToUpper(k)
 					}
-					dl.mu.Unlock()
 				}
 			}
+		}
+	}
+
+	if content, err := os.ReadFile(userPropPath); err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "bootKey") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					k := strings.TrimSpace(parts[1])
+					if len(k) == 64 {
+						bootKey = strings.ToUpper(k)
+					}
+				}
+			}
+		}
+	}
+
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+
+	if harvestKey != "" {
+		dl.harvestKey = harvestKey
+		if kp, err := crypto.KeyPairFromPrivateKey(dl.harvestKey); err == nil && kp != nil {
+			dl.nodeAddress = kp.Address
+			dl.nodePublicKey = kp.PublicKey
+		}
+	}
+	if bootKey != "" {
+		dl.bootKey = bootKey
+		if kp, err := crypto.KeyPairFromPrivateKey(dl.bootKey); err == nil && kp != nil {
+			dl.bootAddress = kp.Address
+			dl.bootPublicKey = kp.PublicKey
 		}
 	}
 }
@@ -205,101 +236,126 @@ func (dl *DelegationListener) runLoop() {
 func (dl *DelegationListener) checkIncomingTransactions() {
 	dl.mu.RLock()
 	harvestKey := dl.harvestKey
-	nodeAddr := dl.nodeAddress
+	harvestAddr := dl.nodeAddress
+	bootKey := dl.bootKey
+	bootAddr := dl.bootAddress
 	dl.mu.RUnlock()
 
-	if harvestKey == "" || nodeAddr == "" {
+	if harvestKey == "" && bootKey == "" {
 		dl.reloadHarvestIdentity()
 		dl.mu.RLock()
 		harvestKey = dl.harvestKey
-		nodeAddr = dl.nodeAddress
+		harvestAddr = dl.nodeAddress
+		bootKey = dl.bootKey
+		bootAddr = dl.bootAddress
 		dl.mu.RUnlock()
-		if harvestKey == "" || nodeAddr == "" {
+		if harvestKey == "" && bootKey == "" {
 			return
 		}
 	}
 
-	cleanAddr := strings.ToUpper(strings.ReplaceAll(nodeAddr, "-", ""))
-	if len(cleanAddr) != 40 {
-		return
+	keysToTry := make([]string, 0, 2)
+	if harvestKey != "" {
+		keysToTry = append(keysToTry, harvestKey)
+	}
+	if bootKey != "" && bootKey != harvestKey {
+		keysToTry = append(keysToTry, bootKey)
 	}
 
-	var txList *ConfirmedTransactionsResponse
-	for _, apiNode := range dl.apiNodes {
-		url := fmt.Sprintf("%s/transactions/confirmed?recipientAddress=%s&pageSize=20&order=desc", strings.TrimRight(apiNode, "/"), cleanAddr)
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
-		if err != nil {
-			continue
-		}
-		resp, err := dl.httpClient.Do(req)
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode == http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			var res ConfirmedTransactionsResponse
-			if jsonErr := json.Unmarshal(body, &res); jsonErr == nil {
-				txList = &res
-				break
-			}
-		} else {
-			_ = resp.Body.Close()
-		}
+	addressesToScan := make([]string, 0, 2)
+	if len(harvestAddr) == 40 {
+		addressesToScan = append(addressesToScan, strings.ToUpper(strings.ReplaceAll(harvestAddr, "-", "")))
 	}
-
-	if txList == nil || len(txList.Data) == 0 {
-		return
+	if len(bootAddr) == 40 && bootAddr != harvestAddr {
+		addressesToScan = append(addressesToScan, strings.ToUpper(strings.ReplaceAll(bootAddr, "-", "")))
 	}
 
 	hasNewChanges := false
-	for _, item := range txList.Data {
-		txHash := strings.ToUpper(strings.TrimSpace(item.Meta.Hash))
-		if txHash == "" {
+
+	for _, cleanAddr := range addressesToScan {
+		var txList *ConfirmedTransactionsResponse
+		for _, apiNode := range dl.apiNodes {
+			url := fmt.Sprintf("%s/transactions/confirmed?recipientAddress=%s&pageSize=20&order=desc", strings.TrimRight(apiNode, "/"), cleanAddr)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := dl.httpClient.Do(req)
+			if err != nil {
+				continue
+			}
+			if resp.StatusCode == http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				var res ConfirmedTransactionsResponse
+				if jsonErr := json.Unmarshal(body, &res); jsonErr == nil {
+					txList = &res
+					break
+				}
+			} else {
+				_ = resp.Body.Close()
+			}
+		}
+
+		if txList == nil || len(txList.Data) == 0 {
 			continue
 		}
 
-		dl.mu.RLock()
-		alreadyProcessed := dl.processedHashes[txHash]
-		dl.mu.RUnlock()
+		for _, item := range txList.Data {
+			txHash := strings.ToUpper(strings.TrimSpace(item.Meta.Hash))
+			if txHash == "" {
+				continue
+			}
 
-		if alreadyProcessed {
-			continue
-		}
+			dl.mu.RLock()
+			alreadyProcessed := dl.processedHashes[txHash]
+			dl.mu.RUnlock()
 
-		// TransferTransaction type is 16724 (0x4154)
-		if item.Transaction.Type != 16724 {
-			dl.markProcessed(txHash)
-			continue
-		}
+			if alreadyProcessed {
+				continue
+			}
 
-		// Must have an Encrypted Message (Type == 1)
-		if item.Transaction.Message.Type != 1 || item.Transaction.Message.Payload == "" {
-			dl.markProcessed(txHash)
-			continue
-		}
+			// TransferTransaction type is 16724 (0x4154)
+			if item.Transaction.Type != 16724 {
+				dl.markProcessed(txHash)
+				continue
+			}
 
-		senderPubKey := strings.ToUpper(strings.TrimSpace(item.Transaction.Signer))
-		if len(senderPubKey) != 64 {
-			dl.markProcessed(txHash)
-			continue
-		}
+			// Must have an Encrypted Message (Type == 1)
+			if item.Transaction.Message.Type != 1 || item.Transaction.Message.Payload == "" {
+				dl.markProcessed(txHash)
+				continue
+			}
 
-		// Decrypt the payload using the node's local harvest key
-		decryptedText, err := crypto.DecryptDelegationPayload(item.Transaction.Message.Payload, senderPubKey, harvestKey)
-		if err != nil {
-			log.Printf("[Delegation Listener] Failed to decrypt message from %s (tx: %s): %v", senderPubKey, txHash, err)
-			dl.markProcessed(txHash)
-			continue
-		}
+			senderPubKey := strings.ToUpper(strings.TrimSpace(item.Transaction.Signer))
+			if len(senderPubKey) != 64 {
+				dl.markProcessed(txHash)
+				continue
+			}
 
-		// Parse the remote private key and action
-		remoteKey, action, err := crypto.ParseDelegatedPayload(decryptedText)
-		if err != nil {
-			log.Printf("[Delegation Listener] Unrecognized payload format from %s: %v", senderPubKey, err)
-			dl.markProcessed(txHash)
-			continue
-		}
+			// Try decrypting payload with available private keys (harvestKey or bootKey)
+			var decryptedText string
+			var decryptErr error
+			for _, k := range keysToTry {
+				decryptedText, decryptErr = crypto.DecryptDelegationPayload(item.Transaction.Message.Payload, senderPubKey, k)
+				if decryptErr == nil && decryptedText != "" {
+					break
+				}
+			}
+
+			if decryptedText == "" {
+				log.Printf("[Delegation Listener] Failed to decrypt message from %s (tx: %s): %v", senderPubKey, txHash, decryptErr)
+				dl.markProcessed(txHash)
+				continue
+			}
+
+			// Parse the remote private key and action
+			remoteKey, action, err := crypto.ParseDelegatedPayload(decryptedText)
+			if err != nil {
+				log.Printf("[Delegation Listener] Unrecognized payload format from %s: %v", senderPubKey, err)
+				dl.markProcessed(txHash)
+				continue
+			}
 
 		// Derive sender address
 		senderKp, err := crypto.KeyPairFromPrivateKey(strings.Repeat("0", 64)) // dummy for address conversion helper
@@ -364,6 +420,7 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 		log.Printf("[Delegation Listener] ✅ Successfully ingested on-chain delegated key for %s (Harvester PubKey: %s, tx: %s)", senderAddress, remoteKp.PublicKey, txHash)
 		dl.markProcessed(txHash)
 		hasNewChanges = true
+	}
 	}
 
 	if hasNewChanges {

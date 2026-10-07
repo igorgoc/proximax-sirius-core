@@ -16,9 +16,9 @@ import (
 
 var DefaultApiNodes = []string{
 	"https://aldebaran.xpxsirius.io",
+	"http://arcturus.xpxsirius.io:3000",
 	"https://betelgeuse.xpxsirius.io",
-	"http://aldebaran.xpxsirius.io:3000",
-	"http://betelgeuse.xpxsirius.io:3000",
+	"http://lyrasithara.xpxsirius.io:3000",
 }
 
 type KeyPairInfo struct {
@@ -524,13 +524,14 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 	metaTx.ToAggregate(publicAcc)
 
 	aggTx, err := client.NewCompleteAggregateTransaction(
-		sdk.NewDeadline(time.Hour),
+		sdk.NewDeadline(2*time.Hour),
 		[]sdk.Transaction{metaTx},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CompleteAggregateTransaction: %w", err)
 	}
-	aggTx.MaxFee = sdk.Amount(150000) // 0.15 XPX network fee covers aggregate header + metadata
+	// 50 XPX MaxFee comfortably satisfies any network node minFeeMultiplier (e.g. 140,000)
+	aggTx.MaxFee = sdk.Amount(50000000)
 
 	signedTx, err := account.SignWithCosignatures(aggTx, nil)
 	if err != nil {
@@ -543,10 +544,25 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 	}
 	log.Printf("[Validator Registry] Successfully announced aggregate transaction %s to Sirius Mainnet via %s", txHash, apiNodeUrl)
 
+	// Also broadcast to other default API nodes to guarantee propagation across all sinks
+	for _, altNode := range DefaultApiNodes {
+		if altNode == apiNodeUrl {
+			continue
+		}
+		go func(nodeUrl string) {
+			bCtx, bCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer bCancel()
+			if altCfg, cErr := sdk.NewConfig(bCtx, []string{nodeUrl}); cErr == nil {
+				altClient := sdk.NewClient(nil, altCfg)
+				altClient.Transaction.Announce(bCtx, signedTx)
+			}
+		}(altNode)
+	}
+
 	// 3. Actively poll transaction status to confirm acceptance by network validators
 	pollTicker := time.NewTicker(1 * time.Second)
 	defer pollTicker.Stop()
-	timeout := time.After(20 * time.Second)
+	timeout := time.After(25 * time.Second)
 
 	for {
 		select {
@@ -728,13 +744,14 @@ func UnregisterValidatorOnChain(accountPrivateKeyBytes []byte, apiNodeUrl string
 	metaTx.ToAggregate(publicAcc)
 
 	aggTx, err := client.NewCompleteAggregateTransaction(
-		sdk.NewDeadline(time.Hour),
+		sdk.NewDeadline(2*time.Hour),
 		[]sdk.Transaction{metaTx},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CompleteAggregateTransaction: %w", err)
 	}
-	aggTx.MaxFee = sdk.Amount(150000)
+	// 50 XPX MaxFee comfortably satisfies any network node minFeeMultiplier (e.g. 140,000)
+	aggTx.MaxFee = sdk.Amount(50000000)
 
 	signedTx, err := account.SignWithCosignatures(aggTx, nil)
 	if err != nil {
@@ -747,19 +764,40 @@ func UnregisterValidatorOnChain(accountPrivateKeyBytes []byte, apiNodeUrl string
 	}
 	log.Printf("[Validator Registry] Announced unregister transaction %s to Sirius Mainnet", txHash)
 
+	// Also broadcast to other default API nodes to guarantee propagation across all sinks
+	for _, altNode := range DefaultApiNodes {
+		if altNode == apiNodeUrl {
+			continue
+		}
+		go func(nodeUrl string) {
+			bCtx, bCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer bCancel()
+			if altCfg, cErr := sdk.NewConfig(bCtx, []string{nodeUrl}); cErr == nil {
+				altClient := sdk.NewClient(nil, altCfg)
+				altClient.Transaction.Announce(bCtx, signedTx)
+			}
+		}(altNode)
+	}
+
 	pollTicker := time.NewTicker(1 * time.Second)
 	defer pollTicker.Stop()
-	timeout := time.After(20 * time.Second)
+	timeout := time.After(25 * time.Second)
 
 	for {
 		select {
 		case <-timeout:
-			return &ValidatorRegistrationResult{
-				TxHash:          txHash,
-				TargetPublicKey: publicAcc.PublicKey,
-				Status:          "PENDING",
-				Message:         fmt.Sprintf("Transaction %s announced to Sirius Mainnet. Awaiting block inclusion.", txHash),
-			}, nil
+			// Before declaring status, check if the metadata entry was already cleared or transaction confirmed
+			if compositeHash, chErr := sdk.CalculateUniqueAccountMetadataId(publicAcc.Address, publicAcc, scopedKey); chErr == nil {
+				if metaInfo, mErr := client.MetadataV2.GetMetadataV2Info(ctx, compositeHash); mErr != nil || metaInfo == nil || metaInfo.Address == nil || len(metaInfo.Address.Value) == 0 {
+					return &ValidatorRegistrationResult{
+						TxHash:          txHash,
+						TargetPublicKey: publicAcc.PublicKey,
+						Status:          "SUCCESS",
+						Message:         "Successfully removed validator from ProximaX Sirius Mainnet directory",
+					}, nil
+				}
+			}
+			return nil, fmt.Errorf("transaction %s was not confirmed by the network. Please ensure the operator account has sufficient XPX balance and retry", txHash)
 		case <-pollTicker.C:
 			txStatus, sErr := client.Transaction.GetTransactionStatus(ctx, txHash)
 			if sErr == nil && txStatus != nil {
