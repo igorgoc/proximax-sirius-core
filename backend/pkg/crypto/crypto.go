@@ -60,6 +60,18 @@ func GenerateKeyPair() (*KeyPairInfo, error) {
 	}, nil
 }
 
+// AddressFromPublicKey derives the 40-character Sirius base32 address from a 64-char hex public key
+func AddressFromPublicKey(pubKeyHex string) (string, error) {
+	if len(pubKeyHex) != 64 {
+		return "", errors.New("public key must be 64 hexadecimal characters")
+	}
+	addr, err := sdk.NewAddressFromPublicKey(pubKeyHex, sdk.Public)
+	if err != nil {
+		return "", err
+	}
+	return addr.Address, nil
+}
+
 // KeyPairFromPrivateKey derives public key and address from an existing 64-char private key instantly using local cryptography
 func KeyPairFromPrivateKey(privKeyHex string) (*KeyPairInfo, error) {
 	if len(privKeyHex) != 64 {

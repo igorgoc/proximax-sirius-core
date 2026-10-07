@@ -38,6 +38,7 @@ type ConfirmedTransactionsResponse struct {
 type AccountInfoResponse struct {
 	Account struct {
 		Address          string `json:"address"`
+		AccountType      int    `json:"accountType"`
 		LinkedAccountKey string `json:"linkedAccountKey"`
 		Mosaics          []struct {
 			Id     [2]uint64 `json:"id"`
@@ -59,10 +60,12 @@ type DelegationListener struct {
 	nodeAddress      string
 	nodePublicKey    string
 	bootKey          string
-	bootAddress      string
-	bootPublicKey    string
-	processedHashes  map[string]bool
-	stateFilePath    string
+	bootAddress          string
+	bootPublicKey        string
+	mainAccountAddress   string
+	mainAccountPublicKey string
+	processedHashes      map[string]bool
+	stateFilePath        string
 
 	stopChan chan struct{}
 	stopOnce sync.Once
@@ -233,21 +236,70 @@ func (dl *DelegationListener) runLoop() {
 	}
 }
 
+func (dl *DelegationListener) discoverLinkedMainAccount() {
+	dl.mu.RLock()
+	nodePubKey := dl.nodePublicKey
+	mainAddr := dl.mainAccountAddress
+	dl.mu.RUnlock()
+
+	if nodePubKey == "" || mainAddr != "" {
+		return
+	}
+
+	for _, node := range dl.apiNodes {
+		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), nodePubKey)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := dl.httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			var acc AccountInfoResponse
+			if err := json.NewDecoder(resp.Body).Decode(&acc); err == nil {
+				_ = resp.Body.Close()
+				if acc.Account.AccountType == 2 && len(acc.Account.LinkedAccountKey) == 64 && acc.Account.LinkedAccountKey != strings.Repeat("0", 64) {
+					linkedPub := strings.ToUpper(acc.Account.LinkedAccountKey)
+					if derivedAddr, dErr := crypto.AddressFromPublicKey(linkedPub); dErr == nil && len(derivedAddr) == 40 {
+						dl.mu.Lock()
+						dl.mainAccountPublicKey = linkedPub
+						dl.mainAccountAddress = derivedAddr
+						dl.mu.Unlock()
+						log.Printf("[Delegation Listener] Discovered linked operator Main Account on-chain: %s (Address: %s)", linkedPub, derivedAddr)
+						return
+					}
+				}
+			} else {
+				_ = resp.Body.Close()
+			}
+		} else {
+			_ = resp.Body.Close()
+		}
+	}
+}
+
 func (dl *DelegationListener) checkIncomingTransactions() {
+	dl.discoverLinkedMainAccount()
+
 	dl.mu.RLock()
 	harvestKey := dl.harvestKey
 	harvestAddr := dl.nodeAddress
 	bootKey := dl.bootKey
 	bootAddr := dl.bootAddress
+	mainAddr := dl.mainAccountAddress
 	dl.mu.RUnlock()
 
 	if harvestKey == "" && bootKey == "" {
 		dl.reloadHarvestIdentity()
+		dl.discoverLinkedMainAccount()
 		dl.mu.RLock()
 		harvestKey = dl.harvestKey
 		harvestAddr = dl.nodeAddress
 		bootKey = dl.bootKey
 		bootAddr = dl.bootAddress
+		mainAddr = dl.mainAccountAddress
 		dl.mu.RUnlock()
 		if harvestKey == "" && bootKey == "" {
 			return
@@ -262,12 +314,15 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 		keysToTry = append(keysToTry, bootKey)
 	}
 
-	addressesToScan := make([]string, 0, 2)
+	addressesToScan := make([]string, 0, 3)
 	if len(harvestAddr) == 40 {
 		addressesToScan = append(addressesToScan, strings.ToUpper(strings.ReplaceAll(harvestAddr, "-", "")))
 	}
 	if len(bootAddr) == 40 && bootAddr != harvestAddr {
 		addressesToScan = append(addressesToScan, strings.ToUpper(strings.ReplaceAll(bootAddr, "-", "")))
+	}
+	if len(mainAddr) == 40 && mainAddr != harvestAddr && mainAddr != bootAddr {
+		addressesToScan = append(addressesToScan, strings.ToUpper(strings.ReplaceAll(mainAddr, "-", "")))
 	}
 
 	hasNewChanges := false
@@ -357,17 +412,10 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 				continue
 			}
 
-		// Derive sender address
-		senderKp, err := crypto.KeyPairFromPrivateKey(strings.Repeat("0", 64)) // dummy for address conversion helper
-		var senderAddress string
-		if kp, kErr := crypto.GenerateKeyPair(); kErr == nil && kp != nil {
-			// Get sender address from public key via helper
-			senderAddress = getAddressFromPublicKey(senderPubKey, dl.apiNodes, dl.httpClient)
-		}
-		_ = senderKp
-
-		if senderAddress == "" {
-			log.Printf("[Delegation Listener] Could not resolve address for sender %s", senderPubKey)
+		// Derive sender address locally from sender public key
+		senderAddress, addrErr := crypto.AddressFromPublicKey(senderPubKey)
+		if addrErr != nil || senderAddress == "" {
+			log.Printf("[Delegation Listener] Could not derive address from sender public key %s: %v", senderPubKey, addrErr)
 			dl.markProcessed(txHash)
 			continue
 		}
@@ -393,7 +441,7 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 			continue
 		}
 
-		isLinked, balanceOk, verifyErr := verifyOnChainAccountLink(senderAddress, remoteKp.PublicKey, dl.apiNodes, dl.httpClient)
+		isLinked, balanceOk, verifyErr := verifyOnChainAccountLink(senderPubKey, remoteKp.PublicKey, dl.apiNodes, dl.httpClient)
 		if verifyErr != nil {
 			log.Printf("[Delegation Listener] Warning: Verification check failed for %s: %v (will retry next tick)", senderAddress, verifyErr)
 			continue
@@ -434,24 +482,9 @@ func (dl *DelegationListener) markProcessed(txHash string) {
 	dl.mu.Unlock()
 }
 
-func getAddressFromPublicKey(pubKey string, apiNodes []string, client *http.Client) string {
+func verifyOnChainAccountLink(senderPubKey, expectedRemotePubKey string, apiNodes []string, client *http.Client) (isLinked bool, balanceOk bool, err error) {
 	for _, node := range apiNodes {
-		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), pubKey)
-		resp, err := client.Get(url)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			defer resp.Body.Close()
-			var acc AccountInfoResponse
-			if json.NewDecoder(resp.Body).Decode(&acc) == nil && acc.Account.Address != "" {
-				return acc.Account.Address
-			}
-		}
-	}
-	return ""
-}
-
-func verifyOnChainAccountLink(address, expectedRemotePubKey string, apiNodes []string, client *http.Client) (isLinked bool, balanceOk bool, err error) {
-	for _, node := range apiNodes {
-		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), address)
+		url := fmt.Sprintf("%s/account/%s", strings.TrimRight(node, "/"), senderPubKey)
 		resp, errFetch := client.Get(url)
 		if errFetch != nil {
 			continue
