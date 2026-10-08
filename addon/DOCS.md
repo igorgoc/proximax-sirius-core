@@ -21,6 +21,7 @@ Navigate to the **Configuration** tab in Home Assistant before starting the add-
 | **`harvest_key`** | Yes | 64-character hexadecimal private key for POS+ block harvesting and earning block rewards. |
 | **`friendly_name`** | No | Visible name for your node on the network (default: `HomeAssistant-Validator`). |
 | **`fast_sync`** | No | Automatically streams and decompresses the official snapshot on first launch (default: `true`). |
+| **`max_delegated_keys`** | No | Maximum number of remote staker harvesting keys accepted concurrently (default: `10`). |
 | **`custom_snapshot_url`**| No | Optional custom zstandard snapshot tarball URL if not using official Hugging Face snapshot. |
 
 ---
@@ -31,3 +32,5 @@ Navigate to the **Configuration** tab in Home Assistant before starting the add-
 2. If the blockchain data directory is empty and `fast_sync` is enabled, the node streams the official verified snapshot directly from Hugging Face into `/data/chainconfig/data/` without filling up temporary disk space.
 3. The native C++ Catapult engine (`sirius.bc`) boots up, connects to seed peers on port `7900`, syncs latest blocks, and begins POS+ harvesting.
 4. All real-time logs stream directly into the Home Assistant **Log** tab.
+5. An autonomous background delegation listener (`sirius-delegation-listener`) continuously monitors on-chain remote staking delegations sent to your node. When external stakers delegate to your node via the web wallet, keys are validated, written to `/data/chainconfig/resources/delegated_keys/`, and unlocked by the harvesting engine without requiring node restarts.
+

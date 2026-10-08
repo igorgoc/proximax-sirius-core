@@ -74,7 +74,7 @@ fi
 # 2. Setup persistent directory structure on SSD (/data)
 DATA_DIR="/data/chainconfig"
 DATA_STORAGE="$DATA_DIR/data"
-mkdir -p "$DATA_DIR/resources" "$DATA_STORAGE/00000" "$DATA_DIR/logs" "$DATA_DIR/bin" "$DATA_DIR/certificate"
+mkdir -p "$DATA_DIR/resources/delegated_keys" "$DATA_STORAGE/00000" "$DATA_DIR/logs" "$DATA_DIR/bin" "$DATA_DIR/certificate"
 
 # Check if data wipe was requested via reset_data
 if [ "${RESET_DATA:-false}" = "true" ]; then
@@ -136,8 +136,9 @@ if [ ! -f "$HARVEST_CONF" ]; then
 fi
 
 grep -q "^harvestKey" "$HARVEST_CONF" 2>/dev/null && sed -i "s|^harvestKey *=.*|harvestKey = ${HARVEST_KEY}|" "$HARVEST_CONF" || echo "harvestKey = ${HARVEST_KEY}" >> "$HARVEST_CONF"
-grep -q "^isAutoHarvestingEnabled" "$HARVEST_CONF" 2>/dev/null && sed -i "s|^isAutoHarvestingEnabled *=.*|isAutoHarvestingEnabled = true|" "$HARVEST_CONF" || echo "isAutoHarvestingEnabled = true" >> "$HARVEST_CONF"
-grep -q "^maxUnlockedAccounts" "$HARVEST_CONF" 2>/dev/null && sed -i "s|^maxUnlockedAccounts *=.*|maxUnlockedAccounts = 1|" "$HARVEST_CONF" || echo "maxUnlockedAccounts = 1" >> "$HARVEST_CONF"
+MAX_DELEGATED_KEYS=$(GET_CONFIG 'max_delegated_keys')
+[ -z "${MAX_DELEGATED_KEYS:-}" ] && MAX_DELEGATED_KEYS=10
+grep -q "^maxUnlockedAccounts" "$HARVEST_CONF" 2>/dev/null && sed -i "s|^maxUnlockedAccounts *=.*|maxUnlockedAccounts = ${MAX_DELEGATED_KEYS}|" "$HARVEST_CONF" || echo "maxUnlockedAccounts = ${MAX_DELEGATED_KEYS}" >> "$HARVEST_CONF"
 grep -q "^beneficiary" "$HARVEST_CONF" 2>/dev/null || echo "beneficiary = 0000000000000000000000000000000000000000000000000000000000000000" >> "$HARVEST_CONF"
 
 # Update logging output destinations to container log volume
@@ -292,6 +293,39 @@ if [ ! -f "$SIRIUS_BIN" ] || [ "$INSTALLED_ENGINE_VERSION" != "$TARGET_ENGINE_VE
     fi
 fi
 
+# 6.1 Locate or auto-fetch Sirius Delegation Listener daemon
+LISTENER_BIN="/usr/local/bin/sirius-delegation-listener"
+if [ ! -x "$LISTENER_BIN" ] && [ -x "$DATA_DIR/bin/sirius-delegation-listener" ]; then
+    LISTENER_BIN="$DATA_DIR/bin/sirius-delegation-listener"
+fi
+
+if [ ! -x "$LISTENER_BIN" ]; then
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        aarch64|arm64)
+            LISTENER_ASSET="sirius-delegation-listener-linux-arm64"
+            ;;
+        x86_64|amd64)
+            LISTENER_ASSET="sirius-delegation-listener-linux-amd64"
+            ;;
+        *)
+            LISTENER_ASSET=""
+            ;;
+    esac
+
+    if [ -n "$LISTENER_ASSET" ]; then
+        LISTENER_URL="https://github.com/igorgoc/proximax-sirius-core/releases/download/v1.9.11/${LISTENER_ASSET}"
+        LOG_INFO "Checking/fetching autonomous delegation listener daemon for $ARCH from $LISTENER_URL..."
+        if curl -f -sSL "$LISTENER_URL" -o "$DATA_DIR/bin/sirius-delegation-listener"; then
+            chmod +x "$DATA_DIR/bin/sirius-delegation-listener"
+            LISTENER_BIN="$DATA_DIR/bin/sirius-delegation-listener"
+            LOG_INFO "Delegation listener installed successfully at $LISTENER_BIN"
+        else
+            LOG_WARN "Could not fetch delegation listener daemon; remote validator auto-detection will be manual."
+        fi
+    fi
+fi
+
 # Set dynamic library search path (safely handling nounset / set -u)
 export LD_LIBRARY_PATH="$DATA_DIR/bin:/etc/sirius/bin:/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
@@ -328,6 +362,10 @@ get_network_height() {
 
 cleanup_and_exit() {
     LOG_INFO "Shutdown signal received. Stopping sirius.bc gracefully..."
+    if [ -n "${LISTENER_PID:-}" ] && kill -0 "$LISTENER_PID" 2>/dev/null; then
+        LOG_INFO "Stopping delegation listener daemon..."
+        kill -TERM "$LISTENER_PID" 2>/dev/null || true
+    fi
     if [ -n "${ENGINE_PID:-}" ] && kill -0 "$ENGINE_PID" 2>/dev/null; then
         kill -INT "$ENGINE_PID" 2>/dev/null || true
         for i in $(seq 1 45); do
@@ -373,6 +411,15 @@ while true; do
     ENGINE_PID=$!
     ENGINE_START_TIME=$(date +%s)
     LOG_INFO "sirius.bc started with PID $ENGINE_PID on P2P port 7900"
+
+    # Start autonomous delegation listener if binary exists and not already running
+    if [ -x "${LISTENER_BIN:-}" ]; then
+        if [ -z "${LISTENER_PID:-}" ] || ! kill -0 "$LISTENER_PID" 2>/dev/null; then
+            "$LISTENER_BIN" -resources "$DATA_DIR/resources" -data "$DATA_STORAGE" 2>&1 &
+            LISTENER_PID=$!
+            LOG_INFO "Autonomous delegation listener running (PID $LISTENER_PID, monitoring on-chain staking delegations)"
+        fi
+    fi
 
     # Watchdog state initialization
     LAST_OBSERVED_HEIGHT=0

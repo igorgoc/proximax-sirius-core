@@ -1,6 +1,6 @@
 name: "ProximaX Sirius Validator"
 description: "Ultra-lightweight ProximaX Sirius Mainnet POS+ Peer Validator Node for Home Assistant (ARM64 / RPi4)"
-version: "1.9.13-1"
+version: "1.9.13-2"
 slug: "proximax_sirius_validator"
 arch:
   - aarch64
@@ -27,6 +27,7 @@ options:
   friendly_name: "HomeAssistant-Validator"
   fast_sync: true
   reset_data: false
+  max_delegated_keys: 10
   custom_snapshot_url: ""
 schema:
   boot_key: "password"
@@ -34,6 +35,7 @@ schema:
   friendly_name: "str"
   fast_sync: "bool"
   reset_data: "bool?"
+  max_delegated_keys: "int?"
   custom_snapshot_url: "str?"
 environment:
   CHAINCONFIG_DIR: "/data/chainconfig"

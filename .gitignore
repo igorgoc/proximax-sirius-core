@@ -49,6 +49,8 @@ chainconfig/data/delegation_listener_state.json
 # Compiled Go manager binaries & PID
 bin/**/sirius-core*
 bin/sirius-core*
+bin/**/sirius-delegation-listener*
+bin/sirius-delegation-listener*
 bin/sirius-node-manager
 bin/sign-release
 bin/sign-release.exe
