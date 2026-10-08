@@ -134,3 +134,84 @@ func TestDelegationListener_EndToEndIngestion(t *testing.T) {
 
 	_ = payloadBytes
 }
+
+func TestDelegationListener_VerifyOnChainMosaicValidation(t *testing.T) {
+	delegatorKp, _ := crypto.GenerateKeyPair()
+	remoteKp, _ := crypto.GenerateKeyPair()
+
+	// 1. Server with valid XPX mosaic (0x402B2F579FAEBC59) and balance >= 100k
+	validServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := AccountInfoResponse{}
+		res.Account.Address = delegatorKp.Address
+		res.Account.LinkedAccountKey = remoteKp.PublicKey
+		res.Account.Mosaics = append(res.Account.Mosaics, struct {
+			Id     [2]uint64 `json:"id"`
+			Amount [2]uint64 `json:"amount"`
+		}{
+			Id:     [2]uint64{0x9FAEBC59, 0x402B2F57},
+			Amount: [2]uint64{0x540BE400, 0x17}, // > 100,000 XPX
+		})
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer validServer.Close()
+
+	linked, balOk, err := verifyOnChainAccountLink(delegatorKp.Address, remoteKp.PublicKey, []string{validServer.URL}, validServer.Client())
+	if err != nil || !linked || !balOk {
+		t.Fatalf("expected valid XPX balance to pass: linked=%v, balOk=%v, err=%v", linked, balOk, err)
+	}
+
+	// 2. Server with non-XPX custom mosaic (e.g. spam token)
+	invalidMosaicServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := AccountInfoResponse{}
+		res.Account.Address = delegatorKp.Address
+		res.Account.LinkedAccountKey = remoteKp.PublicKey
+		res.Account.Mosaics = append(res.Account.Mosaics, struct {
+			Id     [2]uint64 `json:"id"`
+			Amount [2]uint64 `json:"amount"`
+		}{
+			Id:     [2]uint64{0x11111111, 0x22222222}, // Invalid mosaic ID
+			Amount: [2]uint64{0x540BE400, 0x17},
+		})
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer invalidMosaicServer.Close()
+
+	linked2, balOk2, err2 := verifyOnChainAccountLink(delegatorKp.Address, remoteKp.PublicKey, []string{invalidMosaicServer.URL}, invalidMosaicServer.Client())
+	if err2 != nil || !linked2 || balOk2 {
+		t.Fatalf("expected non-XPX mosaic to fail balance check: linked=%v, balOk=%v, err=%v", linked2, balOk2, err2)
+	}
+}
+
+func TestDelegationListener_SweepStaleKeys(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "del_sweep_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	resourcesDir := filepath.Join(tmpDir, "resources")
+	delegatedDir := filepath.Join(resourcesDir, "delegated_keys")
+	_ = os.MkdirAll(delegatedDir, 0700)
+
+	remoteKp, _ := crypto.GenerateKeyPair()
+	ownerAddr := "XATWCKBWGJ7GVTACDV2I2OK7LLRIYXFGNNMM3IS2"
+	keyFile := filepath.Join(delegatedDir, ownerAddr+".key")
+	_ = os.WriteFile(keyFile, []byte(remoteKp.PrivateKey+"\n"), 0600)
+
+	// Mock server returning unlinked account
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := AccountInfoResponse{}
+		res.Account.Address = ownerAddr
+		res.Account.LinkedAccountKey = strings.Repeat("0", 64) // Unlinked!
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	dl := NewDelegationListener(resourcesDir, tmpDir, []string{mockServer.URL})
+	dl.sweepStaleDelegatedKeys()
+
+	if _, statErr := os.Stat(keyFile); !os.IsNotExist(statErr) {
+		t.Fatalf("expected stale unlinked key %s to be deleted by sweep", keyFile)
+	}
+}
+

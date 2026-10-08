@@ -105,7 +105,11 @@ func main() {
 	logsDir := filepath.Join(basePath, "logs")
 	_ = os.MkdirAll(logsDir, 0755)
 	if logFile, err := os.OpenFile(filepath.Join(logsDir, "manager.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		if fiStderr, errStderr := os.Stderr.Stat(); errStderr == nil && os.SameFile(fiStderr, func() os.FileInfo { fi, _ := logFile.Stat(); return fi }()) {
+			log.SetOutput(logFile)
+		} else {
+			log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		}
 	}
 
 	configMgr := config.NewConfigManager(basePath)

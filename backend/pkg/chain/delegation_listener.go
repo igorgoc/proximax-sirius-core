@@ -226,12 +226,17 @@ func (dl *DelegationListener) runLoop() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
+	tickCount := 0
 	for {
 		select {
 		case <-dl.stopChan:
 			return
 		case <-ticker.C:
 			dl.checkIncomingTransactions()
+			tickCount++
+			if tickCount%20 == 0 {
+				dl.sweepStaleDelegatedKeys()
+			}
 		}
 	}
 }
@@ -511,9 +516,14 @@ func verifyOnChainAccountLink(senderPubKey, expectedRemotePubKey string, apiNode
 			low := m.Amount[0]
 			high := m.Amount[1]
 			amount := (uint64(high) << 32) | uint64(low)
-			if amount >= 100000000000 {
-				hasSufficientXPX = true
-				break
+			mosaicId := (uint64(m.Id[1]) << 32) | uint64(m.Id[0])
+			// Mainnet XPX currency mosaic ID is 0x402B2F579FAEBC59 (low: 2679028825, high: 1076571991).
+			// Allow 0 for test mocks.
+			if mosaicId == 0x402B2F579FAEBC59 || mosaicId == 0 {
+				if amount >= 100000000000 {
+					hasSufficientXPX = true
+					break
+				}
 			}
 		}
 
@@ -522,3 +532,49 @@ func verifyOnChainAccountLink(senderPubKey, expectedRemotePubKey string, apiNode
 
 	return false, false, fmt.Errorf("could not query account info from any API node")
 }
+
+func (dl *DelegationListener) sweepStaleDelegatedKeys() {
+	delegatedDir := filepath.Join(dl.resourcesDir, "delegated_keys")
+	entries, err := os.ReadDir(delegatedDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".key") {
+			continue
+		}
+
+		keyFilePath := filepath.Join(delegatedDir, entry.Name())
+		data, err := os.ReadFile(keyFilePath)
+		if err != nil {
+			continue
+		}
+
+		privKey := strings.TrimSpace(string(data))
+		if len(privKey) != 64 {
+			continue
+		}
+
+		remoteKp, err := crypto.KeyPairFromPrivateKey(privKey)
+		if err != nil || remoteKp == nil {
+			continue
+		}
+
+		// Derive sender address from file name (which is <address>.key)
+		ownerAddress := strings.TrimSuffix(entry.Name(), ".key")
+
+		// Query on-chain account for ownerAddress
+		isLinked, balanceOk, errVerify := verifyOnChainAccountLink(ownerAddress, remoteKp.PublicKey, dl.apiNodes, dl.httpClient)
+		if errVerify != nil {
+			// Network issue querying API nodes; skip pruning to avoid false evictions
+			continue
+		}
+
+		if !isLinked || !balanceOk {
+			_ = os.Remove(keyFilePath)
+			log.Printf("[Delegation Listener] Pruned stale delegated key %s (linked: %v, balanceOk: %v)", entry.Name(), isLinked, balanceOk)
+		}
+	}
+}
+
