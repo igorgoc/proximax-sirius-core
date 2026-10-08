@@ -1,6 +1,6 @@
 # ProximaX Sirius Mainnet Peer Node (Native Cockpit & Node Manager)
 
-A high-performance, **Bitcoin Core-inspired** standalone desktop, server, and IoT application for running, configuring, and managing a **ProximaX Sirius Chain Mainnet Peer Node, POS+ Block Harvester, and DFMS Storage Replicator**.
+A high-performance, **Bitcoin Core-inspired** standalone desktop, server, and IoT application for running, configuring, and managing a **ProximaX Sirius Chain Mainnet Peer Node, POS+ Block Harvester, Community Validator Pool, and DFMS Storage Replicator**.
 
 Built as a lightweight native management engine (Go backend + React/TypeScript frontend) interfacing directly with the native C++ ProximaX Sirius Core blockchain binary (`cpp-xpx-chain`) on **macOS**, **Linux**, **Windows**, and **Home Assistant OS (Raspberry Pi 4 / ARM64)** — with **zero Docker overhead on desktops and zero Electron bloat**.
 
@@ -39,6 +39,18 @@ Built as a lightweight native management engine (Go backend + React/TypeScript f
   Direct Windows MSVC ports for Catapult are deprecated upstream. Running the C++ engine inside WSL2 provides **100% binary compatibility** with the verified Linux consensus engine, POSIX signal handling, and native ext4 write speeds for RocksDB multi-gigabyte state flushes without Docker overhead.
 - **Why Home Assistant on Raspberry Pi 4?**  
   Turns your existing 24/7 Home Assistant server into an energy-efficient (~5W) POS+ block validator and consensus node with direct streaming snapshot fast-sync and zero host OS pollution.
+
+---
+
+## Community Validator Pooling & Delegated Staking (100,000+ XPX)
+
+By running this node, you not only harvest blocks for your own account, but your node also functions as an automated **Community Validator Pool** for other ProximaX network participants.
+
+### How Remote Harvesting Works:
+- **100% Non-Custodial & Secure**: Any ProximaX account holding at least **100,000 XPX** can delegate its harvesting power to your node and become an active network validator. Staked tokens **never leave the user's wallet**—harvesting is delegated purely by linking an ephemeral remote key pair via an on-chain `AccountKeyLinkTransaction`.
+- **Dynamic Hot-Reloading (Engine `v1.9.11+`)**: When a remote user delegates to your node, the node's built-in `delegation_listener` validates their on-chain balance (≥ 100,000 XPX) and places their remote harvesting key in `chainconfig/resources/delegated_keys/`. The C++ Catapult engine (`HarvestingService` & `FastFinalityService`) automatically hot-reloads the key into memory **without restarting the node or interrupting consensus**.
+- **Automated Health & Stale Key Sweeper**: The supervisor periodically audits delegator accounts on-chain. If an account unlinks its remote key or its balance falls below the 100,000 XPX consensus threshold, the node immediately prunes the key from disk and memory to keep validator slots healthy.
+- **1-Click Staking via Web Wallet**: Other users can discover your node and activate delegated harvesting in one click directly from the [Enhanced ProximaX Web Wallet](https://github.com/igorgoc/web-wallet-vuejs).
 
 ---
 
@@ -294,6 +306,11 @@ scripts\windows\run.bat
 - Real-time harvester synchronization status, committee voting eligibility, and block generation metrics.
 - Track total blocks harvested, fees earned in XPX, and average blocks per day.
 - Monitor DFMS storage node operations, active shards, and allocated storage units.
+
+### 5. Dynamic Delegated Staking Pool
+- **Multi-Key Harvesting**: Concurrently harvests and votes in FastFinality consensus for both the local node operator and remote delegated community stakers.
+- **Dynamic Hot-Reloading**: Automatically ingests new delegated keys from `chainconfig/resources/delegated_keys/` and hot-reloads them in memory without node downtime.
+- **Automated Balance & Unlink Audit**: Enforces the 100,000 XPX consensus balance minimum and auto-prunes unlinked accounts to keep validator slots healthy.
 
 ---
 
