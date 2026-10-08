@@ -29,7 +29,7 @@ import (
 
 const (
 	DefaultContainerName = "sirius-native-peer"
-	DefaultImageName     = "Native Sirius Core v1.9.10"
+	DefaultImageName     = "Native Sirius Core v1.9.11"
 	DefaultSnapshotUrl   = "https://huggingface.co/datasets/igorgoc/sirius-snapshot/resolve/main/sirius-data-backup-2026-09-10-131735.tar.zst"
 
 	Nemesis00001Url  = "https://raw.githubusercontent.com/proximax-storage/xpx-mainnet-chain-onboarding/master/docker-method/data/00000/00001.dat"
@@ -1332,7 +1332,7 @@ func (dc *ProcessSupervisor) GetMetrics(dataPath string) (*NodeMetrics, error) {
 	dc.metricsMu.RUnlock()
 
 	status, _ := dc.GetStatus()
-	engineVer := "v1.9.10"
+	engineVer := "v1.9.11"
 	if verBytes, err := os.ReadFile(filepath.Join(dc.binPath, "version.txt")); err == nil {
 		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
 			engineVer = trimmed

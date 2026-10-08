@@ -96,7 +96,7 @@ func NewEngineUpdater(binDir, manifestPath string, controller NodeLifecycleContr
 		currentVer = "none"
 	}
 
-	targetVer := "v1.9.10"
+	targetVer := "v1.9.11"
 	if manifestData, err := os.ReadFile(manifestPath); err == nil {
 		var m CompatibilityManifest
 		if json.Unmarshal(manifestData, &m) == nil && m.RecommendedVersion != "" {
