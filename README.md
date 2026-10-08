@@ -265,6 +265,75 @@ docker logs -f sirius-validator
 
 ---
 
+## Updating Existing Nodes to the Latest Version
+
+Upgrading your node to a new release is safe, fast, and preserves all your existing blockchain data and operator keys:
+- **Zero Data Loss**: Your local blockchain database (`chainconfig/data/` or native WSL2 `/var/lib/sirius/data`) is **never erased or re-downloaded**.
+- **Keys Preserved**: Your configured keys in `chainconfig/resources/config-harvesting.properties` and `config-user.properties` remain untouched.
+- Updates only replace the manager supervisor binary (`sirius-core`), the web cockpit assets, and the C++ engine (`bin/sirius.bc`).
+
+### 1. macOS (Apple Silicon ARM64 & Intel)
+- **Option A (1-Line In-Place Update — Recommended)**:
+  Open Terminal inside your node directory and run:
+  ```bash
+  curl -sL $(curl -s https://api.github.com/repos/igorgoc/proximax-sirius-core/releases/latest | grep -o 'https://[^"]*darwin-arm64[^"]*\.tar\.gz') | tar -xz
+  ./restart.sh
+  ```
+  *(For Intel Mac x86_64, replace `darwin-arm64` with `darwin-amd64`).*
+- **Option B (Manual Download)**:
+  1. Stop the node by running `./stop.sh` (or click **Stop Node** in the Cockpit).
+  2. Download the latest `proximax-sirius-darwin-*.tar.gz` from [GitHub Releases](https://github.com/igorgoc/proximax-sirius-core/releases/latest).
+  3. Extract and overwrite the files in your `proximax-sirius-core` folder.
+  4. Double-click `start.command` (or run `./start.sh`).
+
+### 2. Linux (Ubuntu / Debian)
+- **If installed via `.deb` package (`systemd`)**:
+  ```bash
+  curl -sL -O $(curl -s https://api.github.com/repos/igorgoc/proximax-sirius-core/releases/latest | grep -o 'https://[^"]*amd64\.deb')
+  sudo dpkg -i proximax-sirius-core_*_amd64.deb
+  sudo systemctl restart proximax-sirius
+  ```
+  `dpkg` upgrades the application in `/opt/proximax-sirius-core/` and systemd restarts the service seamlessly.
+- **If running the standalone portable tarball**:
+  ```bash
+  ./stop.sh
+  curl -sL $(curl -s https://api.github.com/repos/igorgoc/proximax-sirius-core/releases/latest | grep -o 'https://[^"]*linux-amd64[^"]*\.tar\.gz') | tar -xz
+  ./start.sh
+  ```
+
+### 3. Windows (Windows 10 / 11 with WSL2)
+1. Stop the node by double-clicking `stop.bat` (or click **Stop Node** in the Cockpit).
+2. Download the latest `proximax-sirius-windows-amd64-*.zip` from [GitHub Releases](https://github.com/igorgoc/proximax-sirius-core/releases/latest).
+3. Extract the contents into your existing node directory (e.g. `C:\proximax-sirius-core`), choosing **"Replace the files in the destination"**.
+4. Double-click `start.bat`. Your WSL2 ext4 blockchain database in `/var/lib/sirius/data` is untouched.
+
+### 4. Home Assistant OS / Add-on
+1. In Home Assistant, navigate to **Settings** → **Add-ons** (or **Apps**).
+2. When a new version is available, an **"Update"** badge appears on the **ProximaX Sirius Validator** card.
+3. Click **Update** (*Reminder: uncheck "Make backup before update" to save disk space and bypass lengthy tar compression*).
+4. Click **Restart**. The container will boot and fetch the latest engine release automatically.
+
+### 5. Standalone Docker / Docker Compose
+- **Docker Compose**:
+  ```bash
+  docker compose pull
+  docker compose up -d
+  ```
+- **Standalone `docker run`**:
+  ```bash
+  docker pull ghcr.io/igorgoc/proximax-sirius-validator:latest
+  docker stop sirius-validator && docker rm sirius-validator
+  # Re-run your docker run command mounting your existing volume (-v /path/to/sirius-data:/data)
+  ```
+
+### 6. In-Cockpit C++ Engine Hot-Swap
+If you are already running the modern supervisor and only wish to upgrade the underlying C++ Catapult engine:
+1. Open the Web Cockpit at `http://localhost:8080`.
+2. Navigate to **Maintenance** → click **Check for Engine Updates**.
+3. Click **Apply Update**. The node will gracefully pause, verify Ed25519 signatures, hot-swap the engine binaries in `bin/`, and resume block production automatically.
+
+---
+
 ## Developer Quick Start (Build from Source)
 
 ### macOS & Linux:
