@@ -783,6 +783,25 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ config, harvestStats, metr
               </div>
             </div>
 
+            <div>
+              <label className="text-xs text-slate-300 font-medium block mb-1.5">
+                Maximum Harvesting Slots (Host + Delegated Accounts)
+              </label>
+              <div className="flex items-center space-x-3">
+                <input
+                  type="number"
+                  min="2"
+                  max="100"
+                  value={formData.maxUnlockedAccounts}
+                  onChange={(e) => handleFieldChange('maxUnlockedAccounts', Math.max(2, Math.min(100, parseInt(e.target.value) || 2)))}
+                  className="w-28 bg-[#0F1115] border border-[#262B34] rounded px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-xs text-slate-400">
+                  Total slots allocated in POS+ engine (default: 5 or 10). Broadcast to web wallets for pool capacity.
+                </span>
+              </div>
+            </div>
+
           </section>
 
           <section className="bg-[#181B20] border border-[#262B34] rounded-lg p-5 space-y-4">
