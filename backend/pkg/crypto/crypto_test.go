@@ -230,6 +230,7 @@ func TestRegisterValidatorOnChain_InvalidKeyLength(t *testing.T) {
 		"Global",
 		"",
 		"",
+		5,
 	)
 	if err == nil {
 		t.Fatal("expected error for invalid key length, got nil")

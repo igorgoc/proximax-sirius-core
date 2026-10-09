@@ -1248,8 +1248,14 @@ func (s *Server) handleValidatorRegisterOnChain(w http.ResponseWriter, r *http.R
 	}
 
 	targetNodeKey := ""
-	if cfg != nil && cfg.HarvestPublicKey != "" {
-		targetNodeKey = cfg.HarvestPublicKey
+	maxSlots := 5
+	if cfg != nil {
+		if cfg.HarvestPublicKey != "" {
+			targetNodeKey = cfg.HarvestPublicKey
+		}
+		if cfg.MaxUnlockedAccounts > 0 {
+			maxSlots = cfg.MaxUnlockedAccounts
+		}
 	}
 
 	res, err := crypto.RegisterValidatorOnChain(
@@ -1260,6 +1266,7 @@ func (s *Server) handleValidatorRegisterOnChain(w http.ResponseWriter, r *http.R
 		location,
 		targetNodeKey,
 		req.ApiNode,
+		maxSlots,
 	)
 	if err != nil {
 		jsonError(w, "Failed to register on-chain: "+err.Error(), http.StatusBadRequest)

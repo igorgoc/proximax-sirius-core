@@ -408,7 +408,7 @@ type ValidatorRegistrationResult struct {
 
 // RegisterValidatorOnChain creates and broadcasts an AccountMetadataTransaction (sirius.v)
 // registering this validator in the decentralized global directory.
-func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoint string, restEndpoint string, location string, nodePublicKey string, apiNodeUrl string) (*ValidatorRegistrationResult, error) {
+func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoint string, restEndpoint string, location string, nodePublicKey string, apiNodeUrl string, maxSlots int) (*ValidatorRegistrationResult, error) {
 	if len(accountPrivateKeyBytes) != 32 {
 		return nil, errors.New("account private key must be exactly 32 bytes (64 hex characters)")
 	}
@@ -464,7 +464,7 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 		return nil, fmt.Errorf("account %s is a Remote Harvester Key. Under Sirius POS+ consensus rules, remote keys cannot sign transactions. Please use your funded Main Account private key.", publicAcc.Address.Address)
 	}
 
-	// 2. Verify account has sufficient balance to pay network transaction fees (min 0.1 XPX)
+	// 2. Verify account has sufficient balance to pay network transaction fees (min 75 XPX buffer for ~150k multiplier)
 	var xpxAmount uint64
 	for _, m := range accInfo.Mosaics {
 		if m.AssetId.Id() == 0x402B2F579FAEBC59 || m.AssetId.Id() == 4623869273703554137 {
@@ -472,8 +472,8 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 			break
 		}
 	}
-	if xpxAmount < 100000 {
-		return nil, fmt.Errorf("insufficient XPX balance on account %s (%0.4f XPX). At least 0.1 XPX is required for transaction fees.", publicAcc.Address.Address, float64(xpxAmount)/1e6)
+	if xpxAmount < 75000000 {
+		return nil, fmt.Errorf("insufficient XPX balance on account %s (%0.4f XPX). At least 75 XPX is required to cover network fee multiplier headroom.", publicAcc.Address.Address, float64(xpxAmount)/1e6)
 	}
 
 	if nodePublicKey == "" {
@@ -489,6 +489,9 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 		"endpoint":      endpoint,
 		"location":      location,
 		"nodePublicKey": nodePublicKey,
+	}
+	if maxSlots > 0 {
+		metaPayload["maxSlots"] = maxSlots
 	}
 	if restEndpoint != "" && !strings.Contains(restEndpoint, "localhost") && !strings.Contains(restEndpoint, "127.0.0.1") {
 		metaPayload["restEndpoint"] = restEndpoint
@@ -542,8 +545,8 @@ func RegisterValidatorOnChain(accountPrivateKeyBytes []byte, name string, endpoi
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CompleteAggregateTransaction: %w", err)
 	}
-	// 50 XPX MaxFee comfortably satisfies any network node minFeeMultiplier (e.g. 140,000)
-	aggTx.MaxFee = sdk.Amount(50000000)
+	// 75 XPX MaxFee comfortably satisfies any network node minFeeMultiplier (e.g. 150,000 * ~400 bytes = 60M)
+	aggTx.MaxFee = sdk.Amount(75000000)
 
 	signedTx, err := account.SignWithCosignatures(aggTx, nil)
 	if err != nil {
@@ -762,8 +765,8 @@ func UnregisterValidatorOnChain(accountPrivateKeyBytes []byte, apiNodeUrl string
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CompleteAggregateTransaction: %w", err)
 	}
-	// 50 XPX MaxFee comfortably satisfies any network node minFeeMultiplier (e.g. 140,000)
-	aggTx.MaxFee = sdk.Amount(50000000)
+	// 75 XPX MaxFee comfortably satisfies any network node minFeeMultiplier (e.g. 150,000 * ~400 bytes = 60M)
+	aggTx.MaxFee = sdk.Amount(75000000)
 
 	signedTx, err := account.SignWithCosignatures(aggTx, nil)
 	if err != nil {
