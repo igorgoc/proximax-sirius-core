@@ -658,23 +658,39 @@ export const ValidatorTab: React.FC<ValidatorTabProps> = ({
                   No delegated accounts currently connected.
                 </div>
               ) : (
-                delegatedHarvesters.map((item) => (
-                  <div key={item.fileName} className="flex items-center justify-between p-2 bg-[#111317] border border-[#262B34] rounded text-xs">
-                    <div>
-                      <div className="font-mono text-slate-200 font-medium">
-                        {truncate(item.harvesterPublicKey || item.fileName, 8, 8)}
+                delegatedHarvesters.map((item) => {
+                  const isPrimary = item.fileName === 'primary_harvest.key' || item.fileName === 'primary.key';
+                  return (
+                    <div key={item.fileName} className="flex items-center justify-between p-2 bg-[#111317] border border-[#262B34] rounded text-xs">
+                      <div>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="font-mono text-slate-200 font-medium">
+                            {truncate(item.harvesterPublicKey || item.fileName, 8, 8)}
+                          </span>
+                          {isPrimary && (
+                            <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-blue-950/70 text-blue-300 border border-blue-800/50">
+                              Host Primary
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {isPrimary ? 'Node Host Harvester' : item.fileName}
+                        </div>
                       </div>
-                      <div className="text-[10px] text-slate-500">{item.fileName}</div>
+                      {isPrimary ? (
+                        <span className="text-[10px] text-slate-500 font-mono pr-1">Permanent</span>
+                      ) : (
+                        <button
+                          onClick={() => handleRemoveHarvester(item.fileName)}
+                          className="p-1.5 hover:bg-red-950/60 hover:text-red-400 text-slate-500 rounded transition-colors"
+                          title="Remove Delegated Key"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
-                    <button
-                      onClick={() => handleRemoveHarvester(item.fileName)}
-                      className="p-1.5 hover:bg-red-950/60 hover:text-red-400 text-slate-500 rounded transition-colors"
-                      title="Remove Delegated Key"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
