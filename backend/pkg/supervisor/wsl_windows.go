@@ -1165,7 +1165,7 @@ func (dc *ProcessSupervisor) executeWSL(ctx context.Context, siriusBin string, c
 	rocksDbLib := filepath.Join(dc.binPath, "librocksdb.so.8")
 	fastFinalityLib := filepath.Join(dc.binPath, "libextension.fastfinality.so")
 
-	engineVer := "1.9.11"
+	engineVer := "1.9.12"
 	if verBytes, err := os.ReadFile(filepath.Join(dc.binPath, "version.txt")); err == nil {
 		if trimmed := strings.TrimSpace(string(verBytes)); trimmed != "" {
 			engineVer = trimmed

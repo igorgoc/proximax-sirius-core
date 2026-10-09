@@ -11,7 +11,7 @@ interface AboutModalProps {
 export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose, version }) => {
   if (!isOpen) return null;
 
-  const displayVer = version ? version.replace(/^Native\s+Sirius\s+Core\s+/i, '') : '1.9.11';
+  const displayVer = version ? version.replace(/^Native\s+Sirius\s+Core\s+/i, '') : '1.9.12';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 select-none animate-fadeIn">
