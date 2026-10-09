@@ -15,9 +15,10 @@ import (
 )
 
 var DefaultApiNodes = []string{
+	"https://betelgeuse.xpxsirius.io",
+	"http://betelgeuse.xpxsirius.io:3000",
 	"https://aldebaran.xpxsirius.io",
 	"http://arcturus.xpxsirius.io:3000",
-	"https://betelgeuse.xpxsirius.io",
 	"http://lyrasithara.xpxsirius.io:3000",
 }
 

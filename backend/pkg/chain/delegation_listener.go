@@ -17,22 +17,24 @@ import (
 	"proximax-sirius-core/pkg/crypto"
 )
 
+type ConfirmedTransactionItem struct {
+	Meta struct {
+		Height [2]uint64 `json:"height"`
+		Hash   string    `json:"hash"`
+	} `json:"meta"`
+	Transaction struct {
+		Type      int    `json:"type"`
+		Signer    string `json:"signer"`
+		Recipient string `json:"recipient"`
+		Message   struct {
+			Type    int    `json:"type"`
+			Payload string `json:"payload"`
+		} `json:"message"`
+	} `json:"transaction"`
+}
+
 type ConfirmedTransactionsResponse struct {
-	Data []struct {
-		Meta struct {
-			Height [2]uint64 `json:"height"`
-			Hash   string    `json:"hash"`
-		} `json:"meta"`
-		Transaction struct {
-			Type      int    `json:"type"`
-			Signer    string `json:"signer"`
-			Recipient string `json:"recipient"`
-			Message   struct {
-				Type    int    `json:"type"`
-				Payload string `json:"payload"`
-			} `json:"message"`
-		} `json:"transaction"`
-	} `json:"data"`
+	Data []ConfirmedTransactionItem `json:"data"`
 }
 
 type AccountInfoResponse struct {
@@ -333,7 +335,10 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 	hasNewChanges := false
 
 	for _, cleanAddr := range addressesToScan {
-		var txList *ConfirmedTransactionsResponse
+		itemsToProcess := make([]ConfirmedTransactionItem, 0)
+		seenTxHashes := make(map[string]bool)
+		successfulQueries := 0
+
 		for _, apiNode := range dl.apiNodes {
 			url := fmt.Sprintf("%s/transactions/confirmed?recipientAddress=%s&pageSize=20&order=desc", strings.TrimRight(apiNode, "/"), cleanAddr)
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
@@ -349,19 +354,29 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 				_ = resp.Body.Close()
 				var res ConfirmedTransactionsResponse
 				if jsonErr := json.Unmarshal(body, &res); jsonErr == nil {
-					txList = &res
-					break
+					successfulQueries++
+					for _, it := range res.Data {
+						h := strings.ToUpper(strings.TrimSpace(it.Meta.Hash))
+						if h != "" && !seenTxHashes[h] {
+							seenTxHashes[h] = true
+							itemsToProcess = append(itemsToProcess, it)
+						}
+					}
+					// If we queried 2 responsive nodes, that's plenty of coverage
+					if successfulQueries >= 2 {
+						break
+					}
 				}
 			} else {
 				_ = resp.Body.Close()
 			}
 		}
 
-		if txList == nil || len(txList.Data) == 0 {
+		if len(itemsToProcess) == 0 {
 			continue
 		}
 
-		for _, item := range txList.Data {
+		for _, item := range itemsToProcess {
 			txHash := strings.ToUpper(strings.TrimSpace(item.Meta.Hash))
 			if txHash == "" {
 				continue
