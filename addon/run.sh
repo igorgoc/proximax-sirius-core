@@ -141,6 +141,12 @@ MAX_DELEGATED_KEYS=$(GET_CONFIG 'max_delegated_keys')
 grep -q "^maxUnlockedAccounts" "$HARVEST_CONF" 2>/dev/null && sed -i "s|^maxUnlockedAccounts *=.*|maxUnlockedAccounts = ${MAX_DELEGATED_KEYS}|" "$HARVEST_CONF" || echo "maxUnlockedAccounts = ${MAX_DELEGATED_KEYS}" >> "$HARVEST_CONF"
 grep -q "^beneficiary" "$HARVEST_CONF" 2>/dev/null || echo "beneficiary = 0000000000000000000000000000000000000000000000000000000000000000" >> "$HARVEST_CONF"
 
+# Invariant: Mirror primary harvestKey to delegated_keys to protect against FastFinalityUtils pruning
+if [ -n "${HARVEST_KEY:-}" ]; then
+    echo "${HARVEST_KEY}" > "$DATA_DIR/resources/delegated_keys/primary_harvest.key"
+    chmod 0600 "$DATA_DIR/resources/delegated_keys/primary_harvest.key"
+fi
+
 # Update logging output destinations to container log volume
 for LOG_CONF in "$DATA_DIR/resources/config-logging-server.properties" "$DATA_DIR/resources/config-logging-recovery.properties" "$DATA_DIR/resources/config-logging-broker.properties"; do
     if [ -f "$LOG_CONF" ]; then
