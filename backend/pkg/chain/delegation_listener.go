@@ -494,14 +494,16 @@ func verifyOnChainAccountLink(senderPubKey, expectedRemotePubKey string, apiNode
 		if errFetch != nil {
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
 			continue
 		}
 
 		var acc AccountInfoResponse
-		if err := json.NewDecoder(resp.Body).Decode(&acc); err != nil {
+		decodeErr := json.NewDecoder(resp.Body).Decode(&acc)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
 			continue
 		}
 
@@ -545,6 +547,11 @@ func (dl *DelegationListener) sweepStaleDelegatedKeys() {
 			continue
 		}
 
+		// Never sweep primary node operator keys
+		if entry.Name() == "primary_harvest.key" || entry.Name() == "primary.key" {
+			continue
+		}
+
 		keyFilePath := filepath.Join(delegatedDir, entry.Name())
 		data, err := os.ReadFile(keyFilePath)
 		if err != nil {
@@ -556,6 +563,14 @@ func (dl *DelegationListener) sweepStaleDelegatedKeys() {
 			continue
 		}
 
+		dl.mu.RLock()
+		hKey := dl.harvestKey
+		bKey := dl.bootKey
+		dl.mu.RUnlock()
+		if strings.EqualFold(privKey, hKey) || strings.EqualFold(privKey, bKey) {
+			continue
+		}
+
 		remoteKp, err := crypto.KeyPairFromPrivateKey(privKey)
 		if err != nil || remoteKp == nil {
 			continue
@@ -563,9 +578,10 @@ func (dl *DelegationListener) sweepStaleDelegatedKeys() {
 
 		// Derive sender address from file name (which is <address>.key)
 		ownerAddress := strings.TrimSuffix(entry.Name(), ".key")
+		cleanOwner := strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(ownerAddress, "-", ""), "_", ""))
 
-		// Query on-chain account for ownerAddress
-		isLinked, balanceOk, errVerify := verifyOnChainAccountLink(ownerAddress, remoteKp.PublicKey, dl.apiNodes, dl.httpClient)
+		// Query on-chain account for cleanOwner
+		isLinked, balanceOk, errVerify := verifyOnChainAccountLink(cleanOwner, remoteKp.PublicKey, dl.apiNodes, dl.httpClient)
 		if errVerify != nil {
 			// Network issue querying API nodes; skip pruning to avoid false evictions
 			continue

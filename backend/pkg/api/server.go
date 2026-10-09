@@ -1120,6 +1120,10 @@ func (s *Server) handleDelegatedHarvesterRemove(w http.ResponseWriter, r *http.R
 	if !strings.HasSuffix(clean, ".key") {
 		clean += ".key"
 	}
+	if clean == "primary_harvest.key" || clean == "primary.key" {
+		jsonError(w, "Cannot remove primary node harvester key", http.StatusBadRequest)
+		return
+	}
 	target := filepath.Join(s.configMgr.GetResourcesPath(), "delegated_keys", clean)
 	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
 		jsonError(w, "Failed to remove key: "+err.Error(), http.StatusInternalServerError)

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"proximax-sirius-core/pkg/crypto"
 )
 
 type ValidatedBlock struct {
@@ -44,6 +46,7 @@ type BlockApiResponse struct {
 }
 
 type HarvesterTracker struct {
+	resourcesDir      string
 	mu                sync.RWMutex
 	stats             HarvestStats
 	statsFilePath     string
@@ -60,6 +63,7 @@ type HarvesterTracker struct {
 func NewHarvesterTracker(resourcesDir string) *HarvesterTracker {
 	statsFile := filepath.Join(resourcesDir, "harvest-stats.json")
 	tracker := &HarvesterTracker{
+		resourcesDir:  resourcesDir,
 		statsFilePath: statsFile,
 		stats: HarvestStats{
 			ValidatedBlocks: make([]ValidatedBlock, 0),
@@ -228,11 +232,7 @@ func (ht *HarvesterTracker) CheckBlock(height int64) error {
 			NumTransactions: blockData.Meta.NumTransactions,
 		})
 
-		ht.mu.RLock()
-		pubKey := ht.harvestPublicKey
-		ht.mu.RUnlock()
-
-		if pubKey != "" && pubKey != "REMOTE_ACCOUNT_PUBLIC_KEY" && blockSigner == pubKey {
+		if ht.isNodeHarvester(blockSigner) {
 			ht.RecordValidatedBlock(ValidatedBlock{
 				Height:          height,
 				Hash:            blockData.Meta.Hash,
@@ -246,6 +246,51 @@ func (ht *HarvesterTracker) CheckBlock(height int64) error {
 	}
 
 	return fmt.Errorf("failed to fetch block %d from public nodes", height)
+}
+
+func (ht *HarvesterTracker) isNodeHarvester(signer string) bool {
+	cleanSigner := strings.ToUpper(strings.TrimSpace(signer))
+	if cleanSigner == "" {
+		return false
+	}
+
+	ht.mu.RLock()
+	pubKey := ht.harvestPublicKey
+	ht.mu.RUnlock()
+
+	if pubKey != "" && pubKey != "REMOTE_ACCOUNT_PUBLIC_KEY" && strings.EqualFold(cleanSigner, pubKey) {
+		return true
+	}
+
+	if ht.resourcesDir == "" {
+		return false
+	}
+
+	delegatedDir := filepath.Join(ht.resourcesDir, "delegated_keys")
+	entries, err := os.ReadDir(delegatedDir)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".key") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(delegatedDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		privKey := strings.TrimSpace(string(data))
+		if len(privKey) == 64 {
+			if kp, err := crypto.KeyPairFromPrivateKey(privKey); err == nil && kp != nil {
+				if strings.EqualFold(kp.PublicKey, cleanSigner) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // StartBackgroundScanner periodically and randomly checks for newly validated blocks without spamming explorer/nodes
