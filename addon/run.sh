@@ -265,7 +265,7 @@ elif [ -f "/usr/bin/sirius.bc" ]; then
     RECOVERY_BIN="/usr/bin/catapult.recovery"
 fi
 
-if [ ! -f "$SIRIUS_BIN" ] || [ "$INSTALLED_ENGINE_VERSION" != "$TARGET_ENGINE_VERSION" ]; then
+if [ ! -f "$SIRIUS_BIN" ] || [ "${INSTALLED_ENGINE_VERSION#v}" != "${TARGET_ENGINE_VERSION#v}" ]; then
     ARCH=$(uname -m)
     case "$ARCH" in
         aarch64|arm64)
