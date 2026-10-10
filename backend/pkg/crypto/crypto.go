@@ -875,6 +875,37 @@ func DecryptDelegationPayload(payloadHex, senderPublicKeyHex, recipientPrivateKe
 	return res, nil
 }
 
+// EncryptDelegationPayload encrypts a plain text message string (such as JSON payload)
+// from a sender to a recipient node using Sirius Catapult ECDH block cipher.
+func EncryptDelegationPayload(plainText, senderPrivateKeyHex, recipientPublicKeyHex string) (string, error) {
+	senderPrivBytes, err := hex.DecodeString(strings.TrimSpace(senderPrivateKeyHex))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode sender private key hex: %w", err)
+	}
+	defer func() {
+		for i := range senderPrivBytes {
+			senderPrivBytes[i] = 0
+		}
+	}()
+
+	recipPubBytes, err := hex.DecodeString(strings.TrimSpace(recipientPublicKeyHex))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode recipient public key hex: %w", err)
+	}
+
+	senderPriv := crypto.NewPrivateKey(senderPrivBytes)
+	defer senderPriv.Destroy()
+
+	recipPub := crypto.NewPublicKey(recipPubBytes)
+
+	secMsg, err := sdk.NewSecureMessageFromPlaintText(plainText, senderPriv, recipPub)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt message payload: %w", err)
+	}
+
+	return hex.EncodeToString(secMsg.Payload()), nil
+}
+
 // DelegatedStakingPayload represents the structured on-chain message payload
 type DelegatedStakingPayload struct {
 	Type             string `json:"type"`

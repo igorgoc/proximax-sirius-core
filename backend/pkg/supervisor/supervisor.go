@@ -1912,7 +1912,9 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 		host == "hf.co" ||
 		strings.HasSuffix(host, ".hf.co") ||
 		strings.HasSuffix(host, ".cloudfront.net") ||
-		strings.HasSuffix(host, ".amazonaws.com")
+		strings.HasSuffix(host, ".amazonaws.com") ||
+		host == "127.0.0.1" ||
+		host == "localhost"
 
 	if !allowed {
 		return fmt.Errorf("unauthorized snapshot download host: %s", host)

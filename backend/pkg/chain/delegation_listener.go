@@ -219,6 +219,11 @@ func (dl *DelegationListener) GetNodePublicKey() string {
 	return dl.nodePublicKey
 }
 
+// TriggerCheck immediately triggers a scan of incoming transactions and key state
+func (dl *DelegationListener) TriggerCheck() {
+	dl.checkIncomingTransactions()
+}
+
 func (dl *DelegationListener) runLoop() {
 	defer dl.wg.Done()
 
