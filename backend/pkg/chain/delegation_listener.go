@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,15 +58,16 @@ type DelegationListener struct {
 	apiNodes     []string
 	httpClient   *http.Client
 
-	mu               sync.RWMutex
-	harvestKey       string
-	nodeAddress      string
-	nodePublicKey    string
-	bootKey          string
+	mu                   sync.RWMutex
+	harvestKey           string
+	nodeAddress          string
+	nodePublicKey        string
+	bootKey              string
 	bootAddress          string
 	bootPublicKey        string
 	mainAccountAddress   string
 	mainAccountPublicKey string
+	maxSlots             int
 	processedHashes      map[string]bool
 	stateFilePath        string
 
@@ -140,6 +142,7 @@ func (dl *DelegationListener) reloadHarvestIdentity() {
 	userPropPath := filepath.Join(dl.resourcesDir, "config-user.properties")
 
 	var harvestKey, bootKey string
+	maxSlots := 10
 
 	if content, err := os.ReadFile(harvestPropPath); err == nil {
 		for _, line := range strings.Split(string(content), "\n") {
@@ -150,6 +153,13 @@ func (dl *DelegationListener) reloadHarvestIdentity() {
 					k := strings.TrimSpace(parts[1])
 					if len(k) == 64 {
 						harvestKey = strings.ToUpper(k)
+					}
+				}
+			} else if strings.HasPrefix(trimmed, "maxUnlockedAccounts") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					if parsedVal, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && parsedVal > 0 {
+						maxSlots = parsedVal
 					}
 				}
 			}
@@ -174,6 +184,7 @@ func (dl *DelegationListener) reloadHarvestIdentity() {
 	dl.mu.Lock()
 	defer dl.mu.Unlock()
 
+	dl.maxSlots = maxSlots
 	if harvestKey != "" {
 		dl.harvestKey = harvestKey
 		if kp, err := crypto.KeyPairFromPrivateKey(dl.harvestKey); err == nil && kp != nil {
@@ -194,7 +205,7 @@ func (dl *DelegationListener) reloadHarvestIdentity() {
 func (dl *DelegationListener) Start() {
 	dl.wg.Add(1)
 	go dl.runLoop()
-	log.Printf("[Delegation Listener] Background service started (Node Address: %s)", dl.GetNodeAddress())
+	log.Printf("[Delegation Listener] Background service started (Node Address: %s, Max Slots: %d)", dl.GetNodeAddress(), dl.GetMaxSlots())
 }
 
 // Stop cleanly terminates the background listener
@@ -217,6 +228,27 @@ func (dl *DelegationListener) GetNodePublicKey() string {
 	dl.mu.RLock()
 	defer dl.mu.RUnlock()
 	return dl.nodePublicKey
+}
+
+func (dl *DelegationListener) GetMaxSlots() int {
+	dl.mu.RLock()
+	defer dl.mu.RUnlock()
+	return dl.maxSlots
+}
+
+func (dl *DelegationListener) GetActiveSlots() int {
+	delegatedDir := filepath.Join(dl.resourcesDir, "delegated_keys")
+	entries, err := os.ReadDir(delegatedDir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".key") {
+			count++
+		}
+	}
+	return count
 }
 
 // TriggerCheck immediately triggers a scan of incoming transactions and key state
@@ -482,6 +514,26 @@ func (dl *DelegationListener) checkIncomingTransactions() {
 			log.Printf("[Delegation Listener] Rejected delegation from %s: Remote key %s does not match active on-chain AccountLink", senderAddress, remoteKp.PublicKey)
 			dl.markProcessed(txHash)
 			continue
+		}
+
+		// Enforce maximum slot capacity limit
+		dl.mu.RLock()
+		maxCap := dl.maxSlots
+		dl.mu.RUnlock()
+
+		if maxCap > 0 {
+			entries, _ := os.ReadDir(delegatedDir)
+			activeCount := 0
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".key") && e.Name() != filepath.Base(targetKeyPath) {
+					activeCount++
+				}
+			}
+			if activeCount >= maxCap {
+				log.Printf("[Delegation Listener] Rejected delegation from %s: Validator slot pool is full (%d/%d active slots)", senderAddress, activeCount, maxCap)
+				dl.markProcessed(txHash)
+				continue
+			}
 		}
 
 		// Write key to delegated_keys/<sender>.key with 0600 permissions
