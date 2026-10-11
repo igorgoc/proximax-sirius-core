@@ -366,6 +366,18 @@ get_network_height() {
     echo "0"
 }
 
+get_wan_ip() {
+    local ip=""
+    for ep in "https://api.ipify.org" "https://ifconfig.me" "https://icanhazip.com"; do
+        ip=$(curl -s --connect-timeout 2 -m 4 "$ep" 2>/dev/null | tr -d '[:space:]' || true)
+        if [ -n "$ip" ] && [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    echo ""
+}
+
 cleanup_and_exit() {
     LOG_INFO "Shutdown signal received. Stopping sirius.bc gracefully..."
     if [ -n "${LISTENER_PID:-}" ] && kill -0 "$LISTENER_PID" 2>/dev/null; then
@@ -434,6 +446,10 @@ while true; do
     fi
     LAST_ADVANCE_TIME=$(date +%s)
     LAST_STATUS_LOG_TIME=0
+    LAST_WAN_IP=$(get_wan_ip)
+    if [ -n "$LAST_WAN_IP" ]; then
+        LOG_INFO "[SENTRY] Initial public WAN IP detected: ${LAST_WAN_IP}"
+    fi
 
     # Watchdog monitoring loop (checks every 30 seconds)
     while kill -0 "$ENGINE_PID" 2>/dev/null; do
@@ -470,6 +486,33 @@ while true; do
             SINCE_LAST_RECOVERY=$(( CURRENT_TIME - LAST_STALL_RECOVERY_TIME ))
             if [ "$SINCE_LAST_RECOVERY" -lt "$WATCHDOG_COOLDOWN_SEC" ]; then
                 continue
+            fi
+        fi
+
+        # Fast WAN IP change detection (handles daily ISP PPPoE renewals / dynamic IP changes)
+        if [ "$UPTIME_SEC" -ge "$WATCHDOG_GRACE_PERIOD_SEC" ]; then
+            CURRENT_WAN_IP=$(get_wan_ip)
+            if [ -n "$CURRENT_WAN_IP" ] && [ -n "$LAST_WAN_IP" ] && [ "$CURRENT_WAN_IP" != "$LAST_WAN_IP" ]; then
+                LOG_WARN "[WATCHDOG] 🌐 Dynamic WAN IP change detected (${LAST_WAN_IP} -> ${CURRENT_WAN_IP})!"
+                LOG_WARN "[WATCHDOG] ISP 24h reconnection severed NAT sockets. Initiating immediate graceful restart to bind new IP..."
+                LAST_WAN_IP="$CURRENT_WAN_IP"
+                LAST_STALL_RECOVERY_TIME="$CURRENT_TIME"
+
+                kill -INT "$ENGINE_PID" 2>/dev/null || true
+                for w in $(seq 1 45); do
+                    if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+                        break
+                    fi
+                    sleep 1
+                done
+                if kill -0 "$ENGINE_PID" 2>/dev/null; then
+                    LOG_WARN "[WATCHDOG] Engine did not exit in 45s; sending SIGKILL..."
+                    kill -KILL "$ENGINE_PID" 2>/dev/null || true
+                fi
+                wait "$ENGINE_PID" 2>/dev/null || true
+                break
+            elif [ -n "$CURRENT_WAN_IP" ]; then
+                LAST_WAN_IP="$CURRENT_WAN_IP"
             fi
         fi
 
