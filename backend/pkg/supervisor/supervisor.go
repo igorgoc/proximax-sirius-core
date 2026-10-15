@@ -1971,28 +1971,6 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 		dc.snapshotStatus.Message = "Streaming and decompressing snapshot directly into data directory..."
 		dc.snapshotMu.Unlock()
 
-		lowerUrl := strings.ToLower(snapshotUrl)
-		isZstd := strings.Contains(lowerUrl, ".tar.zst") || strings.Contains(lowerUrl, ".zst")
-		isGz := strings.Contains(lowerUrl, ".tar.gz") || strings.Contains(lowerUrl, ".tgz")
-
-		var tarCmd *exec.Cmd
-		if isZstd || isGz {
-			tarCmd = exec.CommandContext(ctx, "tar", "-xf", "-", "-C", targetDir)
-		} else {
-			tarCmd = exec.CommandContext(ctx, "tar", "-xJf", "-", "-C", targetDir)
-		}
-
-		stdinPipe, err := tarCmd.StdinPipe()
-		if err != nil {
-			dc.setSnapshotError(fmt.Sprintf("Failed to open tar stdin: %v", err))
-			return
-		}
-
-		if err := tarCmd.Start(); err != nil {
-			dc.setSnapshotError(fmt.Sprintf("Failed to start tar extraction: %v", err))
-			return
-		}
-
 		var downloaded int64
 		startTime := time.Now()
 		lastUpdate := time.Now()
@@ -2026,11 +2004,40 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 			},
 		}
 
-		var compReader io.Reader = countingBody
+		bReader := bufio.NewReader(countingBody)
+		peekBytes, _ := bReader.Peek(6)
+
+		lowerUrl := strings.ToLower(snapshotUrl)
+		isZstd := strings.Contains(lowerUrl, ".tar.zst") || strings.Contains(lowerUrl, ".zst") ||
+			(len(peekBytes) >= 4 && peekBytes[0] == 0x28 && peekBytes[1] == 0xb5 && peekBytes[2] == 0x2f && peekBytes[3] == 0xfd)
+		isGz := strings.Contains(lowerUrl, ".tar.gz") || strings.Contains(lowerUrl, ".tgz") ||
+			(len(peekBytes) >= 2 && peekBytes[0] == 0x1f && peekBytes[1] == 0x8b)
+		isXz := strings.Contains(lowerUrl, ".tar.xz") || strings.Contains(lowerUrl, ".xz") ||
+			(len(peekBytes) >= 6 && peekBytes[0] == 0xfd && peekBytes[1] == 0x37 && peekBytes[2] == 0x7a && peekBytes[3] == 0x58 && peekBytes[4] == 0x5a && peekBytes[5] == 0x00)
+
+		var tarCmd *exec.Cmd
+		if isXz {
+			tarCmd = exec.CommandContext(ctx, "tar", "-xJf", "-", "-C", targetDir)
+		} else {
+			tarCmd = exec.CommandContext(ctx, "tar", "-xf", "-", "-C", targetDir)
+		}
+
+		stdinPipe, err := tarCmd.StdinPipe()
+		if err != nil {
+			dc.setSnapshotError(fmt.Sprintf("Failed to open tar stdin: %v", err))
+			return
+		}
+
+		if err := tarCmd.Start(); err != nil {
+			dc.setSnapshotError(fmt.Sprintf("Failed to start tar extraction: %v", err))
+			return
+		}
+
+		var compReader io.Reader = bReader
 		var closeComp func() error
 
 		if isZstd {
-			zDecoder, errZ := zstd.NewReader(countingBody, zstd.WithDecoderConcurrency(0))
+			zDecoder, errZ := zstd.NewReader(bReader, zstd.WithDecoderConcurrency(0))
 			if errZ != nil {
 				dc.setSnapshotError(fmt.Sprintf("Failed to initialize Zstandard decoder: %v", errZ))
 				return
@@ -2038,7 +2045,7 @@ func (dc *ProcessSupervisor) RestoreSnapshot(snapshotUrl string, targetDataPath 
 			compReader = zDecoder
 			closeComp = func() error { zDecoder.Close(); return nil }
 		} else if isGz {
-			gzDecoder, errG := gzip.NewReader(countingBody)
+			gzDecoder, errG := gzip.NewReader(bReader)
 			if errG != nil {
 				dc.setSnapshotError(fmt.Sprintf("Failed to initialize Gzip decoder: %v", errG))
 				return

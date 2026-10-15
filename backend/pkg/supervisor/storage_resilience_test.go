@@ -151,7 +151,8 @@ func TestStorage_StreamingZstdDecompress(t *testing.T) {
 
 	s := NewProcessSupervisor(configDir)
 
-	if err := s.RestoreSnapshot(mockServer.URL, dataDir); err != nil {
+	snapshotUrl := mockServer.URL + "/sirius-data-backup-mock.tar.zst"
+	if err := s.RestoreSnapshot(snapshotUrl, dataDir); err != nil {
 		t.Fatalf("RestoreSnapshot failed: %v", err)
 	}
 
