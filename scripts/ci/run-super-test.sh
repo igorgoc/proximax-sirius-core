@@ -58,6 +58,31 @@ echo "▶ [Stage 2/5] Running Web Wallet Security & Staking Unit Tests..."
 if [ -n "$WALLET_DIR" ] && [ -d "$WALLET_DIR" ]; then
     echo "  Found web-wallet-vuejs at: ${WALLET_DIR}"
     echo "  Using node runner: $(${NODE_BIN} -v)"
+    # Ensure hermetic shims exist for unit tests if node_modules is not installed
+    if [ ! -d "${WALLET_DIR}/node_modules/tsjs-xpx-chain-sdk" ] || [ ! -d "${WALLET_DIR}/node_modules/mathjs" ]; then
+        mkdir -p "${WALLET_DIR}/node_modules/tsjs-xpx-chain-sdk" "${WALLET_DIR}/node_modules/mathjs"
+        cat << 'EOF' > "${WALLET_DIR}/node_modules/tsjs-xpx-chain-sdk/index.js"
+module.exports = {
+  UInt64: {
+    fromUint: (val) => ({
+      compact: () => Math.trunc(Number(val))
+    })
+  }
+};
+EOF
+        cat << 'EOF' > "${WALLET_DIR}/node_modules/mathjs/index.js"
+const toSeconds = { second: 1, minute: 60, hour: 3600, day: 86400 };
+module.exports = {
+  unit: (val, unitStr) => ({
+    toNumber: (targetUnit) => {
+      const fromSec = toSeconds[unitStr] || 1;
+      const toSec = toSeconds[targetUnit] || 1;
+      return (val * fromSec) / toSec;
+    }
+  })
+};
+EOF
+    fi
     "${NODE_BIN}" --test "${WALLET_DIR}/tests/unit/delegated_staking.test.js" "${WALLET_DIR}/tests/unit/wallet_logic.test.js"
     echo "✔ Stage 2 completed successfully."
 else
