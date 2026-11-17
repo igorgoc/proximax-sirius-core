@@ -403,7 +403,7 @@ cleanup_and_exit() {
 trap cleanup_and_exit SIGTERM SIGINT
 
 # Watchdog timing parameters
-WATCHDOG_TIMEOUT_SEC=480       # 8 minutes stall before checking network
+WATCHDOG_TIMEOUT_SEC=3600       # 60 minutes stall before checking network
 WATCHDOG_GRACE_PERIOD_SEC=180  # 3 minutes startup grace period
 WATCHDOG_COOLDOWN_SEC=300      # 5 minutes cooldown between stall recoveries
 LAST_STALL_RECOVERY_TIME=0
